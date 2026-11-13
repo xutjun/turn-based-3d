@@ -1,0 +1,96 @@
+// 画面配置：相机、光照、雾、后处理、占位体颜色、调试开关。
+// 纯数据。调整观感时只改这里。颜色用 0xRRGGBB。
+
+import type { ClassId, Side } from '../core/types';
+
+export const CAMERA_CONFIG = {
+  /** 'perspective' = 小 FOV 透视（默认）；'orthographic' = 正交 */
+  type: 'perspective' as 'perspective' | 'orthographic',
+  fov: 22, // 透视相机的垂直视角（度），越小越接近“伪等距”
+  elevationDeg: 40, // 俯角：35°~45°
+  azimuthDeg: 0, // 水平方位角：0 = 相机在 +z 一侧（敌方在左上、友方在右下）
+  distance: 46, // 相机到注视点的距离
+  target: { x: 0, y: 0.6, z: 0.3 }, // 注视点
+  orthoHeight: 19, // 正交相机可见的世界高度
+  fitAspect: 1.6, // 窗口宽高比小于该值时自动放大可见范围，保证双方阵型都在画面内
+  near: 1,
+  far: 160,
+};
+
+export const LIGHT_CONFIG = {
+  // 低饱和冷色环境光
+  hemisphere: { sky: 0x5a6c88, ground: 0x0d0c0c, intensity: 1.25 },
+  // 冷色“月光”主光，带阴影
+  moon: {
+    color: 0x7d93b8,
+    intensity: 2.8,
+    position: { x: -14, y: 26, z: 10 },
+    shadowMapSize: 2048,
+    shadowArea: 18, // 阴影覆盖范围（以原点为中心的半边长）
+  },
+  // 火盆暖色点光源
+  brazier: {
+    color: 0xff7a2e,
+    intensity: 115,
+    distance: 22,
+    decay: 1.8,
+    height: 2.0,
+    flicker: 0.22, // 闪烁幅度（相对强度）
+    flickerSpeed: 7, // 闪烁速度
+  },
+};
+
+export const FOG_CONFIG = {
+  color: 0x0e131b,
+  density: 0.012, // 指数雾密度
+  // 贴地流动的雾片（模拟轻微体积雾）
+  ground: { count: 26, radius: 24, opacity: 0.2, color: 0x8794a8, size: 13, speed: 0.25 },
+};
+
+export const POSTFX_CONFIG = {
+  exposure: 1.05, // 色调映射曝光
+  bloom: { strength: 0.62, radius: 0.55, threshold: 0.82 },
+  // 暗角：offset = 完全变暗的半径（1 = 画面四角），softness = 过渡宽度，darkness = 最暗处压暗比例
+  vignette: { offset: 1.15, softness: 0.9, darkness: 0.8 },
+  grain: 0.045, // 颗粒强度
+  desaturate: 0.18, // 整体降饱和
+  tint: { r: 0.96, g: 0.98, b: 1.04 }, // 轻微冷色偏移
+};
+
+export const BATTLEFIELD_CONFIG = {
+  groundSize: 90, // 地面边长
+  groundTextureRepeat: 5,
+  seed: 20261113, // 场景物件散布的随机种子
+  // 火盆位置（地面坐标）
+  braziers: [
+    { x: -6.6, z: 6.4 },
+    { x: 6.4, z: -6.6 },
+    { x: -12.2, z: -5.2 },
+    { x: -1.5, z: -12.6 },
+    { x: 12.4, z: 3.4 },
+  ],
+};
+
+/** 占位体（步骤 4 换成正式模型前使用）的外观 */
+export const PLACEHOLDER_CONFIG = {
+  classColor: {
+    physical: 0x9a3324, // 物理：暗红
+    magic: 0x3f5fb8, // 法术：蓝
+    seal: 0x7440a6, // 封印：紫
+    heal: 0xc9b46a, // 恢复：浅金
+  } satisfies Record<ClassId, number>,
+  sideColor: {
+    ally: 0x4fc3ff, // 友方底座：冷青
+    enemy: 0xff3b24, // 敌方底座：暗红
+  } satisfies Record<Side, number>,
+  heroHeight: 1.8, // 人物占位体高度
+  petScale: 0.6, // 宝宝约为人物的 0.6 倍
+  eliteScale: 1.12,
+  bossScale: 2.0, // Boss 约 2 倍
+  hpBarGap: 0.35, // 头顶血条离头顶的距离
+};
+
+export const DEBUG_CONFIG = {
+  showGrid: false, // 显示网格坐标（按 G 切换，或地址加 ?grid=1）
+  showFps: true, // 显示 FPS（按 F 切换，或地址加 ?fps=0 关闭）
+};

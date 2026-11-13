@@ -4,9 +4,23 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>3D 回合制战斗</title>
+    <style>
+      html,
+      body {
+        margin: 0;
+        height: 100%;
+        background: #050607;
+        overflow: hidden;
+      }
+      #app {
+        position: relative;
+        width: 100%;
+        height: 100%;
+      }
+    </style>
   </head>
   <body>
-    <!-- 画面从步骤 3 开始提供；当前只有逻辑内核，可用 npm run sim 在命令行跑一场战斗 -->
+    <div id="app"></div>
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>
