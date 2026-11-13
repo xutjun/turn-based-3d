@@ -1,0 +1,448 @@
+// 战斗引擎：回合状态机与对外接口（对应 DESIGN.md §3.1、§3.2、§8）。
+//
+// 引擎是同步、按步推进的：stepAction() 一次只结算一个单位的一次出手，
+// 所以任意时刻只有一个单位在行动。所有结果通过事件发出，引擎不操作任何画面。
+
+import { decideCommand } from './ai';
+import { getCommandOptions, validateCommand, type SkillTable } from './commands';
+import { EventBus, type BattleEvent, type BattleEventInput, type UnitSnapshot } from './events';
+import { createRng, type Rng } from './rng';
+import {
+  executeSkill,
+  isSkillSupported,
+  resolveAnimation,
+  resolveDelivery,
+  type ExecContext,
+} from './skillExecutor';
+import { isSealed } from './status';
+import { isValidTarget, pickRetarget } from './targeting';
+import { buildTurnOrder } from './turnOrder';
+import type {
+  AiConfig,
+  BattleConfig,
+  BattleSettings,
+  BattleSetup,
+  BattleState,
+  Command,
+  CommandOptions,
+  SkillDef,
+  SkillId,
+  SubmitResult,
+  Unit,
+  UnitId,
+} from './types';
+
+export interface BattleEngineOptions {
+  /** 注入自定义随机数发生器（测试用）；不传则用 setup.seed 创建 */
+  rng?: Rng;
+}
+
+/** 深拷贝一个单位，避免引擎修改调用方传入的对象 */
+function cloneUnit(u: Unit): Unit {
+  return {
+    ...u,
+    slot: { ...u.slot },
+    stats: { ...u.stats },
+    skillIds: [...u.skillIds],
+    statuses: u.statuses.map((s) => ({ ...s })),
+  };
+}
+
+function snapshot(u: Unit): UnitSnapshot {
+  return {
+    id: u.id,
+    templateId: u.templateId,
+    name: u.name,
+    side: u.side,
+    kind: u.kind,
+    classId: u.classId,
+    rank: u.rank,
+    slot: { ...u.slot },
+    weaponId: u.weaponId,
+    attackMode: u.attackMode,
+    stats: { ...u.stats },
+    hp: u.hp,
+    mp: u.mp,
+  };
+}
+
+export class BattleEngine {
+  readonly events = new EventBus();
+
+  private readonly state: BattleState;
+  private readonly config: BattleConfig;
+  private readonly skills: SkillTable;
+  private readonly ai: AiConfig;
+  private readonly rng: Rng;
+  /** stepAction() 执行期间收集本次发出的事件 */
+  private buffer: BattleEvent[] | null = null;
+
+  constructor(setup: BattleSetup, options: BattleEngineOptions = {}) {
+    this.config = setup.config;
+    this.skills = setup.skills;
+    this.ai = setup.ai;
+    this.rng = options.rng ?? createRng(setup.seed);
+
+    const units: Record<UnitId, Unit> = {};
+    const unitIds: UnitId[] = [];
+    for (const src of setup.units) {
+      if (units[src.id]) throw new Error(`单位 id 重复：${src.id}`);
+      for (const skillId of [src.basicAttackSkillId, ...src.skillIds]) {
+        if (!this.skills[skillId]) throw new Error(`单位 ${src.id} 引用了不存在的技能：${skillId}`);
+      }
+      units[src.id] = cloneUnit(src);
+      unitIds.push(src.id);
+    }
+
+    this.state = {
+      turn: 0,
+      phase: 'init',
+      units,
+      unitIds,
+      turnOrder: [],
+      actionCursor: 0,
+      commands: {},
+      awaitingCommandFor: null,
+      winner: null,
+      settings: { ...setup.settings },
+      eventSeq: 0,
+    };
+  }
+
+  // ------------------------------------------------------------------
+  // 查询
+  // ------------------------------------------------------------------
+
+  /** 只读状态快照，供界面判断按钮状态；不要修改返回的对象 */
+  getState(): Readonly<BattleState> {
+    return this.state;
+  }
+
+  /** 本回合还没有下指令的单位（按指令顺序），跳过倒地和自动出手的单位 */
+  getPendingCommandUnits(): UnitId[] {
+    if (this.state.phase !== 'command') return [];
+    return this.listCommandableUnits().filter((id) => this.state.commands[id] === undefined);
+  }
+
+  /** 某单位可用的指令/技能，以及置灰原因 */
+  getCommandOptions(unitId: UnitId): CommandOptions {
+    return getCommandOptions(this.state, this.skills, unitId);
+  }
+
+  /**
+   * 某技能以某主目标出手时会命中的全部目标（界面预览用）。
+   * 步骤 1 只支持单目标；多目标补足在步骤 2 实现。
+   */
+  previewTargets(unitId: UnitId, skillId: SkillId, primaryId: UnitId): UnitId[] {
+    const unit = this.state.units[unitId];
+    const skill = this.skills[skillId];
+    const primary = this.state.units[primaryId];
+    if (!unit || !skill || !primary || !isValidTarget(unit, skill, primary)) return [];
+    return [primaryId];
+  }
+
+  /** 按 AI 规则给出该单位的建议指令（自动战斗、命令行模拟用） */
+  suggestCommand(unitId: UnitId): Command {
+    if (!this.state.units[unitId]) throw new Error(`单位不存在：${unitId}`);
+    return decideCommand(this.state, this.skills, this.ai, unitId);
+  }
+
+  // ------------------------------------------------------------------
+  // 流程控制
+  // ------------------------------------------------------------------
+
+  /** 开始战斗：发出 BattleStart，进入第 1 回合的指令阶段 */
+  start(): void {
+    if (this.state.phase !== 'init') throw new Error('战斗已经开始，不能重复调用 start()');
+    this.emit({
+      type: 'BattleStart',
+      units: this.state.unitIds.map((id) => snapshot(this.state.units[id]!)),
+    });
+    if (this.checkBattleEnd()) return;
+    this.startTurn();
+  }
+
+  /**
+   * 提交指令。
+   * 指令阶段：给任意待指令单位下指令，可重复提交覆盖。
+   * 执行阶段：只接受 awaitingCommandFor 指向的单位（复活单位现场下指令，步骤 2 启用）。
+   */
+  submitCommand(unitId: UnitId, cmd: Command): SubmitResult {
+    const { state } = this;
+    const awaiting = state.phase === 'execution' && state.awaitingCommandFor === unitId;
+    if (state.phase !== 'command' && !awaiting) return { ok: false, reason: 'wrongPhase' };
+
+    const unit = state.units[unitId];
+    if (!unit) return { ok: false, reason: 'notCommandable' };
+    if (!unit.alive) return { ok: false, reason: 'unitDead' };
+    if (unit.autoCommand) return { ok: false, reason: 'notCommandable' };
+
+    const reason = validateCommand(state, this.skills, unit, cmd);
+    if (reason) return { ok: false, reason };
+    if (cmd.kind === 'skill' && !isSkillSupported(this.skills[cmd.skillId]!)) {
+      // 步骤 1 尚未实现的技能类型一律拒绝
+      return { ok: false, reason: 'unknownSkill' };
+    }
+
+    state.commands[unitId] = { ...cmd };
+    if (awaiting) state.awaitingCommandFor = null;
+    return { ok: true };
+  }
+
+  /** 结束指令阶段：AI 为自动单位补指令，防御立即生效，进入执行阶段 */
+  beginExecution(): void {
+    const { state } = this;
+    if (state.phase !== 'command') throw new Error('只有指令阶段才能调用 beginExecution()');
+    const pending = this.getPendingCommandUnits();
+    if (pending.length > 0) throw new Error(`还有单位没有下指令：${pending.join(', ')}`);
+
+    // 自动单位（敌方、自动宝宝）由 AI 决定指令
+    for (const id of state.unitIds) {
+      const u = state.units[id]!;
+      if (u.alive && u.autoCommand) {
+        state.commands[id] = decideCommand(state, this.skills, this.ai, id);
+      }
+    }
+
+    state.phase = 'execution';
+    state.actionCursor = 0;
+    this.emit({
+      type: 'ExecutionPhaseStart',
+      commands: { ...(state.commands as Record<UnitId, Command>) },
+    });
+
+    // 防御从执行阶段一开始就生效，持续到本回合结束
+    for (const id of state.turnOrder) {
+      const u = state.units[id]!;
+      if (u.alive && state.commands[id]?.kind === 'defend') {
+        u.defending = true;
+        this.emit({ type: 'DefendApplied', unitId: id });
+      }
+    }
+  }
+
+  /**
+   * 执行下一个单位的一次出手，返回这次出手发出的全部事件。
+   * 最后一个单位出手后，同一次返回值里会附带回合结算和下一回合开始的事件。
+   * 战斗已结束时返回 null。
+   */
+  stepAction(): BattleEvent[] | null {
+    const { state } = this;
+    if (state.phase === 'ended') return null;
+    if (state.phase !== 'execution') throw new Error('只有执行阶段才能调用 stepAction()');
+    if (state.awaitingCommandFor !== null) {
+      throw new Error(`正在等待 ${state.awaitingCommandFor} 的指令，不能继续执行`);
+    }
+
+    const collected: BattleEvent[] = [];
+    this.buffer = collected;
+    try {
+      const index = this.findNextActorIndex(state.actionCursor);
+      if (index === -1) {
+        this.settleTurn();
+      } else {
+        state.actionCursor = index + 1;
+        this.performAction(state.units[state.turnOrder[index]!]!);
+        // 每次出手后做胜负判定；没有剩余出手者时进入结算
+        if (!this.checkBattleEnd() && this.findNextActorIndex(state.actionCursor) === -1) {
+          this.settleTurn();
+        }
+      }
+    } finally {
+      this.buffer = null;
+    }
+    return collected;
+  }
+
+  /** 修改设置，只能在指令阶段调用 */
+  setSettings(patch: Partial<BattleSettings>): void {
+    const { state } = this;
+    if (state.phase !== 'command') throw new Error('只有指令阶段才能修改设置');
+    Object.assign(state.settings, patch);
+    for (const id of state.unitIds) {
+      const u = state.units[id]!;
+      if (u.side !== 'ally' || u.kind !== 'pet') continue;
+      u.autoCommand = state.settings.petAutoCommand;
+      // 改为自动后，已提交的手动指令作废，由 AI 决定
+      if (u.autoCommand) delete state.commands[id];
+    }
+  }
+
+  // ------------------------------------------------------------------
+  // 内部实现
+  // ------------------------------------------------------------------
+
+  private emit(input: BattleEventInput): void {
+    this.state.eventSeq += 1;
+    const event = { ...input, seq: this.state.eventSeq, turn: this.state.turn } as BattleEvent;
+    this.buffer?.push(event);
+    this.events.emit(event);
+  }
+
+  private execContext(): ExecContext {
+    return {
+      state: this.state,
+      config: this.config,
+      rng: this.rng,
+      emit: (e) => this.emit(e),
+    };
+  }
+
+  /**
+   * 需要玩家（或测试）下指令的单位，按指令顺序：
+   * 人物 → 该人物的宝宝 → 下一个人物 …（按列从左到右），最后是其余非自动单位。
+   */
+  private listCommandableUnits(): UnitId[] {
+    const { state } = this;
+    const ordered: UnitId[] = [];
+    const heroes = state.unitIds
+      .map((id) => state.units[id]!)
+      .filter((u) => u.side === 'ally' && u.kind === 'hero')
+      .sort((a, b) => a.slot.col - b.slot.col);
+    for (const h of heroes) {
+      ordered.push(h.id);
+      if (h.petId !== undefined && state.units[h.petId]) ordered.push(h.petId);
+    }
+    for (const id of state.unitIds) {
+      if (!ordered.includes(id)) ordered.push(id);
+    }
+    return ordered.filter((id) => {
+      const u = state.units[id]!;
+      return u.alive && !u.autoCommand;
+    });
+  }
+
+  /** 回合开始：回合号加一，按速度重新排序，进入指令阶段 */
+  private startTurn(): void {
+    const { state } = this;
+    state.turn += 1;
+    state.turnOrder = buildTurnOrder(
+      state.unitIds.map((id) => state.units[id]!),
+      this.rng,
+    );
+    state.actionCursor = 0;
+    state.commands = {};
+    state.awaitingCommandFor = null;
+    state.phase = 'command';
+    this.emit({ type: 'TurnStart', turnOrder: [...state.turnOrder] });
+    this.emit({ type: 'CommandPhaseStart', pending: this.listCommandableUnits() });
+  }
+
+  /** 从 from 起找下一个仍然存活的出手者在 turnOrder 中的下标；没有则返回 -1 */
+  private findNextActorIndex(from: number): number {
+    const { state } = this;
+    for (let i = from; i < state.turnOrder.length; i++) {
+      if (state.units[state.turnOrder[i]!]!.alive) return i;
+    }
+    return -1;
+  }
+
+  /** 一个单位的一次出手 */
+  private performAction(actor: Unit): void {
+    const { state } = this;
+    // 正常情况下每个存活单位都有指令；缺失时（防御性）由 AI 决定
+    const cmd = state.commands[actor.id] ?? decideCommand(state, this.skills, this.ai, actor.id);
+    this.emit({ type: 'UnitActStart', actorId: actor.id, command: { ...cmd } });
+
+    if (cmd.kind === 'defend') {
+      // 防御已在执行阶段开始时生效，这里不做其他事
+      this.emit({ type: 'UnitActEnd', actorId: actor.id });
+      return;
+    }
+
+    const basic = this.skills[actor.basicAttackSkillId]!;
+    let skill: SkillDef = basic;
+    if (cmd.kind === 'skill') {
+      skill = this.skills[cmd.skillId]!;
+      // 出手时再检查一次：被封印或魔法不足则改为普攻
+      const reason = isSealed(actor) ? 'sealed' : actor.mp < skill.mpCost ? 'noMp' : null;
+      if (reason) {
+        this.emit({
+          type: 'CommandFallback',
+          actorId: actor.id,
+          fromSkillId: skill.id,
+          toSkillId: basic.id,
+          reason,
+        });
+        skill = basic;
+      }
+    }
+
+    // 目标在出手开始时重新校验：失效则按速度顺序重选，复活不重选
+    let primary = state.units[cmd.targetId];
+    if (!primary || !isValidTarget(actor, skill, primary)) {
+      const nextId = skill.effect === 'revive' ? null : pickRetarget(state, actor, skill);
+      if (nextId === null) {
+        // 没有任何合法目标：本次出手作废，不扣魔法
+        this.emit({
+          type: 'ActionFizzled',
+          actorId: actor.id,
+          skillId: skill.id,
+          reason: 'noValidTarget',
+        });
+        this.emit({ type: 'UnitActEnd', actorId: actor.id });
+        return;
+      }
+      this.emit({
+        type: 'TargetRetargeted',
+        actorId: actor.id,
+        fromId: cmd.targetId,
+        toId: nextId,
+      });
+      primary = state.units[nextId]!;
+    }
+
+    // 魔法在出手瞬间一次性扣除
+    const targets = [primary.id];
+    const delivery = resolveDelivery(skill, actor);
+    const mpBefore = actor.mp;
+    actor.mp = mpBefore - skill.mpCost;
+    this.emit({
+      type: 'SkillCast',
+      actorId: actor.id,
+      skillId: skill.id,
+      delivery,
+      animation: resolveAnimation(skill, delivery),
+      meleeCharge: skill.meleeCharge && delivery === 'melee',
+      element: skill.element,
+      targets: [...targets],
+      mpCost: skill.mpCost,
+      mpBefore,
+      mpAfter: actor.mp,
+    });
+
+    executeSkill(this.execContext(), actor, skill, targets);
+    this.emit({ type: 'UnitActEnd', actorId: actor.id });
+  }
+
+  /** 回合结算：清除防御，发出 TurnEnd，进入下一回合 */
+  private settleTurn(): void {
+    const { state } = this;
+    state.phase = 'settlement';
+    // 步骤 2 在这里加入状态（封印）的回合递减
+    for (const id of state.unitIds) state.units[id]!.defending = false;
+    this.emit({ type: 'TurnEnd' });
+    if (this.checkBattleEnd()) return;
+    this.startTurn();
+  }
+
+  /** 胜负判定：任一方没有存活单位则战斗结束。返回战斗是否已结束。 */
+  private checkBattleEnd(): boolean {
+    const { state } = this;
+    if (state.phase === 'ended') return true;
+    let allyAlive = false;
+    let enemyAlive = false;
+    for (const id of state.unitIds) {
+      const u = state.units[id]!;
+      if (!u.alive) continue;
+      if (u.side === 'ally') allyAlive = true;
+      else enemyAlive = true;
+    }
+    if (allyAlive && enemyAlive) return false;
+    state.winner = allyAlive ? 'ally' : 'enemy';
+    state.phase = 'ended';
+    state.awaitingCommandFor = null;
+    this.emit({ type: 'BattleEnd', winner: state.winner, turns: state.turn });
+    return true;
+  }
+}
