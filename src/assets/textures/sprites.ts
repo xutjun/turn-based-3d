@@ -1,6 +1,6 @@
 // 精灵与粒子贴图：光晕、火焰、烟雾、旗帜布面、占位血条、调试文字。全部用 Canvas 绘制。
 
-import { type Texture } from 'three';
+import { RepeatWrapping, type Texture } from 'three';
 import { createRng } from '../../core/rng';
 import { fbm } from '../noise';
 import { canvasTexture, createCanvas, get2d } from './canvas';
@@ -215,4 +215,93 @@ export function labelTexture(lines: string[], color = '#e8d9b0'): Texture {
     ctx.fillText(line, canvas.width / 2, 6 + i * lineH);
   });
   return canvasTexture(canvas);
+}
+
+/**
+ * 破布下摆的透明度贴图：上面完整，底边撕成参差的尖角，中间有少量破洞。
+ * 用作披风、长袍的 alphaMap（配合 alphaTest）。v = 0 是下摆。
+ */
+export function tatterAlphaTexture(seed = 1, depth = 0.22): Texture {
+  return cached(`tatter:${seed}:${depth}`, () => {
+    const w = 256;
+    const h = 256;
+    const canvas = createCanvas(w, h);
+    const ctx = get2d(canvas);
+    const rng = createRng(seed);
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, w, h);
+    ctx.fillStyle = '#000000';
+    let x = -10;
+    while (x < w) {
+      const tw = 10 + rng.next() * 26;
+      const d = h * depth * (0.25 + rng.next() * 0.75);
+      ctx.beginPath();
+      ctx.moveTo(x, h);
+      ctx.lineTo(x + tw * 0.5 + (rng.next() - 0.5) * 8, h - d);
+      ctx.lineTo(x + tw, h);
+      ctx.closePath();
+      ctx.fill();
+      x += tw * (0.55 + rng.next() * 0.5);
+    }
+    for (let i = 0; i < 5; i++) {
+      ctx.beginPath();
+      ctx.ellipse(
+        rng.next() * w,
+        h * (0.45 + rng.next() * 0.45),
+        2 + rng.next() * 5,
+        4 + rng.next() * 12,
+        rng.next() * Math.PI,
+        0,
+        Math.PI * 2,
+      );
+      ctx.fill();
+    }
+    const tex = canvasTexture(canvas, false);
+    return tex;
+  });
+}
+
+/**
+ * 符文带：黑底上一排白色符文，用作自发光贴图（emissiveMap），颜色由材质的 emissive 决定。
+ * 横向可平铺。
+ */
+export function runeStripTexture(seed = 1): Texture {
+  return cached(`runes:${seed}`, () => {
+    const w = 512;
+    const h = 64;
+    const canvas = createCanvas(w, h);
+    const ctx = get2d(canvas);
+    const rng = createRng(seed);
+    ctx.fillStyle = '#000000';
+    ctx.fillRect(0, 0, w, h);
+    ctx.strokeStyle = '#ffffff';
+    ctx.lineCap = 'round';
+    ctx.lineWidth = 3.5;
+    ctx.shadowColor = '#ffffff';
+    ctx.shadowBlur = 5;
+    const count = 12;
+    const cell = w / count;
+    for (let i = 0; i < count; i++) {
+      // 每个符文：在 3×4 的格点上随机连几条线，再加一条竖线作为主干
+      const ox = i * cell + cell * 0.25;
+      const pt = (): [number, number] => [
+        ox + Math.floor(rng.next() * 3) * cell * 0.25,
+        12 + Math.floor(rng.next() * 4) * 13.3,
+      ];
+      ctx.beginPath();
+      ctx.moveTo(ox + cell * 0.25, 12);
+      ctx.lineTo(ox + cell * 0.25, 52);
+      const strokes = 2 + Math.floor(rng.next() * 3);
+      for (let s = 0; s < strokes; s++) {
+        const [x1, y1] = pt();
+        const [x2, y2] = pt();
+        ctx.moveTo(x1, y1);
+        ctx.lineTo(x2, y2);
+      }
+      ctx.stroke();
+    }
+    const tex = canvasTexture(canvas);
+    tex.wrapS = RepeatWrapping;
+    return tex;
+  });
 }

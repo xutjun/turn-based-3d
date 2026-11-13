@@ -10,12 +10,29 @@ export type TickFn = (time: number, dt: number) => void;
 /** 资源工厂：根据参数创建一个新的模型实例 */
 export type AssetFactory<P = unknown> = (params: P) => Object3D;
 
+/** 资源分类（预览页按分类列出模型） */
+export type AssetCategory = 'prop' | 'placeholder' | 'hero' | 'pet' | 'enemy' | 'weapon';
+
+/** 资源的说明信息 */
+export interface AssetMeta {
+  label: string; // 显示名称
+  category: AssetCategory;
+  /** 预览页创建该资源时使用的参数（builder 的参数都有默认值时可以不填） */
+  previewParams?: unknown;
+}
+
+export interface AssetEntry extends AssetMeta {
+  key: string;
+}
+
 export class AssetRegistry {
   private readonly factories = new Map<string, AssetFactory<never>>();
+  private readonly metas = new Map<string, AssetMeta>();
 
   /** 注册（或覆盖）一个资源 */
-  register<P>(key: string, factory: AssetFactory<P>): void {
+  register<P>(key: string, factory: AssetFactory<P>, meta: AssetMeta): void {
     this.factories.set(key, factory as AssetFactory<never>);
+    this.metas.set(key, meta);
   }
 
   has(key: string): boolean {
@@ -24,6 +41,15 @@ export class AssetRegistry {
 
   keys(): string[] {
     return [...this.factories.keys()];
+  }
+
+  /** 列出某些分类下的全部资源，按注册顺序 */
+  list(...categories: AssetCategory[]): AssetEntry[] {
+    const out: AssetEntry[] = [];
+    for (const [key, meta] of this.metas) {
+      if (categories.length === 0 || categories.includes(meta.category)) out.push({ key, ...meta });
+    }
+    return out;
   }
 
   /** 创建一个资源实例；键不存在时报错 */

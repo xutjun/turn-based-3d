@@ -3,11 +3,13 @@
 
 import { Group, type Object3D } from 'three';
 import type { AssetRegistry } from '../../assets/AssetRegistry';
-import type { PlaceholderParams } from '../../assets/models/placeholder';
+import { getRig } from '../../assets/models/characters/rig';
+import { createPlaceholderBar, type PlaceholderParams } from '../../assets/models/placeholder';
 import { ASSET_KEYS } from '../../assets/registerDefaults';
 import type { UnitId, UnitTemplate } from '../../core/types';
 import { facingYawOf, slotPosition } from '../../data/formation';
 import { PLACEHOLDER_CONFIG } from '../../data/renderConfig';
+import { UNIT_MODELS } from '../../data/unitModels';
 
 export interface FormationView {
   group: Group;
@@ -24,21 +26,33 @@ function placeholderHeight(t: UnitTemplate): number {
   return c.heroHeight;
 }
 
+/** 创建一个单位的模型：外观配置里有正式模型就用正式模型，否则用占位体 */
+function createUnitModel(registry: AssetRegistry, t: UnitTemplate): Object3D {
+  const def = UNIT_MODELS[t.templateId];
+  if (def && registry.has(def.assetKey)) {
+    const model = registry.create(def.assetKey, def.params ?? {});
+    // 正式模型自带头顶挂点，把占位血条挂上去
+    getRig(model)?.hpAnchor.add(createPlaceholderBar(t.side));
+    return model;
+  }
+  const params: PlaceholderParams = {
+    side: t.side,
+    kind: t.kind,
+    height: placeholderHeight(t),
+    bodyColor: PLACEHOLDER_CONFIG.classColor[t.classId],
+    sideColor: PLACEHOLDER_CONFIG.sideColor[t.side],
+    hpBarGap: PLACEHOLDER_CONFIG.hpBarGap,
+  };
+  return registry.create(ASSET_KEYS.placeholderUnit, params);
+}
+
 export function createFormationView(registry: AssetRegistry, templates: readonly UnitTemplate[]): FormationView {
   const group = new Group();
   group.name = 'formation';
   const units = new Map<UnitId, Object3D>();
 
   for (const t of templates) {
-    const params: PlaceholderParams = {
-      side: t.side,
-      kind: t.kind,
-      height: placeholderHeight(t),
-      bodyColor: PLACEHOLDER_CONFIG.classColor[t.classId],
-      sideColor: PLACEHOLDER_CONFIG.sideColor[t.side],
-      hpBarGap: PLACEHOLDER_CONFIG.hpBarGap,
-    };
-    const obj = registry.create(ASSET_KEYS.placeholderUnit, params);
+    const obj = createUnitModel(registry, t);
     const pos = slotPosition(t.side, t.slot);
     obj.position.set(pos.x, 0, pos.z);
     obj.rotation.y = facingYawOf(t.side);

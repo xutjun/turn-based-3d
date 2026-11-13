@@ -181,3 +181,83 @@ export function boneTextures(seed = 9): TextureSet {
     ),
   );
 }
+
+// ---------------------------------------------------------------------------
+// 角色用表面贴图。颜色都是接近中性的灰度，由材质的 color 再染色，
+// 这样同一张贴图可以做出不同颜色的铁甲、皮革和布料。
+// ---------------------------------------------------------------------------
+
+/** 旧铁甲片：划痕、凹坑、锈迹，粗糙度有明显变化 */
+export function plateTextures(seed = 21): TextureSet {
+  return cached(`plate:${seed}`, () =>
+    generateTextureSet(
+      512,
+      (u, v, out) => {
+        const base = fbm(u * 5, v * 5, seed, 4, 5);
+        const grime = smoothstep(0.45, 0.75, fbm(u * 8, v * 8, seed + 3, 4, 8));
+        // 两个方向的细划痕
+        const s1 = smoothstep(0.8, 0.93, valueNoise(u * 6, v * 160, seed + 5, 6));
+        const s2 = smoothstep(0.84, 0.95, valueNoise(u * 140 + v * 60, v * 9, seed + 7, 0));
+        const scratch = Math.max(s1, s2 * 0.8);
+        const dent = smoothstep(0.7, 0.9, valueNoise(u * 14, v * 14, seed + 9, 14));
+        const rust = smoothstep(0.62, 0.8, fbm(u * 11, v * 11, seed + 11, 3, 11)) * grime;
+        const tone = 0.62 + (base - 0.5) * 0.25 - grime * 0.22 + scratch * 0.22;
+        out.r = clamp01(lerp(tone, tone * 0.95 + 0.1, rust));
+        out.g = clamp01(lerp(tone, tone * 0.62, rust));
+        out.b = clamp01(lerp(tone * 1.03, tone * 0.42, rust));
+        out.height = clamp01(0.55 + (base - 0.5) * 0.2 - scratch * 0.3 - dent * 0.25 + rust * 0.1);
+        // 划痕处更亮更光滑，污垢和锈迹处更粗糙
+        out.roughness = clamp01(0.42 + grime * 0.3 + rust * 0.3 - scratch * 0.2 + (base - 0.5) * 0.2);
+      },
+      3,
+    ),
+  );
+}
+
+/** 皮革：毛孔颗粒和折痕 */
+export function leatherTextures(seed = 31): TextureSet {
+  return cached(`leather:${seed}`, () =>
+    generateTextureSet(
+      512,
+      (u, v, out) => {
+        const pore = valueNoise(u * 110, v * 110, seed, 110);
+        const base = fbm(u * 6, v * 6, seed + 3, 4, 6);
+        const c = Math.abs(fbm(u * 10, v * 10, seed + 5, 4, 10) - 0.5);
+        const crease = 1 - smoothstep(0.0, 0.035, c);
+        const wear = smoothstep(0.55, 0.8, fbm(u * 4, v * 4, seed + 7, 3, 4));
+        const tone = 0.6 + (base - 0.5) * 0.3 + (pore - 0.5) * 0.12 - crease * 0.25 + wear * 0.12;
+        out.r = clamp01(tone);
+        out.g = clamp01(tone * 0.96);
+        out.b = clamp01(tone * 0.9);
+        out.height = clamp01(0.5 + (pore - 0.5) * 0.3 - crease * 0.4 + (base - 0.5) * 0.2);
+        out.roughness = clamp01(0.72 + (pore - 0.5) * 0.15 - wear * 0.2 + crease * 0.1);
+      },
+      2.5,
+    ),
+  );
+}
+
+/** 粗布/破布：经纬织纹、起球和污渍 */
+export function clothTextures(seed = 41): TextureSet {
+  return cached(`cloth:${seed}`, () =>
+    generateTextureSet(
+      512,
+      (u, v, out) => {
+        const n = 96; // 每张贴图的纱线数
+        const warp = 0.5 + 0.5 * Math.sin(u * n * Math.PI * 2);
+        const weft = 0.5 + 0.5 * Math.sin(v * n * Math.PI * 2);
+        const weave = warp * weft;
+        const fuzz = valueNoise(u * 200, v * 200, seed, 200);
+        const stain = smoothstep(0.5, 0.78, fbm(u * 5, v * 5, seed + 3, 4, 5));
+        const fold = fbm(u * 3, v * 12, seed + 5, 3, 3);
+        const tone = 0.74 + (weave - 0.25) * 0.16 + (fuzz - 0.5) * 0.1 - stain * 0.3 + (fold - 0.5) * 0.14;
+        out.r = clamp01(tone);
+        out.g = clamp01(tone * 0.98);
+        out.b = clamp01(tone * 0.95);
+        out.height = clamp01(0.4 + weave * 0.35 + (fold - 0.5) * 0.3 + (fuzz - 0.5) * 0.1);
+        out.roughness = clamp01(0.9 + (fuzz - 0.5) * 0.1);
+      },
+      2.2,
+    ),
+  );
+}

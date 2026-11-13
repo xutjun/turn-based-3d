@@ -29,6 +29,20 @@ export interface PlaceholderParams {
 /** 占位体上预留的挂点名称，步骤 5 用它定位头顶血条 */
 export const HP_ANCHOR_NAME = 'hpAnchor';
 
+/** 占位血条精灵（友方多一条魔法条）。步骤 5 接入战斗后换成可变长度的正式血条 */
+export function createPlaceholderBar(side: Side): Sprite {
+  const bar = new Sprite(
+    new SpriteMaterial({
+      map: placeholderBarTexture(side === 'ally'),
+      depthWrite: false,
+      transparent: true,
+      fog: false,
+    }),
+  );
+  bar.scale.set(1.25, 0.31, 1);
+  return bar;
+}
+
 export function buildPlaceholderUnit(params: PlaceholderParams): Group {
   const { side, kind, height, bodyColor, sideColor, hpBarGap } = params;
   const group = new Group();
@@ -89,15 +103,7 @@ export function buildPlaceholderUnit(params: PlaceholderParams): Group {
   const anchor = new Object3D();
   anchor.name = HP_ANCHOR_NAME;
   anchor.position.y = height + hpBarGap;
-  const bar = new Sprite(
-    new SpriteMaterial({
-      map: placeholderBarTexture(side === 'ally'),
-      depthWrite: false,
-      transparent: true,
-      fog: false,
-    }),
-  );
-  bar.scale.set(1.25, 0.31, 1);
+  const bar = createPlaceholderBar(side);
   anchor.add(bar);
   group.add(anchor);
 

@@ -40,6 +40,15 @@ export const LIGHT_CONFIG = {
   },
 };
 
+/** 程序化环境贴图（给金属材质提供反光），见 assets/environment.ts */
+export const ENVIRONMENT_CONFIG = {
+  intensity: 0.55, // 环境反光的整体强度
+  ambient: 0x06080c, // 四周的底色
+  sky: { color: 0x7f97c4, intensity: 1.6 }, // 头顶冷色天光
+  fire: { color: 0xff8a3c, intensity: 5 }, // 侧面暖色火光
+  back: { color: 0x6f8fd0, intensity: 2.2 }, // 背后冷色轮廓光
+};
+
 export const FOG_CONFIG = {
   color: 0x0e131b,
   density: 0.012, // 指数雾密度
@@ -89,6 +98,12 @@ export const PLACEHOLDER_CONFIG = {
   bossScale: 2.0, // Boss 约 2 倍
   hpBarGap: 0.35, // 头顶血条离头顶的距离
 };
+
+/** 轮边光：模型轮廓边缘的一圈亮边，增强暗场里的可读性 */
+export const RIM_CONFIG = {
+  ally: { color: 0x8fb8ff, strength: 0.55, power: 2.4 }, // 友方：冷蓝白
+  enemy: { color: 0xff5a3a, strength: 0.6, power: 2.4 }, // 敌方：暗红
+} satisfies Record<Side, { color: number; strength: number; power: number }>;
 
 export const DEBUG_CONFIG = {
   showGrid: false, // 显示网格坐标（按 G 切换，或地址加 ?grid=1）

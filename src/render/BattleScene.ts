@@ -3,10 +3,11 @@
 
 import { Color, FogExp2, PCFShadowMap, Scene, WebGLRenderer } from 'three';
 import { collectTicks, type TickFn } from '../assets/AssetRegistry';
+import { createEnvironmentMap } from '../assets/environment';
 import { createDefaultRegistry } from '../assets/registerDefaults';
 import { ENEMY_TEMPLATES } from '../data/enemies';
 import { ALLY_TEMPLATES } from '../data/heroes';
-import { FOG_CONFIG } from '../data/renderConfig';
+import { ENVIRONMENT_CONFIG, FOG_CONFIG } from '../data/renderConfig';
 import { createBattleCamera, type BattleCamera } from './camera/battleCamera';
 import { createDebugOverlay, type DebugOverlay } from './debug/debugOverlay';
 import { createPostFx, type PostFx } from './postfx/composer';
@@ -41,6 +42,9 @@ export class BattleScene {
     // 背景与雾同色，远处自然隐入黑暗
     this.scene.background = new Color(FOG_CONFIG.color);
     this.scene.fog = new FogExp2(FOG_CONFIG.color, FOG_CONFIG.density);
+    // 程序化环境贴图：让金属材质有冷暖反光
+    this.scene.environment = createEnvironmentMap(this.renderer);
+    this.scene.environmentIntensity = ENVIRONMENT_CONFIG.intensity;
 
     const registry = createDefaultRegistry();
     const templates = [...ALLY_TEMPLATES, ...ENEMY_TEMPLATES];
