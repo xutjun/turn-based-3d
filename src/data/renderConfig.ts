@@ -101,7 +101,7 @@ export const PLACEHOLDER_CONFIG = {
 
 /** 轮边光：模型轮廓边缘的一圈亮边，增强暗场里的可读性 */
 export const RIM_CONFIG = {
-  ally: { color: 0x8fb8ff, strength: 0.55, power: 2.4 }, // 友方：冷蓝白
+  ally: { color: 0x8fb8ff, strength: 0.85, power: 2.2 }, // 友方：冷蓝白
   enemy: { color: 0xff5a3a, strength: 0.6, power: 2.4 }, // 敌方：暗红
 } satisfies Record<Side, { color: number; strength: number; power: number }>;
 
