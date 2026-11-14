@@ -4,7 +4,7 @@
 import { Group, type Object3D } from 'three';
 import type { AssetRegistry } from '../../assets/AssetRegistry';
 import { equipWeapon } from '../../assets/models/weapons';
-import { createPlaceholderBar, HP_ANCHOR_NAME, type PlaceholderParams } from '../../assets/models/placeholder';
+import type { PlaceholderParams } from '../../assets/models/placeholder';
 import { ASSET_KEYS } from '../../assets/registerDefaults';
 import type { UnitId, UnitTemplate } from '../../core/types';
 import { facingYawOf, slotPosition } from '../../data/formation';
@@ -26,18 +26,11 @@ function placeholderHeight(t: UnitTemplate): number {
   return c.heroHeight;
 }
 
-/** 创建一个单位的模型：外观配置里有正式模型就用正式模型，否则用占位体 */
+/** 创建一个单位的模型：外观配置里有正式模型就用正式模型，否则用占位体。头顶条由界面层（ui/hud）绘制 */
 function createUnitModel(registry: AssetRegistry, t: UnitTemplate): Object3D {
   const def = UNIT_MODELS[t.templateId];
   if (def && registry.has(def.assetKey)) {
     const model = registry.create(def.assetKey, def.params ?? {});
-    // 正式模型自带头顶挂点，把占位血条挂上去（血条大小不随模型缩放）
-    const anchor = model.getObjectByName(HP_ANCHOR_NAME);
-    if (anchor) {
-      const bar = createPlaceholderBar(t.side);
-      bar.scale.multiplyScalar(1 / model.scale.y);
-      anchor.add(bar);
-    }
     // 人物手持发光武器
     const weaponDef = t.weaponId ? WEAPON_MODELS[t.weaponId] : undefined;
     if (weaponDef && registry.has(weaponDef.assetKey)) {

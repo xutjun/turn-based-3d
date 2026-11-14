@@ -242,6 +242,7 @@ export interface BrazierParams {
   lightHeight: number;
   flicker: number; // 闪烁幅度（相对强度）
   flickerSpeed: number;
+  glow?: number; // 火焰与光晕精灵的亮度倍率，默认 1
   seed: number;
 }
 
@@ -251,6 +252,7 @@ export function buildBrazier(params: BrazierParams): Group {
   group.name = 'brazier';
   const iron = ironMaterial();
   const bowlY = 1.05;
+  const glow = params.glow ?? 1;
 
   // 火盆碗（旋转成型）
   const profile = [
@@ -314,7 +316,7 @@ export function buildBrazier(params: BrazierParams): Group {
       blending: AdditiveBlending,
       depthWrite: false,
       transparent: true,
-      opacity: 0.85,
+      opacity: 0.85 * glow,
     });
     const sprite = new Sprite(mat);
     sprite.center.set(0.5, 0.04);
@@ -334,7 +336,7 @@ export function buildBrazier(params: BrazierParams): Group {
       blending: AdditiveBlending,
       depthWrite: false,
       transparent: true,
-      opacity: 0.32,
+      opacity: 0.32 * glow,
     }),
   );
   halo.position.y = bowlY + 0.8;
@@ -384,7 +386,7 @@ export function buildBrazier(params: BrazierParams): Group {
     light.intensity = params.lightIntensity * (1 + params.flicker * f);
     light.position.x = Math.sin(time * 3.1 + p1) * 0.06;
     light.position.z = Math.cos(time * 2.7 + p2) * 0.06;
-    halo.material.opacity = 0.3 + 0.06 * f;
+    halo.material.opacity = (0.3 + 0.06 * f) * glow;
 
     for (const fl of flames) {
       const w = 1 + 0.12 * Math.sin(time * fl.speed + fl.phase);

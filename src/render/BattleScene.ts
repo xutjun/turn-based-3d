@@ -1,7 +1,7 @@
-// 战斗场景：渲染器、场景、相机、渲染循环、窗口自适应。
-// 步骤 3 只负责把战场和 20 个占位体显示出来；战斗逻辑和界面在步骤 5、6 接入。
+// 战斗场景：渲染器、场景、相机、渲染循环、窗口自适应，以及演出用的时间调度器和舞台。
+// 这里不包含战斗逻辑：逻辑事件由 director/BattleDirector 转成演出，界面在 ui/ 里。
 
-import { Color, FogExp2, PCFShadowMap, Scene, WebGLRenderer } from 'three';
+import { Color, FogExp2, PCFShadowMap, Scene, Vector3, WebGLRenderer } from 'three';
 import { collectTicks, type TickFn } from '../assets/AssetRegistry';
 import { createEnvironmentMap } from '../assets/environment';
 import { createDefaultRegistry } from '../assets/registerDefaults';
@@ -10,11 +10,14 @@ import { ALLY_TEMPLATES } from '../data/heroes';
 import { ENVIRONMENT_CONFIG, FOG_CONFIG } from '../data/renderConfig';
 import { createBattleCamera, type BattleCamera } from './camera/battleCamera';
 import { createDebugOverlay, type DebugOverlay } from './debug/debugOverlay';
+import { Scheduler } from './director/Scheduler';
+import { SimpleFx } from './fx/simpleFx';
 import { createPostFx, type PostFx } from './postfx/composer';
 import { createBattlefield } from './scene/battlefield';
 import { createFormationView, type FormationView } from './scene/formationView';
 import { createGroundFog } from './scene/groundFog';
 import { createLighting } from './scene/lighting';
+import { BattleStage } from './units/BattleStage';
 
 const MAX_PIXEL_RATIO = 2; // 高分屏上限，避免后处理开销过大
 const MAX_FRAME_DT = 0.1; // 切回标签页时限制单帧时间跨度
@@ -25,10 +28,18 @@ export class BattleScene {
   readonly battleCamera: BattleCamera;
   readonly formation: FormationView;
   readonly debug: DebugOverlay;
+  /** 演出的统一时间调度：倍速、跳过动画都在这里 */
+  readonly scheduler = new Scheduler();
+  /** 舞台：单位表现与基础光效 */
+  readonly stage: BattleStage;
 
   private readonly postFx: PostFx;
   private readonly ticks: TickFn[];
   private readonly resizeObserver: ResizeObserver;
+  private readonly frameListeners: (() => void)[] = [];
+  private readonly projected = new Vector3();
+  private width = 1;
+  private height = 1;
   private time = 0;
   private lastMs = 0;
 
@@ -49,11 +60,14 @@ export class BattleScene {
     const registry = createDefaultRegistry();
     const templates = [...ALLY_TEMPLATES, ...ENEMY_TEMPLATES];
     this.formation = createFormationView(registry, templates);
+    const fx = new SimpleFx(this.scheduler);
+    this.stage = new BattleStage(templates, this.formation.units, this.scheduler, fx);
     this.scene.add(
       createLighting(),
       createBattlefield(registry),
       createGroundFog(),
       this.formation.group,
+      fx.group,
     );
 
     this.debug = createDebugOverlay(container, templates);
@@ -88,8 +102,27 @@ export class BattleScene {
     this.lastMs = nowMs;
     this.time += dt;
     for (const tick of this.ticks) tick(this.time, dt);
+    // 演出：先推进调度器（动画改姿态参数），再把姿态应用到模型，最后通知界面层更新
+    this.scheduler.update(dt);
+    this.stage.update();
+    for (const fn of this.frameListeners) fn();
     this.postFx.render(this.time);
     this.debug.frame(nowMs);
+  }
+
+  /** 注册每帧回调（界面层用它更新头顶条和飘字），在渲染之前调用 */
+  onFrame(fn: () => void): void {
+    this.frameListeners.push(fn);
+  }
+
+  /** 世界坐标 → 容器内的像素坐标；visible 为 false 表示在镜头背后 */
+  worldToScreen(world: Vector3): { x: number; y: number; visible: boolean } {
+    const p = this.projected.copy(world).project(this.battleCamera.camera);
+    return {
+      x: (p.x * 0.5 + 0.5) * this.width,
+      y: (-p.y * 0.5 + 0.5) * this.height,
+      visible: p.z > -1 && p.z < 1,
+    };
   }
 
   /** 窗口自适应：渲染尺寸、相机宽高比、后处理缓冲一起更新 */
@@ -97,6 +130,8 @@ export class BattleScene {
     const width = Math.max(1, this.container.clientWidth);
     const height = Math.max(1, this.container.clientHeight);
     const pixelRatio = Math.min(MAX_PIXEL_RATIO, devicePixelRatio || 1);
+    this.width = width;
+    this.height = height;
     this.renderer.setPixelRatio(pixelRatio);
     this.renderer.setSize(width, height);
     this.battleCamera.resize(width, height);

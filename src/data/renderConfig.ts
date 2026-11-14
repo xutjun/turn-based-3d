@@ -9,9 +9,9 @@ export const CAMERA_CONFIG = {
   fov: 22, // 透视相机的垂直视角（度），越小越接近“伪等距”
   elevationDeg: 30, // 俯角（SPEC 建议 35°~45°，按验收意见压低到 30°，人物更立体）
   azimuthDeg: 0, // 水平方位角：0 = 相机在 +z 一侧（敌方在左上、友方在右下）
-  distance: 32, // 相机到注视点的距离（越近人物越大）
-  target: { x: 0, y: 1.6, z: 0.8 }, // 注视点
-  orthoHeight: 12.6, // 正交相机可见的世界高度
+  distance: 35, // 相机到注视点的距离（越近人物越大）
+  target: { x: 0, y: 2.4, z: 0.8 }, // 注视点（偏高一些，把画面顶部留给出手顺序条）
+  orthoHeight: 13.7, // 正交相机可见的世界高度
   fitAspect: 1.6, // 窗口宽高比小于该值时自动放大可见范围，保证双方阵型都在画面内
   near: 1,
   far: 160,
@@ -31,7 +31,8 @@ export const LIGHT_CONFIG = {
   // 火盆暖色点光源
   brazier: {
     color: 0xff7a2e,
-    intensity: 115,
+    intensity: 72, // 点光源强度（原 115，按验收意见调暗）
+    glow: 0.6, // 火焰与光晕精灵的亮度倍率（1 = 最亮）
     distance: 22,
     decay: 1.8,
     height: 2.0,

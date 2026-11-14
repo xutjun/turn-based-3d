@@ -104,6 +104,7 @@ export function createBattlefield(registry: AssetRegistry): Group {
       lightDecay: c.decay,
       lightHeight: c.height,
       flicker: c.flicker,
+      glow: c.glow,
       flickerSpeed: c.flickerSpeed,
       seed: 300 + i,
     };
