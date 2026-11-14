@@ -105,15 +105,15 @@ describe('完整 10v10 战斗', () => {
 
   const ALL_SKILLS = ['combo_slash', 'triple_shot', 'whirlwind', 'arrow_rain', 'group_spell', 'group_spell_fire', 'single_spell', 'seal', 'group_heal', 'revive'];
 
-  it('整场自动战斗里每个技能都会出现（种子 2、5 的单场内十个技能全部出现）', () => {
-    for (const seed of [2, 5]) {
+  it('整场自动战斗里每个技能都会出现（种子 64、66 的单场内十个技能全部出现）', () => {
+    for (const seed of [64, 66]) {
       const used = new Set(ofType(playDefault(seed), 'SkillCast').map((c) => c.skillId));
       for (const id of ALL_SKILLS) expect(used.has(id), `种子 ${seed}：${id}`).toBe(true);
     }
   });
 
   it('封印会递减到期，倒地的友方会被复活并重新出手', () => {
-    const events = playDefault(2);
+    const events = playDefault(64);
     expect(ofType(events, 'StatusApplied').length).toBeGreaterThan(0);
     expect(ofType(events, 'StatusTicked').length).toBeGreaterThan(0);
     expect(ofType(events, 'StatusRemoved').some((e) => e.reason === 'expired')).toBe(true);

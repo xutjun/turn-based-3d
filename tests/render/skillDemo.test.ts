@@ -131,7 +131,7 @@ describe('技能演示脚本（?demo=skills）', () => {
     for (const e of demos.flatMap((d) => d.events)) demoShapes.set(e.type, fields(e));
 
     const engineEvents: BattleEvent[] = [];
-    const engine = new BattleEngine(createDefaultSetup(2));
+    const engine = new BattleEngine(createDefaultSetup(64));
     engine.events.onAny((e) => engineEvents.push(e));
     autoPlay(engine);
     const seen = new Set<string>();

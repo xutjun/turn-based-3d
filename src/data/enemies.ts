@@ -1,5 +1,5 @@
 // 敌方阵容：10 个单位，小怪 + 精英 + 1 个 Boss。对应 DESIGN.md §8.3。
-// 数值为初始值，步骤 8 可调平衡。敌人没有复活技能（敌人被击败即消失）。
+// 数值已在步骤 8 调过平衡（用 npm run balance 核对）。敌人没有复活技能（敌人被击败即消失）。
 
 import type { ClassId, EnemyRank, Slot, Stats, UnitTemplate } from '../core/types';
 
@@ -24,7 +24,7 @@ const ARCHETYPES = {
     attackMode: 'melee',
     basicAttackSkillId: 'basic_physical',
     skillIds: [],
-    stats: { maxHp: 600, maxMp: 0, physAtk: 120, magAtk: 0, defense: 40, speed: 80 },
+    stats: { maxHp: 420, maxMp: 0, physAtk: 230, magAtk: 0, defense: 40, speed: 80 },
   },
   fallenKnight: {
     templateId: 'enemy_fallen_knight',
@@ -34,7 +34,7 @@ const ARCHETYPES = {
     attackMode: 'melee',
     basicAttackSkillId: 'basic_physical',
     skillIds: ['combo_slash'],
-    stats: { maxHp: 1100, maxMp: 200, physAtk: 150, magAtk: 30, defense: 70, speed: 75 },
+    stats: { maxHp: 770, maxMp: 200, physAtk: 285, magAtk: 55, defense: 70, speed: 75 },
   },
   demonPriestSeal: {
     templateId: 'enemy_demon_priest',
@@ -44,7 +44,7 @@ const ARCHETYPES = {
     attackMode: 'cast',
     basicAttackSkillId: 'basic_magic',
     skillIds: ['seal'],
-    stats: { maxHp: 800, maxMp: 400, physAtk: 60, magAtk: 130, defense: 40, speed: 105 },
+    stats: { maxHp: 560, maxMp: 400, physAtk: 115, magAtk: 245, defense: 40, speed: 105 },
   },
   demonPriestHeal: {
     templateId: 'enemy_demon_priest',
@@ -54,7 +54,7 @@ const ARCHETYPES = {
     attackMode: 'cast',
     basicAttackSkillId: 'basic_magic',
     skillIds: ['group_heal'],
-    stats: { maxHp: 800, maxMp: 500, physAtk: 60, magAtk: 130, defense: 40, speed: 88 },
+    stats: { maxHp: 560, maxMp: 500, physAtk: 115, magAtk: 245, defense: 40, speed: 88 },
   },
   necromancer: {
     templateId: 'enemy_necromancer',
@@ -64,7 +64,7 @@ const ARCHETYPES = {
     attackMode: 'cast',
     basicAttackSkillId: 'basic_magic',
     skillIds: ['group_spell', 'single_spell'],
-    stats: { maxHp: 750, maxMp: 500, physAtk: 40, magAtk: 160, defense: 35, speed: 92 },
+    stats: { maxHp: 525, maxMp: 500, physAtk: 75, magAtk: 300, defense: 35, speed: 92 },
   },
   abyssLord: {
     templateId: 'enemy_abyss_lord',
@@ -74,7 +74,7 @@ const ARCHETYPES = {
     attackMode: 'melee',
     basicAttackSkillId: 'basic_physical',
     skillIds: ['combo_slash', 'whirlwind'],
-    stats: { maxHp: 4000, maxMp: 600, physAtk: 220, magAtk: 100, defense: 90, speed: 70 },
+    stats: { maxHp: 3200, maxMp: 600, physAtk: 340, magAtk: 190, defense: 90, speed: 70 },
   },
 } satisfies Record<string, EnemyArchetype>;
 
