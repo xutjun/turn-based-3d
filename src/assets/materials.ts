@@ -209,11 +209,17 @@ export function glowMaterial(
   return mat;
 }
 
+/** 模型节点上的“发光倍率回调”键：武器等自己管理发光的模型用它接收整体倍率 */
+export const GLOW_SCALE_HOOK = 'glowScaleHook';
+
 /**
  * 整体缩放一个模型上所有发光材质的强度。scale = 1 为配置的基础强度。
+ * 自己管理发光的子模型（武器的呼吸、出手闪光）通过 GLOW_SCALE_HOOK 接收倍率。
  */
 export function setGlowScale(root: Object3D, scale: number): void {
   root.traverse((o) => {
+    const hook = o.userData[GLOW_SCALE_HOOK] as ((scale: number) => void) | undefined;
+    if (typeof hook === 'function') hook(scale);
     const mesh = o as Mesh;
     if (!mesh.isMesh) return;
     const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];

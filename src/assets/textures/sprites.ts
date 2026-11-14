@@ -305,3 +305,47 @@ export function runeStripTexture(seed = 1): Texture {
     return tex;
   });
 }
+
+/**
+ * 能量流光：灰度的明暗条纹，两个方向都能无缝平铺，用作自发光贴图（emissiveMap）。
+ * 让贴图沿 v 方向滚动，就得到沿刃口/枪身流动的能量光线。
+ */
+export function energyFlowTexture(seed = 1): Texture {
+  return cached(`flow:${seed}`, () => {
+    const w = 64;
+    const h = 256;
+    const canvas = createCanvas(w, h);
+    const ctx = get2d(canvas);
+    const rng = createRng(seed);
+    // 用整数频率的正弦波叠加，保证首尾相接
+    const waves = [1, 2, 3, 5, 8].map((k, i) => ({
+      k,
+      m: [0, 1, -1, 0, 1][i]!,
+      phase: rng.next() * Math.PI * 2,
+      amp: 1 / (1 + i * 0.5),
+    }));
+    const total = waves.reduce((sum, wave) => sum + wave.amp, 0);
+    const img = ctx.createImageData(w, h);
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        let s = 0;
+        for (const wave of waves) {
+          s += wave.amp * Math.sin(Math.PI * 2 * (wave.k * (y / h) + wave.m * (x / w)) + wave.phase);
+        }
+        const n = (s / total) * 0.5 + 0.5;
+        const v = 0.28 + 0.72 * Math.pow(n, 2.2) * 1.6; // 底亮度 + 高光条纹
+        const c = Math.max(0, Math.min(255, v * 255));
+        const p = (y * w + x) * 4;
+        img.data[p] = c;
+        img.data[p + 1] = c;
+        img.data[p + 2] = c;
+        img.data[p + 3] = 255;
+      }
+    }
+    ctx.putImageData(img, 0, 0);
+    const tex = canvasTexture(canvas);
+    tex.wrapS = RepeatWrapping;
+    tex.wrapT = RepeatWrapping;
+    return tex;
+  });
+}

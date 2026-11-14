@@ -4,12 +4,13 @@
 import { Group, type Object3D } from 'three';
 import type { AssetRegistry } from '../../assets/AssetRegistry';
 import { getRig } from '../../assets/models/characters/rig';
+import { equipWeapon } from '../../assets/models/weapons';
 import { createPlaceholderBar, type PlaceholderParams } from '../../assets/models/placeholder';
 import { ASSET_KEYS } from '../../assets/registerDefaults';
 import type { UnitId, UnitTemplate } from '../../core/types';
 import { facingYawOf, slotPosition } from '../../data/formation';
 import { PLACEHOLDER_CONFIG } from '../../data/renderConfig';
-import { UNIT_MODELS } from '../../data/unitModels';
+import { UNIT_MODELS, WEAPON_MODELS } from '../../data/unitModels';
 
 export interface FormationView {
   group: Group;
@@ -33,6 +34,11 @@ function createUnitModel(registry: AssetRegistry, t: UnitTemplate): Object3D {
     const model = registry.create(def.assetKey, def.params ?? {});
     // 正式模型自带头顶挂点，把占位血条挂上去
     getRig(model)?.hpAnchor.add(createPlaceholderBar(t.side));
+    // 人物手持发光武器
+    const weaponDef = t.weaponId ? WEAPON_MODELS[t.weaponId] : undefined;
+    if (weaponDef && registry.has(weaponDef.assetKey)) {
+      equipWeapon(model, registry.create(weaponDef.assetKey, weaponDef.params ?? {}));
+    }
     return model;
   }
   const params: PlaceholderParams = {

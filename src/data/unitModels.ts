@@ -4,6 +4,7 @@
 // 没有列在这里的单位（宝宝、敌人在步骤 4c 完成前）使用占位体。
 // 以后换成真实 glb 模型时，只需把同一个资源键注册成加载 glb 的工厂，这里不用改。
 
+import type { WeaponId } from '../core/types';
 import { ASSET_KEYS, type AssetKey } from './assetKeys';
 
 export interface UnitModelDef {
@@ -17,4 +18,17 @@ export const UNIT_MODELS: Record<string, UnitModelDef> = {
   hero_sword: { assetKey: ASSET_KEYS.heroSealer }, // 缚魂：封印系祭司
   hero_spear: { assetKey: ASSET_KEYS.heroHealer }, // 守誓：恢复系
   hero_bow: { assetKey: ASSET_KEYS.heroRanger }, // 夜隼：自由职业弓手
+};
+
+/**
+ * 武器外观配置：武器 id → 使用哪个模型，以及传给武器 builder 的外观参数。
+ * 发光颜色、强度、呼吸频率在 data/weapons.ts 的 glow 里调；这里只放形状、比例等覆盖项，例如：
+ *   blade: { assetKey: ASSET_KEYS.weaponBlade, params: { length: 1.1, curve: 0.2 } }
+ */
+export const WEAPON_MODELS: Record<WeaponId, UnitModelDef> = {
+  blade: { assetKey: ASSET_KEYS.weaponBlade },
+  sword: { assetKey: ASSET_KEYS.weaponSword },
+  spear: { assetKey: ASSET_KEYS.weaponSpear },
+  staff: { assetKey: ASSET_KEYS.weaponStaff, params: { element: 'thunder' } }, // 雷咒：雷系法师
+  bow: { assetKey: ASSET_KEYS.weaponBow },
 };

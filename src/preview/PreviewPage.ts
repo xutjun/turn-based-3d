@@ -4,8 +4,10 @@
 //       右侧面板可切换模型、发光强度、自动旋转。
 // 地址参数（方便截图和直达某个模型）：
 //   model=资源键   glow=发光倍率   spin=0 关闭自动旋转   yaw=初始水平角（度）
+//   weapon=0 人物不持武器   element=fire|thunder|seal|heal 法杖元素   dist=相机距离
 
 import {
+  Box3,
   CircleGeometry,
   Color,
   DirectionalLight,
@@ -27,9 +29,12 @@ import { collectTicks, type AssetEntry, type AssetRegistry, type TickFn } from '
 import { createEnvironmentMap } from '../assets/environment';
 import { setGlowScale } from '../assets/materials';
 import { getRig } from '../assets/models/characters/rig';
+import { equipWeapon, getWeaponGlow, setStaffElement } from '../assets/models/weapons';
+import { ASSET_KEYS } from '../data/assetKeys';
 import { createDefaultRegistry } from '../assets/registerDefaults';
 import { groundTextures } from '../assets/textures/surfaces';
 import { ENVIRONMENT_CONFIG, FOG_CONFIG, LIGHT_CONFIG } from '../data/renderConfig';
+import { STAFF_ELEMENT_COLORS, type StaffElement } from '../data/weapons';
 import { createPostFx, type PostFx } from '../render/postfx/composer';
 
 const GLOW_LEVELS = [0, 0.5, 1, 2]; // 可切换的发光倍率
@@ -40,6 +45,8 @@ const CATEGORY_LABEL: Record<string, string> = {
   enemy: '敌人',
 };
 const SPIN_SPEED = 0.5; // 自动旋转速度（弧度/秒）
+const WEAPON_LIFT = 0.25; // 单独预览武器时离地的高度
+const STAFF_ELEMENTS = Object.keys(STAFF_ELEMENT_COLORS) as StaffElement[];
 
 export class PreviewPage {
   private readonly renderer: WebGLRenderer;
@@ -55,6 +62,10 @@ export class PreviewPage {
   private readonly resizeObserver: ResizeObserver;
 
   private model: Object3D | null = null;
+  private weapon: Object3D | null = null; // 当前画面里的武器（单独预览的，或人物手持的）
+  private weaponKey = '';
+  private holdWeapon = true; // 人物是否手持武器
+  private element: StaffElement = 'thunder';
   private ticks: TickFn[] = [];
   private index = 0;
   private glow = 1;
@@ -111,7 +122,8 @@ export class PreviewPage {
 
     // 相机与轨道控制
     const yaw = (Number(query.get('yaw') ?? 25) * Math.PI) / 180;
-    this.camera.position.set(Math.sin(yaw) * 5.6, 2.0, Math.cos(yaw) * 5.6);
+    const dist = Number(query.get('dist')) || 5.6;
+    this.camera.position.set(Math.sin(yaw) * dist, 2.0, Math.cos(yaw) * dist);
     this.controls = new OrbitControls(this.camera, this.renderer.domElement);
     this.controls.target.set(0, 0.95, 0);
     this.controls.enableDamping = true;
@@ -142,6 +154,9 @@ export class PreviewPage {
     const glow = Number(query.get('glow'));
     if (query.has('glow') && Number.isFinite(glow)) this.glow = glow;
     this.spin = query.get('spin') !== '0';
+    this.holdWeapon = query.get('weapon') !== '0';
+    const element = query.get('element') as StaffElement | null;
+    if (element && STAFF_ELEMENTS.includes(element)) this.element = element;
 
     addEventListener('keydown', this.onKey);
     this.resizeObserver = new ResizeObserver(() => this.resize());
@@ -169,6 +184,10 @@ export class PreviewPage {
   private readonly onKey = (e: KeyboardEvent): void => {
     if (e.key === 'ArrowRight') this.showModel(this.index + 1);
     else if (e.key === 'ArrowLeft') this.showModel(this.index - 1);
+    else if (e.key === ' ' && this.weapon) {
+      e.preventDefault();
+      getWeaponGlow(this.weapon)?.flare();
+    }
   };
 
   /** 切换到第 i 个模型（循环） */
@@ -181,6 +200,25 @@ export class PreviewPage {
     if (this.model) this.turntable.remove(this.model);
     this.model = this.registry.create(entry.key, entry.previewParams ?? {});
     this.turntable.add(this.model);
+
+    // 找出画面里的武器：单独预览的武器，或人物手持的武器
+    this.weapon = null;
+    this.weaponKey = '';
+    let focusY = 0.95;
+    if (entry.category === 'weapon') {
+      this.weapon = this.model;
+      this.weaponKey = entry.key;
+      // 武器原点在握持点，抬高到整把武器都在地面以上，并让相机对准中部
+      const box = new Box3().setFromObject(this.model);
+      this.model.position.y = WEAPON_LIFT - box.min.y;
+      focusY = WEAPON_LIFT + (box.max.y - box.min.y) / 2;
+    } else if (entry.previewWeapon && this.holdWeapon && this.registry.has(entry.previewWeapon.key)) {
+      this.weapon = this.registry.create(entry.previewWeapon.key, entry.previewWeapon.params ?? {});
+      this.weaponKey = entry.previewWeapon.key;
+      equipWeapon(this.model, this.weapon);
+    }
+    if (this.weapon && this.weaponKey === ASSET_KEYS.weaponStaff) setStaffElement(this.weapon as Group, this.element);
+    this.controls.target.y = focusY;
     this.ticks = collectTicks(this.model);
     setGlowScale(this.model, this.glow);
     this.renderPanel();
@@ -239,6 +277,37 @@ export class PreviewPage {
     }
     this.panel.append(row);
 
+    // 武器相关：出手闪光（测试“出手瞬间强度增强”的接口）、法杖元素、人物是否持武器
+    const entry = this.entries[this.index]!;
+    if (this.weapon || entry.previewWeapon) this.panel.append(heading('武器'));
+    if (this.weapon) {
+      const weapon = this.weapon;
+      this.panel.append(button('出手闪光（空格）', false, () => getWeaponGlow(weapon)?.flare()));
+    }
+    if (this.weapon && this.weaponKey === ASSET_KEYS.weaponStaff) {
+      const elements = document.createElement('div');
+      elements.style.cssText = 'display:flex;gap:4px;';
+      for (const e of STAFF_ELEMENTS) {
+        const b = button(STAFF_ELEMENT_COLORS[e].name, e === this.element, () => {
+          this.element = e;
+          if (this.weapon) setStaffElement(this.weapon as Group, e);
+          this.renderPanel();
+          this.renderInfo(this.entries[this.index]!);
+        });
+        b.style.textAlign = 'center';
+        elements.append(b);
+      }
+      this.panel.append(elements);
+    }
+    if (entry.previewWeapon) {
+      this.panel.append(
+        button(`手持武器：${this.holdWeapon ? '开' : '关'}`, this.holdWeapon, () => {
+          this.holdWeapon = !this.holdWeapon;
+          this.showModel(this.index);
+        }),
+      );
+    }
+
     this.panel.append(heading('其他'));
     this.panel.append(
       button(`自动旋转：${this.spin ? '开' : '关'}`, this.spin, () => {
@@ -247,7 +316,7 @@ export class PreviewPage {
       }),
     );
     const tip = document.createElement('div');
-    tip.textContent = '拖动旋转 · 滚轮缩放 · ← → 切换';
+    tip.textContent = '拖动旋转 · 滚轮缩放 · ← → 切换 · 空格闪光';
     tip.style.cssText = 'margin-top:8px;font-size:12px;color:#8a7a50;';
     this.panel.append(tip);
   }
@@ -265,6 +334,15 @@ export class PreviewPage {
     const rig = this.model ? getRig(this.model) : undefined;
     const lines = [`${entry.label}`, `资源键：${entry.key}`, `网格 ${meshes} 个，三角面 ${Math.round(triangles)}`];
     if (rig && this.model) lines.push(`高度 ${(rig.height * this.model.scale.y).toFixed(2)}，带骨架关节`);
+    const weaponGlow = this.weapon ? getWeaponGlow(this.weapon) : undefined;
+    if (weaponGlow) {
+      const def = { ...weaponGlow.def, ...weaponGlow.currentColors };
+      const hex = (n: number): string => `#${n.toString(16).padStart(6, '0')}`;
+      lines.push(
+        `发光：主色 ${hex(def.color)}  辅色 ${hex(def.accentColor)}  强度 ${def.intensity}`,
+        `呼吸 ${def.breathHz} Hz ±${Math.round(def.breathDepth * 100)}%  出手 ×${def.flareBoost}`,
+      );
+    }
     this.info.textContent = lines.join('\n');
   }
 

@@ -14,6 +14,11 @@ export const ASSET_KEYS = {
   heroSealer: 'unit.hero.sealer',
   heroHealer: 'unit.hero.healer',
   heroRanger: 'unit.hero.ranger',
+  weaponBlade: 'weapon.blade',
+  weaponSword: 'weapon.sword',
+  weaponSpear: 'weapon.spear',
+  weaponStaff: 'weapon.staff',
+  weaponBow: 'weapon.bow',
 } as const;
 
 export type AssetKey = (typeof ASSET_KEYS)[keyof typeof ASSET_KEYS];

@@ -19,6 +19,8 @@ export interface AssetMeta {
   category: AssetCategory;
   /** 预览页创建该资源时使用的参数（builder 的参数都有默认值时可以不填） */
   previewParams?: unknown;
+  /** 预览页里让该角色手持的武器（资源键）及其参数 */
+  previewWeapon?: { key: string; params?: unknown };
 }
 
 export interface AssetEntry extends AssetMeta {
