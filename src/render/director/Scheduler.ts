@@ -29,6 +29,8 @@ export class Scheduler {
 
   private scale = 1;
   private skipping = false;
+  /** 进行中的时间扭曲（顿帧、慢镜头）：factor 为时间流速，left 为剩余时长 */
+  private readonly warps: { factor: number; left: number }[] = [];
   private readonly tasks = new Set<Task>();
   private frameWaiters: (() => void)[] = [];
 
@@ -48,7 +50,27 @@ export class Scheduler {
   /** 跳过动画：打开后所有进行中和之后的动画立即完成 */
   setSkip(on: boolean): void {
     this.skipping = on;
-    if (on) this.flush();
+    if (on) {
+      this.warps.length = 0;
+      this.flush();
+    }
+  }
+
+  /**
+   * 时间扭曲：接下来的 duration 秒内（按倍速后的时间计），演出时间只以 factor 倍流逝。
+   * factor 接近 0 = 顿帧（hit stop），0.3 左右 = 慢镜头。多个扭曲同时存在时取最慢的。
+   * 跳过动画时不生效。
+   */
+  warp(factor: number, duration: number): void {
+    if (this.skipping || duration <= 0) return;
+    this.warps.push({ factor: Math.max(0, Math.min(1, factor)), left: duration });
+  }
+
+  /** 当前的时间流速（1 = 正常；顿帧、慢镜头时小于 1） */
+  get warpFactor(): number {
+    let f = 1;
+    for (const w of this.warps) f = Math.min(f, w.factor);
+    return f;
   }
 
   /** 进行中的动画数量 */
@@ -58,7 +80,13 @@ export class Scheduler {
 
   /** 每帧调用一次，realDt 为真实经过的秒数 */
   update(realDt: number): void {
-    const dt = realDt * this.scale;
+    const scaled = realDt * this.scale;
+    const dt = scaled * this.warpFactor;
+    for (let i = this.warps.length - 1; i >= 0; i--) {
+      const w = this.warps[i]!;
+      w.left -= scaled;
+      if (w.left <= 0) this.warps.splice(i, 1);
+    }
     this.delta = dt;
     this.time += dt;
     for (const task of [...this.tasks]) {
@@ -107,6 +135,7 @@ export class Scheduler {
 
   /** 立即完成所有进行中的动画 */
   flush(): void {
+    this.warps.length = 0;
     for (const task of [...this.tasks]) {
       this.tasks.delete(task);
       task.step?.(task.ease(1));

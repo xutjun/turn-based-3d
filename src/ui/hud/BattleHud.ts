@@ -45,7 +45,13 @@ const CSS = `
 .hud-fill { position:absolute; left:0; top:0; bottom:0; width:100%; transform-origin:left center; }
 .hud-fill.hp { background:linear-gradient(#d2342a,#8a1410); }
 .hud-fill.mp { background:linear-gradient(#3f7fe0,#1c3f96); }
-.hud-status { margin-top:2px; font-size:11px; line-height:13px; color:#d9a6ff; text-shadow:0 0 4px #7a2cff,0 0 2px #000; min-height:0; }
+.hud-status { margin-top:2px; min-height:0; display:flex; justify-content:center; gap:3px; }
+.hud-seal { display:inline-flex; align-items:center; gap:2px; padding:0 4px 0 0; font-size:11px; line-height:16px; color:#ecd2ff;
+  background:rgba(34,10,58,.85); border:1px solid #9a4cff; border-radius:9px; box-shadow:0 0 6px rgba(154,76,255,.8); }
+.hud-seal i { display:inline-block; width:16px; height:16px; margin:-1px 0 -1px -1px; border-radius:50%; font-style:normal; font-size:10px;
+  line-height:16px; text-align:center; color:#1a0630; background:radial-gradient(circle at 35% 30%,#f0d8ff,#a04cff 60%,#5a1ca8);
+  border:1px solid #d9a6ff; box-sizing:border-box; }
+.hud-seal b { font-weight:bold; text-shadow:0 0 3px #000; }
 .hud-head.dead { opacity:.55; }
 .hud-head.dead .hud-name::after { content:" · 倒地"; color:#9aa0a8; }
 .hud-head.gone { opacity:0; }
@@ -104,6 +110,7 @@ interface Floater {
 }
 
 const STATUS_LABEL: Record<StatusType, string> = { seal: '封印' };
+const STATUS_ICON: Record<StatusType, string> = { seal: '封' };
 
 export class BattleHud implements DirectorHud {
   private readonly root: HTMLDivElement;
@@ -296,7 +303,20 @@ export class BattleHud implements DirectorHud {
   }
 
   private renderStatus(head: HeadBar): void {
-    head.statusEl.textContent = [...head.statuses].map(([s, n]) => `${STATUS_LABEL[s]} ${n}`).join(' ');
+    // 封印图标：圆形符印 + 剩余回合数
+    head.statusEl.replaceChildren(
+      ...[...head.statuses].map(([s, n]) => {
+        const badge = document.createElement('span');
+        badge.className = 'hud-seal';
+        badge.title = `${STATUS_LABEL[s]}：剩余 ${n} 回合`;
+        const icon = document.createElement('i');
+        icon.textContent = STATUS_ICON[s];
+        const turns = document.createElement('b');
+        turns.textContent = String(n);
+        badge.append(icon, turns);
+        return badge;
+      }),
+    );
   }
 
   floater(id: UnitId, text: string, style: FloaterStyle): void {
@@ -306,6 +326,7 @@ export class BattleHud implements DirectorHud {
     el.textContent = text;
     el.style.color = s.color;
     el.style.fontSize = `${Math.round(20 * s.size)}px`;
+    el.style.opacity = '0'; // 位置要到下一帧 update() 才算出来，在那之前先不显示（否则会在左上角闪一下）
     this.root.append(el);
     // 同一单位身上还没消失的飘字越多，新飘字起点越高，避免叠在一起
     const world = this.deps.headPosition(id, new Vector3()).clone();

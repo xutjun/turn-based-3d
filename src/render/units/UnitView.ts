@@ -5,13 +5,14 @@
 // 每帧由 applyPose() 把这些参数换算成模型根节点和骨架关节的位置、旋转。
 // 人形角色额外驱动手臂关节；非人形的宝宝只用整体的前扑、后仰、起伏。
 
-import { Color, Vector3, type Mesh, type MeshStandardMaterial, type Object3D } from 'three';
+import { Color, Vector3, type Mesh, type MeshBasicMaterial, type MeshStandardMaterial, type Object3D } from 'three';
 import { getRig, type HumanoidRig } from '../../assets/models/characters/rig';
 import { getEquippedWeapon, getWeaponGlow, getWeaponHold, setBowArrowVisible } from '../../assets/models/weapons';
 import { GLOW_BASE_KEY } from '../../assets/materials';
 import type { UnitTemplate } from '../../core/types';
 import { facingOf, facingYawOf, slotPosition } from '../../data/formation';
-import { STAGING } from '../../data/presentationConfig';
+import { ELEMENT_COLORS, FX_CONFIG, STAGING } from '../../data/presentationConfig';
+import { createChainBand, type FxSystem, type TrailHandle } from '../fx/FxSystem';
 import { EASE, type Scheduler } from '../director/Scheduler';
 import type { AnchorName, AttackStyle, GroundPoint, Point3, StageUnit } from '../director/types';
 
@@ -23,6 +24,7 @@ interface Pose {
   windup: number; // 蓄力程度 0~1
   strike: number; // 出手程度 0~1
   style: AttackStyle;
+  variant: number; // 近战挥砍轨迹：0 斜劈 / 1 横斩 / 2 跃起重劈
   lean: number; // 后仰（受击）弧度
   side: number; // 侧移（闪避），米
   hop: number; // 离地高度，米
@@ -54,6 +56,7 @@ export class UnitView implements StageUnit {
     windup: 0,
     strike: 0,
     style: 'melee',
+    variant: 0,
     lean: 0,
     side: 0,
     hop: 0,
@@ -74,11 +77,20 @@ export class UnitView implements StageUnit {
   private readonly phase: number;
   private readonly tmp = new Vector3();
   private dead = false;
+  readonly fxColor: number;
+  private readonly weaponColors: { color: number; accentColor: number } | undefined;
+  private readonly trailSpan: readonly [number, number];
+  private trail: TrailHandle | null = null;
+  private glowScale = 1;
+  private glowMove = 0;
+  private sealBands: Mesh[] | null = null;
+  private sealed = false;
 
   constructor(
     template: UnitTemplate,
     readonly model: Object3D,
     private readonly scheduler: Scheduler,
+    private readonly fx: FxSystem,
   ) {
     this.id = template.id;
     this.side = template.side;
@@ -115,6 +127,10 @@ export class UnitView implements StageUnit {
     }
     this.weapon = getEquippedWeapon(model);
     this.weaponRestX = this.weapon?.rotation.x ?? 0;
+    const glow = this.weapon ? getWeaponGlow(this.weapon) : undefined;
+    this.weaponColors = glow?.currentColors;
+    this.fxColor = this.weaponColors?.color ?? FX_CONFIG.sideColor[template.side];
+    this.trailSpan = (template.weaponId && FX_CONFIG.trailSpan[template.weaponId]) || [0, 0];
 
     // 受击闪白只作用在不发光的表面材质上（发光材质由武器/目光自己控制）
     model.traverse((o) => {
@@ -172,19 +188,22 @@ export class UnitView implements StageUnit {
     });
   }
 
-  windup(style: AttackStyle, duration: number): Promise<void> {
+  windup(style: AttackStyle, duration: number, variant = 0): Promise<void> {
     this.pose.style = style;
+    this.pose.variant = variant;
     this.pose.strike = 0;
-    if (style === 'bow' && this.weapon) setBowArrowVisible(this.weapon, true);
-    return this.scheduler.tween(duration, (t) => (this.pose.windup = t), EASE.out);
+    if ((style === 'bow' || style === 'bowUp') && this.weapon) setBowArrowVisible(this.weapon, true);
+    const from = this.pose.windup; // 连击时上一击还没完全收招，从当前程度接着蓄力
+    return this.scheduler.tween(duration, (t) => (this.pose.windup = from + (1 - from) * t), EASE.out);
   }
 
-  release(style: AttackStyle, duration: number): Promise<void> {
+  release(style: AttackStyle, duration: number, variant = 0): Promise<void> {
     this.pose.style = style;
+    this.pose.variant = variant;
     if (this.weapon) {
       // 出手瞬间武器光芒增强
       getWeaponGlow(this.weapon)?.flare();
-      if (style === 'bow') setBowArrowVisible(this.weapon, false);
+      if (style === 'bow' || style === 'bowUp') setBowArrowVisible(this.weapon, false);
     }
     return this.scheduler.tween(duration, (t) => (this.pose.strike = t), EASE.in);
   }
@@ -217,6 +236,7 @@ export class UnitView implements StageUnit {
 
   async die(vanish: boolean, fallDuration: number, vanishDuration: number): Promise<void> {
     this.dead = true;
+    this.setSealed(false);
     this.pose.guard = 0;
     this.pose.windup = 0;
     this.pose.strike = 0;
@@ -255,8 +275,13 @@ export class UnitView implements StageUnit {
     p.windup = p.strike = p.lean = p.side = p.hop = p.fall = p.shrink = p.guard = 0;
     p.flash = 0;
     p.style = 'melee';
+    p.variant = 0;
     this.dead = false;
     this.away = false;
+    this.trail = null; // 拖尾网格已由特效系统统一收回
+    this.setSealed(false);
+    this.setWeaponGlow(1, 0);
+    this.setWeaponColor(null);
     this.ground.x = this.home.x;
     this.ground.z = this.home.z;
     this.model.visible = true;
@@ -270,6 +295,69 @@ export class UnitView implements StageUnit {
     void this.scheduler.tween(0.2, (t) => (this.pose.guard = from + (to - from) * t), EASE.out);
   }
 
+  setWeaponGlow(scale: number, duration: number): void {
+    const glow = this.weapon ? getWeaponGlow(this.weapon) : undefined;
+    if (!glow) return;
+    const id = (this.glowMove += 1);
+    const from = this.glowScale;
+    void this.scheduler.tween(duration, (t) => {
+      if (id !== this.glowMove) return; // 已被更新的一次调用取代
+      this.glowScale = from + (scale - from) * t;
+      glow.setScale(this.glowScale);
+    });
+  }
+
+  setWeaponColor(color: number | null): void {
+    const glow = this.weapon ? getWeaponGlow(this.weapon) : undefined;
+    if (!glow || !this.weaponColors) return;
+    if (color === null) glow.setColor(this.weaponColors.color, this.weaponColors.accentColor);
+    else glow.setColor(color);
+  }
+
+  setTrail(on: boolean): void {
+    if (!on) {
+      this.trail?.stop();
+      this.trail = null;
+      return;
+    }
+    if (this.trail) return;
+    // 没有武器的单位拖的是身体带起的一道淡淡的风痕
+    this.trail = this.fx.startTrail((base, tip) => this.sampleTrail(base, tip), this.fxColor, this.weapon ? 1 : 0.4);
+  }
+
+  /** 拖尾两端的世界坐标：有武器取武器上的两点，没有武器取身体前方的一条竖线 */
+  private sampleTrail(base: Vector3, tip: Vector3): void {
+    if (this.weapon) {
+      this.weapon.updateWorldMatrix(true, false);
+      base.set(0, this.trailSpan[0], 0).applyMatrix4(this.weapon.matrixWorld);
+      tip.set(0, this.trailSpan[1], 0).applyMatrix4(this.weapon.matrixWorld);
+      return;
+    }
+    const m = this.model.position;
+    const reach = this.radius * 0.9;
+    base.set(m.x + this.facing.x * reach, m.y + this.height * 0.38, m.z + this.facing.z * reach);
+    tip.set(m.x + this.facing.x * reach, m.y + this.height * 0.6, m.z + this.facing.z * reach);
+  }
+
+  setSealed(on: boolean): void {
+    if (on === this.sealed) return;
+    this.sealed = on;
+    if (on && !this.sealBands) {
+      // 第一次被封印时才创建锁链；挂在模型上，跟着模型一起后仰、倒地
+      const top = this.height / this.baseScale;
+      const r = (this.radius / this.baseScale) * 0.95;
+      this.sealBands = [0.42, 0.68].map((h, i) => {
+        const band = createChainBand(ELEMENT_COLORS.seal, 1.6);
+        band.scale.set(r, top * 0.09, r);
+        band.position.y = top * h;
+        band.rotation.set(i === 0 ? 0.3 : -0.26, 0, i === 0 ? -0.18 : 0.22);
+        this.model.add(band);
+        return band;
+      });
+    }
+    for (const band of this.sealBands ?? []) band.visible = on;
+  }
+
   // ------------------------------------------------------------------
   // 每帧
   // ------------------------------------------------------------------
@@ -277,6 +365,12 @@ export class UnitView implements StageUnit {
   /** 每帧调用：把姿态参数应用到模型上（time 为调度器的演出时间） */
   update(time: number): void {
     this.applyPose(time);
+    if (this.sealed && this.sealBands) {
+      this.sealBands[0]!.rotation.y = time * 1.4;
+      this.sealBands[1]!.rotation.y = -time * 1.1;
+      const pulse = 1.3 + 0.5 * Math.sin(time * 4);
+      for (const band of this.sealBands) (band.material as MeshBasicMaterial).opacity = pulse / 1.8;
+    }
   }
 
   private applyPose(time = 0): void {
@@ -292,12 +386,23 @@ export class UnitView implements StageUnit {
     let forward = 0;
     let pitch = 0;
     let lift = 0;
+    let roll = 0; // 绕前后轴的侧倾（非人形的横扫）
     if (p.style === 'melee') {
       forward = (-0.12 * p.windup + 0.42 * p.strike) * lungeScale;
       pitch = (-0.12 * p.windup + 0.3 * p.strike) * lungeScale;
-    } else if (p.style === 'bow') {
+      if (p.variant === 1) {
+        // 横斩：身体侧倾着扫过去
+        roll = (-0.35 * p.windup + 0.7 * p.strike) * (this.rig ? 0.25 : 1);
+      } else if (p.variant === 2) {
+        // 重劈：蓄力时跃起，出手时砸下并更深地前倾
+        lift = 0.38 * p.windup * (1 - p.strike);
+        pitch += 0.22 * p.strike * lungeScale + (this.rig ? 0.12 * p.strike : 0);
+        forward += 0.12 * p.strike;
+      }
+    } else if (p.style === 'bow' || p.style === 'bowUp') {
       forward = -0.05 * p.windup + 0.05 * p.strike;
-      pitch = -0.05 * p.windup;
+      // 仰射：整个人向后仰，把弓指向天空
+      pitch = (p.style === 'bowUp' ? -0.6 : -0.05) * p.windup;
     } else {
       lift = (0.1 * p.windup + 0.05 * p.strike) * (this.rig ? 0.4 : 1);
       pitch = -0.1 * p.windup + 0.18 * p.strike;
@@ -316,6 +421,7 @@ export class UnitView implements StageUnit {
     );
     // 前倾为正；受击后仰、倒地向后躺平
     m.rotation.x = pitch - p.lean - 0.08 * p.guard - (Math.PI / 2) * EASE.in(p.fall);
+    m.rotation.z = roll;
     const k = this.baseScale * (1 - 0.97 * p.shrink);
     m.scale.setScalar(k);
 
@@ -349,12 +455,24 @@ export class UnitView implements StageUnit {
     let shoulderL = 0;
     let elbowL = 0;
     let twist = 0; // 腰部左右扭转
-    if (p.style === 'melee') {
-      // 举过头顶 → 向前下方劈下
+    if (p.style === 'melee' && p.variant === 1) {
+      // 横斩：手臂平举在身前，靠腰部从一侧大幅扭到另一侧把武器扫过去
+      shoulderR = -1.45 * p.windup;
+      elbowR = -0.25 * p.windup + 0.2 * p.strike;
+      twist = -1.05 * p.windup + 2.0 * p.strike;
+    } else if (p.style === 'melee' && p.variant === 2) {
+      // 重劈：双手高举过头，全力砸下
+      shoulderR = -2.5 * p.windup + 2.3 * p.strike;
+      elbowR = -0.3 * p.windup + 0.7 * p.strike;
+      shoulderL = -2.2 * p.windup + 2.0 * p.strike;
+      elbowL = -0.5 * p.windup + 0.6 * p.strike;
+      twist = 0.15 * p.strike;
+    } else if (p.style === 'melee') {
+      // 斜劈：举过头顶 → 向前下方劈下
       shoulderR = -1.9 * p.windup + 1.6 * p.strike;
       elbowR = -0.5 * p.windup + 0.9 * p.strike;
       twist = -0.35 * p.windup + 0.6 * p.strike;
-    } else if (p.style === 'bow') {
+    } else if (p.style === 'bow' || p.style === 'bowUp') {
       // 左手持弓前举，右手后拉；松弦时右手弹开
       shoulderL = -1.25 * p.windup;
       elbowL = 0.15 * p.windup;

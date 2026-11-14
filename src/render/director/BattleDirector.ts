@@ -7,33 +7,18 @@
 // - 同一个 stepIndex 的结算同帧表现，不同 stepIndex 依次表现。
 // - 所有等待都走 Scheduler，倍速和跳过动画在那里统一生效。
 //
+// - 每次出手具体怎么演（镜头、特效、顿帧、各技能的专属动作）在 ./Choreographer 里。
+//
 // 本文件只依赖 ./types 里的接口，不依赖 three 和 DOM。
 
-import type {
-  BattleEvent,
-  EventBus,
-  HealResolvedEvent,
-  HitResolvedEvent,
-  SkillCastEvent,
-  StatusAppliedEvent,
-  StatusRemovedEvent,
-  StatusResistedEvent,
-  UnitDiedEvent,
-  UnitRevivedEvent,
-  UnitSnapshot,
-} from '../../core/events';
+import type { BattleEvent, EventBus, SkillCastEvent, UnitSnapshot } from '../../core/events';
 import type { SkillId, UnitId } from '../../core/types';
-import { ELEMENT_COLORS, FX_COLORS, STAGING, TIMING } from '../../data/presentationConfig';
+import { TIMING } from '../../data/presentationConfig';
+import { Choreographer, groupSteps } from './Choreographer';
 import type { Scheduler } from './Scheduler';
-import type { DirectorHud, GroundPoint, Stage, StageUnit } from './types';
+import type { DirectorHud, Stage } from './types';
 
-/** 一步结算：同一步里的内容同帧表现 */
-interface Step {
-  hits: HitResolvedEvent[];
-  heals: HealResolvedEvent[];
-  effects: (StatusAppliedEvent | StatusResistedEvent | UnitRevivedEvent)[];
-  followups: (UnitDiedEvent | StatusRemovedEvent)[];
-}
+export { approachPoint, groupSteps } from './Choreographer';
 
 export interface DirectorOptions {
   /** 技能显示名（飘字用） */
@@ -60,6 +45,7 @@ export class BattleDirector {
   private readonly defending = new Set<UnitId>();
   private activeActor: UnitId | null = null;
   private disposed = false;
+  private readonly choreographer: Choreographer;
 
   constructor(
     bus: EventBus,
@@ -68,6 +54,7 @@ export class BattleDirector {
     private readonly scheduler: Scheduler,
     private readonly options: DirectorOptions,
   ) {
+    this.choreographer = new Choreographer(stage, hud, scheduler, (id) => this.defending.delete(id));
     this.unsubscribe = bus.onAny((e) => this.enqueue(e));
   }
 
@@ -161,6 +148,7 @@ export class BattleDirector {
 
       case 'StatusRemoved':
         hud.setStatus(e.unitId, e.status, null);
+        if (e.status === 'seal') this.stage.unit(e.unitId).setSealed(false);
         break;
 
       case 'TurnEnd':
@@ -213,10 +201,7 @@ export class BattleDirector {
     if (cast) {
       hud.setMp(actorId, cast.mpAfter);
       if (!this.options.isBasicSkill(cast.skillId)) hud.floater(actorId, this.options.skillName(cast.skillId), 'info');
-      const steps = groupSteps(results);
-      if (cast.delivery === 'melee' && cast.meleeCharge) await this.playMelee(actor, cast, steps);
-      else if (cast.delivery === 'ranged') await this.playRanged(actor, cast, steps);
-      else await this.playCast(actor, cast, steps);
+      await this.choreographer.play(actor, cast, groupSteps(results));
     }
     // 防御等没有 SkillCast 的出手：只高亮一下出手者
 
@@ -225,186 +210,4 @@ export class BattleDirector {
     this.activeActor = null;
     await scheduler.wait(TIMING.actionGap);
   }
-
-  /** 近战：冲到目标面前 → 攻击 → 受击 → （下一个目标 …）→ 跑回原位 */
-  private async playMelee(actor: StageUnit, cast: SkillCastEvent, steps: Step[]): Promise<void> {
-    const { scheduler, stage } = this;
-    let away = false;
-    let lastTarget: UnitId | null = null;
-    for (const step of steps) {
-      const targetId = stepTargets(step)[0];
-      if (targetId === undefined) {
-        await this.applyStep(cast, step);
-        continue;
-      }
-      if (targetId !== lastTarget) {
-        const target = stage.unit(targetId);
-        await actor.moveTo(approachPoint(actor, target), away ? TIMING.hopNext : TIMING.run);
-        away = true;
-        lastTarget = targetId;
-      }
-      await actor.windup('melee', TIMING.meleeWindup);
-      await actor.release('melee', TIMING.meleeStrike);
-      await Promise.all([this.applyStep(cast, step), actor.recover(TIMING.recover)]);
-    }
-    if (away) await actor.returnHome(TIMING.runBack);
-    else if (steps.length === 0) await scheduler.wait(TIMING.notice);
-  }
-
-  /** 远程：原地拉弓 → 箭矢飞行 → 受击。不离开站位。 */
-  private async playRanged(actor: StageUnit, cast: SkillCastEvent, steps: Step[]): Promise<void> {
-    const { stage } = this;
-    for (const step of steps) {
-      const targets = stepTargets(step);
-      await actor.windup('bow', TIMING.bowDraw);
-      await actor.release('bow', TIMING.bowRelease);
-      const from = actor.anchor('weapon');
-      const flights = targets.map((id) =>
-        stage.projectile('arrow', from, stage.unit(id).anchor('chest'), FX_COLORS.arrow, TIMING.arrowFlight),
-      );
-      const recover = actor.recover(TIMING.recover);
-      await Promise.all(flights);
-      await Promise.all([this.applyStep(cast, step), recover]);
-    }
-  }
-
-  /** 施法：原地蓄力 → 光效飞向（单体伤害）或落在（群体 / 辅助）目标 → 结算。不离开站位。 */
-  private async playCast(actor: StageUnit, cast: SkillCastEvent, steps: Step[]): Promise<void> {
-    const { stage } = this;
-    const color = ELEMENT_COLORS[cast.element];
-    await actor.windup('cast', TIMING.castWindup);
-    await actor.release('cast', TIMING.castRelease);
-    const recover = actor.recover(TIMING.recover);
-    for (const step of steps) {
-      const targets = stepTargets(step);
-      const isRevive = step.effects.some((x) => x.type === 'UnitRevived');
-      const isSupport = step.heals.length > 0 || isRevive;
-      if (!isSupport && targets.length === 1 && step.hits.length > 0) {
-        // 单体伤害法术：光弹从施法者飞向目标
-        await stage.projectile('bolt', actor.anchor('weapon'), stage.unit(targets[0]!).anchor('chest'), color, TIMING.boltFlight);
-      } else {
-        // 群体法术 / 封印：光柱同时落在每个目标身上；治疗 / 复活：光从脚下升起
-        const kind = isSupport ? 'pillarUp' : 'pillarDown';
-        const tint = isRevive ? FX_COLORS.revive : color;
-        await Promise.all(targets.map((id) => stage.burst(kind, stage.unit(id).anchor('ground'), tint, TIMING.pillar)));
-      }
-      await this.applyStep(cast, step);
-    }
-    await recover;
-  }
-
-  /** 表现一步结算：这一步里的受击、飘字、血条、死亡、状态同时发生 */
-  private async applyStep(cast: SkillCastEvent, step: Step): Promise<void> {
-    const { hud, scheduler, stage } = this;
-    const waits: Promise<void>[] = [];
-    const impactColor = cast.delivery === 'cast' ? ELEMENT_COLORS[cast.element] : FX_COLORS.physicalImpact;
-
-    for (const h of step.hits) {
-      const target = stage.unit(h.targetId);
-      if (h.isMiss) {
-        hud.floater(h.targetId, '未命中', 'miss');
-        waits.push(target.dodge(TIMING.dodge));
-        continue;
-      }
-      hud.setHp(h.targetId, h.hpAfter);
-      const text = `${h.isCrit ? '暴击 ' : ''}-${h.damage}`;
-      hud.floater(h.targetId, text, h.isCrit ? 'crit' : h.damageType === 'magic' ? 'magicDamage' : 'damage');
-      waits.push(stage.burst('impact', target.anchor('chest'), impactColor, TIMING.hit));
-      // 被这一击打死的单位直接倒地，不再播放后仰
-      if (!h.killed) waits.push(target.hit(TIMING.hit, h.isCrit));
-    }
-
-    for (const h of step.heals) {
-      hud.setHp(h.targetId, h.hpAfter);
-      hud.floater(h.targetId, `${h.isCrit ? '暴击 ' : ''}+${h.amount}`, 'heal');
-    }
-
-    for (const x of step.effects) {
-      if (x.type === 'StatusApplied') {
-        hud.setStatus(x.unitId, x.status, x.remainingTurns);
-        hud.floater(x.unitId, '封印', 'seal');
-        waits.push(stage.unit(x.unitId).hit(TIMING.hit, false));
-      } else if (x.type === 'StatusResisted') {
-        hud.floater(x.unitId, '抵抗', 'resist');
-      } else {
-        hud.setDead(x.unitId, false, false);
-        hud.setHp(x.unitId, x.hpAfter);
-        hud.floater(x.unitId, '复活', 'revive');
-        waits.push(stage.unit(x.unitId).revive(TIMING.revive));
-      }
-    }
-
-    for (const x of step.followups) {
-      if (x.type === 'UnitDied') {
-        hud.setHp(x.unitId, 0);
-        hud.setDead(x.unitId, true, x.vanish);
-        this.defending.delete(x.unitId);
-        waits.push(stage.unit(x.unitId).die(x.vanish, TIMING.die, TIMING.vanish));
-      } else {
-        hud.setStatus(x.unitId, x.status, null);
-      }
-    }
-
-    waits.push(scheduler.wait(TIMING.afterImpact));
-    await Promise.all(waits);
-  }
-}
-
-/** 把一次出手里 SkillCast 之后的事件按“步”分组 */
-export function groupSteps(events: readonly BattleEvent[]): Step[] {
-  const steps: Step[] = [];
-  let currentIndex = -1; // 当前这一步的 stepIndex；-1 表示下一条结算要另起一步
-  const open = (): Step => {
-    const step: Step = { hits: [], heals: [], effects: [], followups: [] };
-    steps.push(step);
-    return step;
-  };
-  const last = (): Step | undefined => steps[steps.length - 1];
-  for (const e of events) {
-    switch (e.type) {
-      case 'HitResolved':
-      case 'HealResolved': {
-        const prev = last();
-        const step = prev && e.stepIndex === currentIndex ? prev : open();
-        currentIndex = e.stepIndex;
-        if (e.type === 'HitResolved') step.hits.push(e);
-        else step.heals.push(e);
-        break;
-      }
-      case 'StatusApplied':
-      case 'StatusResisted':
-      case 'UnitRevived':
-        // 封印 / 复活的结果各自成一步
-        open().effects.push(e);
-        currentIndex = -1;
-        break;
-      case 'UnitDied':
-      case 'StatusRemoved':
-        (last() ?? open()).followups.push(e);
-        break;
-      default:
-        break;
-    }
-  }
-  return steps;
-}
-
-/** 一步里涉及的目标（去重，保持事件顺序） */
-function stepTargets(step: Step): UnitId[] {
-  const ids: UnitId[] = [];
-  const add = (id: UnitId): void => {
-    if (!ids.includes(id)) ids.push(id);
-  };
-  for (const h of step.hits) add(h.targetId);
-  for (const h of step.heals) add(h.targetId);
-  for (const x of step.effects) add(x.unitId);
-  return ids;
-}
-
-/** 近战停步位置：目标正前方，留出双方身体半径和一点空隙 */
-export function approachPoint(actor: StageUnit, target: StageUnit): GroundPoint {
-  const d = actor.radius + target.radius + STAGING.meleeGap;
-  // 打对方时站在对方面前；打己方单位（正常不会出现）时站在其身侧
-  const dir = actor.side === target.side ? { x: -target.facing.z, z: target.facing.x } : target.facing;
-  return { x: target.home.x + dir.x * d, z: target.home.z + dir.z * d };
 }

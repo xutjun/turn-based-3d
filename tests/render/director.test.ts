@@ -4,6 +4,7 @@ import { EventBus, type BattleEvent, type BattleEventInput, type UnitSnapshot } 
 import type { Side, UnitId } from '../../src/core/types';
 import { createDefaultSetup } from '../../src/data/defaultSetup';
 import { facingOf, slotPosition } from '../../src/data/formation';
+import { CAMERA_FX, GLOW_FX } from '../../src/data/presentationConfig';
 import { BattleDirector, groupSteps } from '../../src/render/director/BattleDirector';
 import { Scheduler } from '../../src/render/director/Scheduler';
 import type { DirectorHud, GroundPoint, Stage, StageUnit } from '../../src/render/director/types';
@@ -31,6 +32,7 @@ function createFakes(scheduler: Scheduler) {
       side: u.side,
       kind: u.kind,
       radius: 0.5,
+      fxColor: 0xffffff,
       home,
       facing: facingOf(u.side),
       anchor: () => ({ x: home.x, y: 1, z: home.z }),
@@ -45,13 +47,20 @@ function createFakes(scheduler: Scheduler) {
         away.delete(u.id);
       },
       windup: (style, d) => act(`windup-${style}`, d),
-      release: (style, d) => act(`release-${style}`, d),
+      release: (style, d, variant = 0) => {
+        log.push(`variant:${u.id}:${variant}`);
+        return act(`release-${style}`, d);
+      },
       recover: (d) => act('recover', d),
       hit: (d) => act('hit', d),
       dodge: (d) => act('dodge', d),
       die: (_v, d1, d2) => act('die', d1 + d2),
       revive: (d) => act('revive', d),
       setDefending: (on) => void log.push(`defend:${u.id}:${on}`),
+      setWeaponGlow: (scale) => void log.push(`glow:${u.id}:${scale}`),
+      setWeaponColor: (color) => void log.push(`color:${u.id}:${color === null ? 'reset' : 'set'}`),
+      setTrail: (on) => void log.push(`trail:${u.id}:${on}`),
+      setSealed: (on) => void log.push(`sealed:${u.id}:${on}`),
     };
   };
 
@@ -65,6 +74,35 @@ function createFakes(scheduler: Scheduler) {
       log.push(`burst-${kind}`);
       return scheduler.wait(d);
     },
+    slash: (_a, variant, _c, d) => {
+      log.push(`slash:${variant}`);
+      return scheduler.wait(d);
+    },
+    beam: (_a, _b, _c, travel, linger) => {
+      log.push('beam');
+      return scheduler.wait(travel + linger);
+    },
+    aura: (kind, _a, _c, d) => {
+      log.push(`aura-${kind}`);
+      return scheduler.wait(d);
+    },
+    camera: {
+      focus: (_p, _zoom, _pan, d) => {
+        log.push('cam-focus');
+        return scheduler.wait(d);
+      },
+      reset: (d) => {
+        log.push('cam-reset');
+        return scheduler.wait(d);
+      },
+      shake: (amount) => void log.push(`cam-shake:${amount}`),
+    },
+  };
+  // 记录顿帧 / 慢镜头
+  const warp = scheduler.warp.bind(scheduler);
+  scheduler.warp = (factor, duration) => {
+    log.push(`warp:${factor}:${duration}`);
+    warp(factor, duration);
   };
   const hud: DirectorHud = {
     init: (list) => {
@@ -195,15 +233,21 @@ function snapshot(id: UnitId, side: Side, col: 0 | 1 | 2): UnitSnapshot {
   };
 }
 
-async function playScript(script: BattleEventInput[]) {
+async function playScript(script: BattleEventInput[], skip = false) {
   const scheduler = new Scheduler();
+  scheduler.setSkip(skip);
   const fakes = createFakes(scheduler);
   const bus = new EventBus();
   const director = new BattleDirector(bus, fakes.stage, fakes.hud, scheduler, {
     skillName: (id) => `技能<${id}>`,
     isBasicSkill: (id) => id === 'basic',
   });
-  const units = [snapshot('A0', 'ally', 0), snapshot('A1', 'ally', 1), snapshot('E0', 'enemy', 0), snapshot('E1', 'enemy', 1), snapshot('E2', 'enemy', 2)];
+  const units = [
+    snapshot('A0', 'ally', 0),
+    snapshot('A1', 'ally', 1),
+    snapshot('A2', 'ally', 2),
+    ...(['E0', 'E1', 'E2', 'E3', 'E4', 'E5', 'E6'] as const).map((id, i) => snapshot(id, 'enemy', i as 0)),
+  ];
   let seq = 0;
   const emit = (e: BattleEventInput): void => bus.emit({ ...e, seq: (seq += 1), turn: 1 } as BattleEvent);
   emit({ type: 'BattleStart', units });
@@ -311,7 +355,7 @@ describe('BattleDirector：多段与多目标技能的演出编排', () => {
       { type: 'UnitActEnd', actorId: 'A0' },
     ]);
     expect(fakes.log.some((l) => l.startsWith('moveTo:'))).toBe(false);
-    expect(fakes.log.filter((l) => l === 'burst-pillarDown')).toHaveLength(3);
+    expect(fakes.log.filter((l) => l === 'burst-thunder')).toHaveLength(3);
     // 三个飘字之间没有夹着任何等待结束后才会出现的记录
     const first = fakes.log.indexOf('floater:E0:-30');
     expect(fakes.log.slice(first, first + 6).filter((l) => l.startsWith('floater:'))).toHaveLength(3);
@@ -394,5 +438,242 @@ describe('BattleDirector：多段与多目标技能的演出编排', () => {
     expect(fakes.log).toContain('floater:A1:没有目标');
     expect(fakes.log).toContain('defend:A0:false'); // 回合结束解除防御
     expect(fakes.log.some((l) => l.startsWith('moveTo:'))).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 步骤 7：各技能的专属演出（镜头、特效、顿帧、武器发光）
+// ---------------------------------------------------------------------------
+
+const act = (actorId: UnitId, body: BattleEventInput[]): BattleEventInput[] => [
+  { type: 'UnitActStart', actorId, command: { kind: 'skill', skillId: 'skill', targetId: 'E0' } },
+  ...body,
+  { type: 'UnitActEnd', actorId },
+];
+const died = (unitId: UnitId): BattleEventInput => ({ type: 'UnitDied', unitId, killerId: 'A0', vanish: true });
+const ENEMIES = ['E0', 'E1', 'E2', 'E3', 'E4', 'E5', 'E6'] as const;
+const { hitStop, shake, slowMo, hitStopFactor } = CAMERA_FX;
+
+describe('步骤 7：技能演出', () => {
+  it('连斩：3 击用 3 种不同的挥砍轨迹，武器发光逐击递增，第 3 击抖动和顿帧更大', async () => {
+    const { fakes } = await playScript(
+      act('A0', [
+        cast({ animation: 'comboSlash' }),
+        hit('E0', 0, { hitIndex: 0, hitCount: 3 }),
+        hit('E0', 1, { hitIndex: 1, hitCount: 3, hpBefore: 70, hpAfter: 40 }),
+        hit('E0', 2, { hitIndex: 2, hitCount: 3, hpBefore: 40, hpAfter: 10 }),
+      ]),
+    );
+    const { log } = fakes;
+    expect(log.filter((l) => l.startsWith('variant:A0'))).toEqual(['variant:A0:0', 'variant:A0:1', 'variant:A0:2']);
+    expect(log.filter((l) => l.startsWith('slash:'))).toEqual(['slash:0', 'slash:1', 'slash:2']);
+    // 发光倍率逐击变大，结束后回到 1
+    const glows = log.filter((l) => l.startsWith('glow:A0:')).map((l) => Number(l.split(':')[2]));
+    expect(glows.slice(0, 3)).toEqual(GLOW_FX.combo);
+    expect(GLOW_FX.combo[0]!).toBeLessThan(GLOW_FX.combo[1]!);
+    expect(GLOW_FX.combo[1]!).toBeLessThan(GLOW_FX.combo[2]!);
+    expect(glows[glows.length - 1]).toBe(1);
+    // 每一击都有独立的受击和飘字
+    expect(log.filter((l) => l === 'hit:E0')).toHaveLength(3);
+    expect(log.filter((l) => l === 'floater:E0:-30')).toHaveLength(3);
+    // 前两击轻抖、无顿帧；第 3 击重抖 + 顿帧
+    const shakes = log.filter((l) => l.startsWith('cam-shake:'));
+    expect(shakes).toEqual([`cam-shake:${shake.hit}`, `cam-shake:${shake.hit}`, `cam-shake:${shake.heavy}`]);
+    expect(shake.heavy).toBeGreaterThan(shake.hit);
+    expect(log.filter((l) => l.startsWith('warp:'))).toEqual([`warp:${hitStopFactor}:${hitStop.heavy}`]);
+    expect(log.filter((l) => l === 'burst-heavyImpact')).toHaveLength(1);
+    expect(log.filter((l) => l === 'moveTo:A0')).toHaveLength(1);
+    expect(log.filter((l) => l.startsWith('cam-') && !l.startsWith('cam-shake')).pop()).toBe('cam-reset');
+  });
+
+  it('连斩：目标中途死亡，剩余段数不演，直接跑回', async () => {
+    const { fakes } = await playScript(
+      act('A0', [
+        cast({ animation: 'comboSlash' }),
+        hit('E0', 0, { hitIndex: 0, hitCount: 3 }),
+        hit('E0', 1, { hitIndex: 1, hitCount: 3, hpBefore: 70, hpAfter: 0, damage: 70, killed: true }),
+        died('E0'),
+      ]),
+    );
+    const { log } = fakes;
+    expect(log.filter((l) => l === 'release-melee:A0')).toHaveLength(2);
+    expect(log.filter((l) => l.startsWith('slash:'))).toHaveLength(2);
+    expect(log).toContain('die:E0');
+    expect(log.indexOf('returnHome:A0')).toBeGreaterThan(log.indexOf('die:E0') - 3);
+    expect(log).toContain(`warp:${hitStopFactor}:${hitStop.kill}`); // 击杀顿帧
+    expect(fakes.away.size).toBe(0);
+  });
+
+  it('旋风斩：依次切入 7 个目标，拖尾光轨、镜头跟随，最后一击慢镜头，全部打完才跑回', async () => {
+    const { fakes } = await playScript(
+      act('A0', [cast({ animation: 'whirlwind', targets: [...ENEMIES] }), ...ENEMIES.map((id, i) => hit(id, i, { stepCount: 7 }))]),
+    );
+    const { log } = fakes;
+    expect(log.filter((l) => l === 'moveTo:A0')).toHaveLength(7);
+    expect(log.filter((l) => l === 'returnHome:A0')).toHaveLength(1);
+    expect(log.indexOf('returnHome:A0')).toBeGreaterThan(log.lastIndexOf('floater:E6:-30'));
+    expect(log).toContain('trail:A0:true');
+    expect(log.lastIndexOf('trail:A0:false')).toBeGreaterThan(log.lastIndexOf('trail:A0:true'));
+    // 每冲向一个目标镜头就跟一次（外加开场推近和跑回时的一次）
+    expect(log.filter((l) => l === 'cam-focus').length).toBeGreaterThanOrEqual(8);
+    // 只有最后一击带慢镜头，并且是重击
+    expect(log.filter((l) => l === `warp:${slowMo.factor}:${slowMo.duration}`)).toHaveLength(1);
+    expect(log.indexOf(`warp:${slowMo.factor}:${slowMo.duration}`)).toBeGreaterThan(log.indexOf('floater:E5:-30'));
+    expect(log.filter((l) => l.startsWith('slash:'))).toHaveLength(7);
+    expect(log.filter((l) => l.startsWith('floater:E'))).toHaveLength(7);
+    expect(fakes.violations).toEqual([]);
+    expect(fakes.maxAway()).toBe(1);
+  });
+
+  it('旋风斩：存活目标不足 7 个时只演实际结算的那几个', async () => {
+    const { fakes } = await playScript(
+      act('A0', [cast({ animation: 'whirlwind', targets: ['E0', 'E1', 'E2'] }), hit('E0', 0), hit('E2', 2)]),
+    );
+    expect(fakes.log.filter((l) => l === 'moveTo:A0')).toHaveLength(2);
+    expect(fakes.log.some((l) => l.endsWith(':E1'))).toBe(false); // 没有结算事件的目标不演
+  });
+
+  it('箭雨：原地朝天射出一箭，光箭依次落下，每个落点有光圈，射手不离开站位', async () => {
+    const { fakes } = await playScript(
+      act('A0', [
+        cast({ animation: 'arrowRain', delivery: 'ranged', meleeCharge: false, targets: [...ENEMIES] }),
+        ...ENEMIES.map((id, i) => hit(id, i, { stepCount: 7, isMiss: i === 3, damage: i === 3 ? 0 : 30, hpAfter: i === 3 ? 100 : 70 })),
+      ]),
+    );
+    const { log } = fakes;
+    expect(log.some((l) => l.startsWith('moveTo:'))).toBe(false);
+    expect(log).toContain('windup-bowUp:A0');
+    expect(log.filter((l) => l === 'projectile-skyArrow')).toHaveLength(1);
+    expect(log.filter((l) => l === 'projectile-rainArrow')).toHaveLength(7);
+    expect(log.filter((l) => l === 'burst-landing')).toHaveLength(7);
+    // 天上的箭先射出去，之后才有箭落下；7 个目标按顺序依次结算
+    expect(log.indexOf('projectile-skyArrow')).toBeLessThan(log.indexOf('projectile-rainArrow'));
+    const order = log.filter((l) => l.startsWith('floater:E')).map((l) => l.split(':')[1]);
+    expect(order).toEqual([...ENEMIES]);
+    expect(log).toContain('floater:E3:未命中');
+    expect(fakes.hp.get('E3')).toBe(100);
+    expect(fakes.hp.get('E6')).toBe(70);
+  });
+
+  it('群体法术：蓄力 + 地面符文阵，6 个目标同一帧落雷、同一帧飘字，镜头震动', async () => {
+    const six = ENEMIES.slice(0, 6);
+    const { fakes } = await playScript(
+      act('A0', [
+        cast({ animation: 'groupSpell', delivery: 'cast', meleeCharge: false, element: 'thunder', targets: [...six] }),
+        ...six.map((id) => hit(id, 0, { stepCount: 1, damageType: 'magic' })),
+      ]),
+    );
+    const { log } = fakes;
+    expect(log).toContain('aura-runeCircle');
+    expect(log).toContain('aura-charge');
+    expect(log).toContain(`glow:A0:${GLOW_FX.spellCharge}`);
+    expect(log).toContain('color:A0:set');
+    expect(log.lastIndexOf('color:A0:reset')).toBeGreaterThan(log.lastIndexOf('color:A0:set'));
+    // 6 道落雷连续出现（同一帧发起）
+    const firstBolt = log.indexOf('burst-thunder');
+    expect(log.slice(firstBolt, firstBolt + 6)).toEqual(Array(6).fill('burst-thunder'));
+    // 符文阵在落雷之前出现
+    expect(log.indexOf('aura-runeCircle')).toBeLessThan(firstBolt);
+    // 6 个飘字之间没有任何需要等待的动作结束
+    const firstFloat = log.indexOf('floater:E0:-30');
+    const window = log.slice(firstFloat, log.indexOf('floater:E5:-30') + 1);
+    expect(window.filter((l) => l.startsWith('floater:'))).toHaveLength(6);
+    expect(window.some((l) => l.startsWith('moveTo') || l.startsWith('projectile') || l.startsWith('windup'))).toBe(false);
+    expect(log).toContain(`cam-shake:${shake.spell}`);
+  });
+
+  it('封印：锁链射向目标，命中则缠绕并常驻锁链，被抵抗则崩碎；到期或死亡时解除', async () => {
+    const { fakes } = await playScript([
+      ...act('A0', [
+        cast({ animation: 'sealChain', delivery: 'cast', meleeCharge: false, element: 'seal', targets: ['E0'] }),
+        { type: 'StatusApplied', unitId: 'E0', sourceId: 'A0', status: 'seal', remainingTurns: 3 },
+      ]),
+      ...act('A0', [
+        cast({ animation: 'sealChain', delivery: 'cast', meleeCharge: false, element: 'seal', targets: ['E1'], mpBefore: 40, mpAfter: 30 }),
+        { type: 'StatusResisted', unitId: 'E1', sourceId: 'A0', status: 'seal' },
+      ]),
+      { type: 'StatusRemoved', unitId: 'E0', status: 'seal', reason: 'expired' },
+    ]);
+    const { log } = fakes;
+    expect(log.filter((l) => l === 'beam')).toHaveLength(2);
+    expect(log.filter((l) => l === 'aura-bind')).toHaveLength(1);
+    expect(log.filter((l) => l === 'burst-shatter')).toHaveLength(1);
+    expect(log).toContain('sealed:E0:true');
+    expect(log).not.toContain('sealed:E1:true');
+    expect(log).toContain('status:E0:seal:3');
+    expect(log.indexOf('sealed:E0:false')).toBeGreaterThan(log.indexOf('sealed:E0:true'));
+    expect(log.some((l) => l.startsWith('moveTo:'))).toBe(false);
+  });
+
+  it('群体治疗：3 个目标同时升起光柱；复活：光芒降下后单位起身', async () => {
+    const heal = (targetId: UnitId): BattleEventInput => ({
+      type: 'HealResolved', actorId: 'A0', targetId, skillId: 'heal', stepIndex: 0, stepCount: 1, isCrit: false, amount: 20, hpBefore: 50, hpAfter: 70,
+    });
+    const { fakes } = await playScript([
+      ...act('E0', [
+        cast({ actorId: 'E0', skillId: 'basic', targets: ['A1'], mpCost: 0, mpAfter: 50 }),
+        hit('A1', 0, { actorId: 'E0', killed: true, hpAfter: 0, damage: 100 }),
+        { type: 'UnitDied', unitId: 'A1', killerId: 'E0', vanish: false },
+      ]),
+      ...act('A0', [
+        cast({ animation: 'revive', delivery: 'cast', meleeCharge: false, element: 'heal', targets: ['A1'] }),
+        { type: 'UnitRevived', unitId: 'A1', actorId: 'A0', hpAfter: 30, maxHp: 100, actsThisTurn: false },
+      ]),
+      ...act('A0', [
+        cast({ animation: 'groupHeal', delivery: 'cast', meleeCharge: false, element: 'heal', targets: ['A0', 'A1', 'A2'], mpBefore: 40, mpAfter: 30 }),
+        heal('A0'),
+        heal('A1'),
+        heal('A2'),
+      ]),
+    ]);
+    const { log } = fakes;
+    expect(log.filter((l) => l === 'burst-reviveLight')).toHaveLength(1);
+    expect(log.indexOf('revive:A1')).toBeGreaterThan(log.indexOf('burst-reviveLight'));
+    const firstPillar = log.indexOf('burst-pillarUp');
+    expect(log.slice(firstPillar, firstPillar + 3)).toEqual(Array(3).fill('burst-pillarUp'));
+    const firstHeal = log.indexOf('floater:A0:+20');
+    expect(log.slice(firstHeal, firstHeal + 3)).toEqual(['floater:A0:+20', 'floater:A1:+20', 'floater:A2:+20']);
+    expect(fakes.hp.get('A1')).toBe(70);
+    expect(fakes.dead.has('A1')).toBe(false);
+  });
+
+  it('暴击和击杀有顿帧；普通受击只有轻微抖动', async () => {
+    const { fakes } = await playScript([
+      ...act('A0', [cast({}), hit('E0', 0)]),
+      ...act('A0', [cast({ mpBefore: 40, mpAfter: 30 }), hit('E1', 0, { isCrit: true })]),
+    ]);
+    const { log } = fakes;
+    expect(log.filter((l) => l.startsWith('warp:'))).toEqual([`warp:${hitStopFactor}:${hitStop.crit}`]);
+    expect(log.filter((l) => l.startsWith('cam-shake:'))).toEqual([`cam-shake:${shake.hit}`, `cam-shake:${shake.crit}`]);
+    // 每次出手：先推近，最后复位
+    expect(log.filter((l) => l === 'cam-reset')).toHaveLength(2);
+    expect(log.indexOf('cam-focus')).toBeLessThan(log.indexOf('moveTo:A0'));
+  });
+
+  it('跳过动画时所有技能演出照常结算、不卡住，且结尾状态复原', async () => {
+    const six = ENEMIES.slice(0, 6);
+    const { fakes, director } = await playScript(
+      [
+        ...act('A0', [cast({ animation: 'whirlwind', targets: [...ENEMIES] }), ...ENEMIES.map((id, i) => hit(id, i, { stepCount: 7 }))]),
+        ...act('A0', [
+          cast({ animation: 'arrowRain', delivery: 'ranged', meleeCharge: false, targets: [...ENEMIES], mpBefore: 40, mpAfter: 30 }),
+          ...ENEMIES.map((id, i) => hit(id, i, { stepCount: 7, hpBefore: 70, hpAfter: 40 })),
+        ]),
+        ...act('A0', [
+          cast({ animation: 'groupSpell', delivery: 'cast', meleeCharge: false, element: 'thunder', targets: [...six], mpBefore: 30, mpAfter: 20 }),
+          ...six.map((id) => hit(id, 0, { stepCount: 1, damageType: 'magic', hpBefore: 40, hpAfter: 0, damage: 40, killed: true })),
+          ...six.map(died),
+        ]),
+      ],
+      true,
+    );
+    expect(director.stats.actions).toBe(3);
+    for (const id of six) expect(fakes.dead.has(id)).toBe(true);
+    expect(fakes.hp.get('E6')).toBe(40);
+    expect(fakes.away.size).toBe(0);
+    const { log } = fakes;
+    expect(log.lastIndexOf('trail:A0:false')).toBeGreaterThan(log.lastIndexOf('trail:A0:true'));
+    expect(log.filter((l) => l.startsWith('glow:A0:')).pop()).toBe('glow:A0:1');
+    expect(log.filter((l) => l.startsWith('cam-')).pop()).toBe('cam-reset');
   });
 });

@@ -63,4 +63,37 @@ describe('时间调度器', () => {
     await settle();
     expect(done).toBe(true);
   });
+
+  it('顿帧 / 慢镜头：一段时间内演出时间变慢，结束后恢复；倍速会缩短这段时间', async () => {
+    const s = new Scheduler();
+    let progress = 0;
+    void s.tween(1, (t) => (progress = t));
+    s.warp(0.1, 0.5);
+    s.update(0.25);
+    expect(progress).toBeCloseTo(0.025);
+    expect(s.delta).toBeCloseTo(0.025);
+    s.update(0.25); // 扭曲到此结束
+    s.update(0.25);
+    expect(s.warpFactor).toBe(1);
+    expect(progress).toBeCloseTo(0.3);
+
+    const fast = new Scheduler();
+    fast.setTimeScale(2);
+    fast.warp(0, 0.5);
+    fast.update(0.25); // 两倍速下 0.25 秒就耗尽 0.5 秒的顿帧
+    expect(fast.warpFactor).toBe(1);
+  });
+
+  it('多个扭曲同时存在时取最慢的；跳过动画时扭曲不生效并被清除', () => {
+    const s = new Scheduler();
+    s.warp(0.5, 1);
+    s.warp(0.2, 0.3);
+    expect(s.warpFactor).toBe(0.2);
+    s.update(0.4);
+    expect(s.warpFactor).toBe(0.5);
+    s.setSkip(true);
+    expect(s.warpFactor).toBe(1);
+    s.warp(0.1, 1);
+    expect(s.warpFactor).toBe(1);
+  });
 });

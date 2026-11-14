@@ -1,10 +1,11 @@
-// 舞台：把场上的单位模型包装成 UnitView，并提供基础光效。实现 director/types.ts 的 Stage 接口。
+// 舞台：把场上的单位模型包装成 UnitView，并提供技能特效和演出镜头。实现 director/types.ts 的 Stage 接口。
 
 import type { Object3D } from 'three';
 import type { UnitId, UnitTemplate } from '../../core/types';
 import type { Scheduler } from '../director/Scheduler';
-import type { BurstKind, Point3, ProjectileKind, Stage } from '../director/types';
-import type { SimpleFx } from '../fx/simpleFx';
+import type { CameraRig } from '../camera/CameraRig';
+import type { AuraKind, BurstKind, Point3, ProjectileKind, Stage } from '../director/types';
+import type { FxSystem } from '../fx/FxSystem';
 import { UnitView } from './UnitView';
 
 export class BattleStage implements Stage {
@@ -14,12 +15,13 @@ export class BattleStage implements Stage {
     templates: readonly UnitTemplate[],
     models: ReadonlyMap<UnitId, Object3D>,
     private readonly scheduler: Scheduler,
-    private readonly fx: SimpleFx,
+    readonly fx: FxSystem,
+    readonly camera: CameraRig,
   ) {
     for (const t of templates) {
       const model = models.get(t.id);
       if (!model) throw new Error(`单位 ${t.id} 没有模型`);
-      this.views.set(t.id, new UnitView(t, model, scheduler));
+      this.views.set(t.id, new UnitView(t, model, scheduler, fx));
     }
   }
 
@@ -37,9 +39,23 @@ export class BattleStage implements Stage {
     return this.fx.burst(kind, at, color, duration);
   }
 
-  /** 所有单位回到开场状态（再战一次时调用）：先结束残留的动画，再复位姿态 */
+  slash(at: Point3, variant: number, color: number, duration: number, scale: number): Promise<void> {
+    return this.fx.slash(at, variant, color, duration, scale);
+  }
+
+  beam(from: Point3, to: Point3, color: number, travel: number, linger: number): Promise<void> {
+    return this.fx.beam(from, to, color, travel, linger);
+  }
+
+  aura(kind: AuraKind, at: Point3, color: number, duration: number, radius: number): Promise<void> {
+    return this.fx.aura(kind, at, color, duration, radius);
+  }
+
+  /** 所有单位回到开场状态（再战一次时调用）：先结束残留的动画，再清掉特效、复位镜头和姿态 */
   reset(): void {
     this.scheduler.flush();
+    this.fx.clear();
+    this.camera.resetNow();
     for (const view of this.views.values()) view.reset();
   }
 

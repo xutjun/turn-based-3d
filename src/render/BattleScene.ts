@@ -11,7 +11,8 @@ import { ENVIRONMENT_CONFIG, FOG_CONFIG } from '../data/renderConfig';
 import { createBattleCamera, type BattleCamera } from './camera/battleCamera';
 import { createDebugOverlay, type DebugOverlay } from './debug/debugOverlay';
 import { Scheduler } from './director/Scheduler';
-import { SimpleFx } from './fx/simpleFx';
+import { CameraRig } from './camera/CameraRig';
+import { FxSystem } from './fx/FxSystem';
 import { createPostFx, type PostFx } from './postfx/composer';
 import { createBattlefield } from './scene/battlefield';
 import { createFormationView, type FormationView } from './scene/formationView';
@@ -35,6 +36,16 @@ export class BattleScene {
   readonly stage: BattleStage;
   /** 目标选择用的地面光圈 */
   readonly rings: SelectionRings;
+  /** 技能特效（粒子、光柱、拖尾 …） */
+  readonly fx: FxSystem;
+  /** 演出镜头：推近、跟随、抖动 */
+  readonly cameraRig: CameraRig;
+  /** 最近一帧的真实耗时（秒），性能自检用 */
+  lastFrameDt = 0;
+  /** 最近一帧里逻辑部分（动画、特效、界面更新，不含渲染）的耗时（毫秒） */
+  lastUpdateMs = 0;
+  /** 最近一帧的绘制调用数（含后处理各遍） */
+  lastDrawCalls = 0;
 
   private readonly postFx: PostFx;
   private readonly ticks: TickFn[];
@@ -48,6 +59,7 @@ export class BattleScene {
 
   constructor(private readonly container: HTMLElement) {
     this.renderer = new WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
+    this.renderer.info.autoReset = false; // 每帧手动清零，这样统计的是整帧（含后处理）的绘制调用
     this.renderer.shadowMap.enabled = true;
     this.renderer.shadowMap.type = PCFShadowMap;
     this.renderer.domElement.style.display = 'block';
@@ -63,8 +75,11 @@ export class BattleScene {
     const registry = createDefaultRegistry();
     const templates = [...ALLY_TEMPLATES, ...ENEMY_TEMPLATES];
     this.formation = createFormationView(registry, templates);
-    const fx = new SimpleFx(this.scheduler);
-    this.stage = new BattleStage(templates, this.formation.units, this.scheduler, fx);
+    this.battleCamera = createBattleCamera();
+    this.cameraRig = new CameraRig(this.battleCamera, this.scheduler);
+    const fx = new FxSystem(this.scheduler, this.battleCamera.camera);
+    this.fx = fx;
+    this.stage = new BattleStage(templates, this.formation.units, this.scheduler, fx, this.cameraRig);
     this.scene.add(
       createLighting(),
       createBattlefield(registry),
@@ -78,7 +93,6 @@ export class BattleScene {
     this.debug = createDebugOverlay(container, templates);
     this.scene.add(this.debug.grid);
 
-    this.battleCamera = createBattleCamera();
     this.postFx = createPostFx(this.renderer, this.scene, this.battleCamera.camera);
     this.ticks = collectTicks(this.scene);
 
@@ -93,27 +107,49 @@ export class BattleScene {
     this.renderer.setAnimationLoop((now) => this.frame(now));
   }
 
+  /**
+   * 调试用：停掉自动渲染循环，改为手动逐帧推进（配合 stepFrame），用来逐帧检查演出。
+   * 传 false 恢复自动渲染。
+   */
+  setManual(on: boolean): void {
+    this.lastMs = performance.now();
+    this.renderer.setAnimationLoop(on ? null : (now) => this.frame(now));
+  }
+
+  /** 调试用：手动推进一帧，dt 为这一帧的时长（秒） */
+  stepFrame(dt: number): void {
+    this.frame(this.lastMs + dt * 1000);
+  }
+
   /** 停止渲染并释放资源 */
   dispose(): void {
     this.renderer.setAnimationLoop(null);
     this.resizeObserver.disconnect();
     this.debug.dispose();
     this.rings.dispose();
+    this.fx.dispose();
     this.renderer.dispose();
     this.renderer.domElement.remove();
   }
 
   private frame(nowMs: number): void {
-    const dt = Math.min(MAX_FRAME_DT, (nowMs - this.lastMs) / 1000);
+    this.lastFrameDt = (nowMs - this.lastMs) / 1000;
+    const dt = Math.min(MAX_FRAME_DT, this.lastFrameDt);
     this.lastMs = nowMs;
     this.time += dt;
+    const updateStart = performance.now();
     for (const tick of this.ticks) tick(this.time, dt);
     // 演出：先推进调度器（动画改姿态参数），再把姿态应用到模型，最后通知界面层更新
     this.scheduler.update(dt);
     this.stage.update();
+    this.fx.update();
+    this.cameraRig.update(dt);
     this.rings.update(this.time);
     for (const fn of this.frameListeners) fn();
+    this.lastUpdateMs = performance.now() - updateStart;
+    this.renderer.info.reset();
     this.postFx.render(this.time);
+    this.lastDrawCalls = this.renderer.info.render.calls;
     this.debug.frame(nowMs);
   }
 
