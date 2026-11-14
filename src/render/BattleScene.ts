@@ -17,6 +17,7 @@ import { createBattlefield } from './scene/battlefield';
 import { createFormationView, type FormationView } from './scene/formationView';
 import { createGroundFog } from './scene/groundFog';
 import { createLighting } from './scene/lighting';
+import { SelectionRings } from './scene/selectionRings';
 import { BattleStage } from './units/BattleStage';
 
 const MAX_PIXEL_RATIO = 2; // 高分屏上限，避免后处理开销过大
@@ -32,6 +33,8 @@ export class BattleScene {
   readonly scheduler = new Scheduler();
   /** 舞台：单位表现与基础光效 */
   readonly stage: BattleStage;
+  /** 目标选择用的地面光圈 */
+  readonly rings: SelectionRings;
 
   private readonly postFx: PostFx;
   private readonly ticks: TickFn[];
@@ -69,6 +72,8 @@ export class BattleScene {
       this.formation.group,
       fx.group,
     );
+    this.rings = new SelectionRings(templates);
+    this.scene.add(this.rings.group);
 
     this.debug = createDebugOverlay(container, templates);
     this.scene.add(this.debug.grid);
@@ -93,6 +98,7 @@ export class BattleScene {
     this.renderer.setAnimationLoop(null);
     this.resizeObserver.disconnect();
     this.debug.dispose();
+    this.rings.dispose();
     this.renderer.dispose();
     this.renderer.domElement.remove();
   }
@@ -105,6 +111,7 @@ export class BattleScene {
     // 演出：先推进调度器（动画改姿态参数），再把姿态应用到模型，最后通知界面层更新
     this.scheduler.update(dt);
     this.stage.update();
+    this.rings.update(this.time);
     for (const fn of this.frameListeners) fn();
     this.postFx.render(this.time);
     this.debug.frame(nowMs);

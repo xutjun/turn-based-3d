@@ -22,6 +22,13 @@ export interface HudDeps {
   headPosition(id: UnitId, out: Vector3): Vector3;
 }
 
+/** 头顶条上的标记 */
+export interface HeadMark {
+  kind: 'commander' | 'hostile' | 'friendly';
+  /** 鼠标指着的主目标 */
+  primary?: boolean;
+}
+
 const STYLE_ID = 'battle-hud-style';
 const CSS = `
 .hud { position:absolute; inset:0; pointer-events:none; overflow:hidden; user-select:none;
@@ -42,6 +49,14 @@ const CSS = `
 .hud-head.dead { opacity:.55; }
 .hud-head.dead .hud-name::after { content:" · 倒地"; color:#9aa0a8; }
 .hud-head.gone { opacity:0; }
+.hud-head.mark-commander .hud-name { color:#ffe08a; text-shadow:0 0 6px #c9962c,0 0 2px #000; }
+.hud-head.mark-commander .hud-name::before { content:"◆ "; }
+.hud-head.mark-hostile .hud-name { color:#ff8a70; text-shadow:0 0 6px #c2220c,0 0 2px #000; }
+.hud-head.mark-friendly .hud-name { color:#b9f59a; text-shadow:0 0 6px #3f9a1c,0 0 2px #000; }
+.hud-head.mark-hostile .hud-bar, .hud-head.mark-friendly .hud-bar, .hud-head.mark-commander .hud-bar { border-color:#f2c85a; }
+.hud-head.mark-primary { z-index:3; }
+.hud-head.mark-primary .hud-name { font-size:13px; font-weight:bold; }
+.hud-head.mark-primary .hud-name::before { content:"▼ "; }
 .hud-floater { position:absolute; left:0; top:0; white-space:nowrap; font-weight:bold; font-size:20px;
   text-shadow:0 0 4px #000,0 2px 3px #000,0 0 8px rgba(0,0,0,.8); will-change:transform,opacity; }
 .hud-order { position:absolute; top:10px; left:50%; transform:translateX(-50%); display:flex; align-items:center;
@@ -166,6 +181,37 @@ export class BattleHud implements DirectorHud {
       button(`${speed}×`, scheduler.timeScale === speed, `战斗速度 ${speed} 倍（按键 ${speed}）`, () => scheduler.setTimeScale(speed));
     }
     button('跳过动画', scheduler.skip, '跳过动画（按键 S）', () => scheduler.setSkip(!scheduler.skip));
+  }
+
+  // ------------------------------------------------------------------
+  // 指令界面用：目标标记、复位
+  // ------------------------------------------------------------------
+
+  /**
+   * 标出头顶条：当前待下令单位、会被命中的目标、鼠标指着的主目标。
+   * 不在表里的单位清除标记。
+   */
+  setMarks(marks: ReadonlyMap<UnitId, HeadMark>): void {
+    for (const [id, head] of this.heads) {
+      const mark = marks.get(id);
+      const list = head.el.classList;
+      list.toggle('mark-commander', mark?.kind === 'commander');
+      list.toggle('mark-hostile', mark?.kind === 'hostile');
+      list.toggle('mark-friendly', mark?.kind === 'friendly');
+      list.toggle('mark-primary', mark?.primary === true);
+    }
+  }
+
+  /** 清空飘字、横幅、出手顺序条（再战一次时调用；头顶条由下一次 init() 重建） */
+  reset(): void {
+    for (const f of this.floaters) f.el.remove();
+    this.floaters.length = 0;
+    this.bannerAge = Infinity;
+    this.bannerSticky = false;
+    this.bannerEl.style.opacity = '0';
+    this.activeId = null;
+    this.chips.clear();
+    this.orderEl.replaceChildren();
   }
 
   // ------------------------------------------------------------------

@@ -37,6 +37,12 @@ export class BattleStage implements Stage {
     return this.fx.burst(kind, at, color, duration);
   }
 
+  /** 所有单位回到开场状态（再战一次时调用）：先结束残留的动画，再复位姿态 */
+  reset(): void {
+    this.scheduler.flush();
+    for (const view of this.views.values()) view.reset();
+  }
+
   /** 每帧更新所有单位的姿态 */
   update(): void {
     for (const view of this.views.values()) view.update(this.scheduler.time);

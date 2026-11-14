@@ -249,6 +249,20 @@ export class UnitView implements StageUnit {
     this.dead = false;
   }
 
+  /** 回到开场状态：站在原位、存活、自然站姿（再战一次时调用） */
+  reset(): void {
+    const p = this.pose;
+    p.windup = p.strike = p.lean = p.side = p.hop = p.fall = p.shrink = p.guard = 0;
+    p.flash = 0;
+    p.style = 'melee';
+    this.dead = false;
+    this.away = false;
+    this.ground.x = this.home.x;
+    this.ground.z = this.home.z;
+    this.model.visible = true;
+    this.applyPose(this.scheduler.time);
+  }
+
   setDefending(on: boolean): void {
     if (this.dead && on) return;
     const from = this.pose.guard;
