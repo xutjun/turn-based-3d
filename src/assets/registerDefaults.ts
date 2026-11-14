@@ -3,7 +3,19 @@
 import { ASSET_KEYS } from '../data/assetKeys';
 import { WEAPON_MODELS } from '../data/unitModels';
 import { AssetRegistry } from './AssetRegistry';
-import { buildHealer, buildKnight, buildMage, buildRanger, buildSealer } from './models/characters';
+import {
+  buildAbyssLord,
+  buildDemonPriest,
+  buildFallenKnight,
+  buildHealer,
+  buildKnight,
+  buildMage,
+  buildNecromancer,
+  buildRanger,
+  buildSealer,
+  buildSkeletonSoldier,
+} from './models/characters';
+import { buildBoneDragon, buildGhost, buildGolem, buildShadowWolf } from './models/creatures';
 import { buildPlaceholderUnit } from './models/placeholder';
 import {
   buildBladeWithGlow,
@@ -77,5 +89,16 @@ export function createDefaultRegistry(): AssetRegistry {
     category: 'weapon',
     previewParams: { arrowNocked: true },
   });
+  // 宝宝
+  registry.register(ASSET_KEYS.petWolf, buildShadowWolf, { label: '暗影狼（物理系宝宝）', category: 'pet' });
+  registry.register(ASSET_KEYS.petBoneDragon, buildBoneDragon, { label: '骨龙幼崽（法术系宝宝）', category: 'pet' });
+  registry.register(ASSET_KEYS.petGhost, buildGhost, { label: '幽灵（封印系宝宝）', category: 'pet' });
+  registry.register(ASSET_KEYS.petGolem, buildGolem, { label: '魔偶（恢复系宝宝）', category: 'pet' });
+  // 敌人与 Boss
+  registry.register(ASSET_KEYS.enemySkeleton, buildSkeletonSoldier, { label: '骷髅兵', category: 'enemy' });
+  registry.register(ASSET_KEYS.enemyFallenKnight, buildFallenKnight, { label: '堕落骑士', category: 'enemy' });
+  registry.register(ASSET_KEYS.enemyDemonPriest, buildDemonPriest, { label: '恶魔祭司', category: 'enemy' });
+  registry.register(ASSET_KEYS.enemyNecromancer, buildNecromancer, { label: '亡灵法师', category: 'enemy' });
+  registry.register(ASSET_KEYS.enemyAbyssLord, buildAbyssLord, { label: '深渊魔将（Boss）', category: 'enemy' });
   return registry;
 }

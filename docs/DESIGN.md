@@ -561,15 +561,15 @@ targets = [主目标] + 其余合法单位按速度顺序取前 (targetCount −
 
 ### 7.1 世界坐标系
 - Three.js 右手系：`+x` 向右，`+y` 向上，`+z` 朝向相机。
-- 相机默认在 `+z` 一侧斜俯视原点（俯角 40°，可在步骤 3 的配置中调整），所以屏幕左上 ≈ (−x, −z)，右下 ≈ (+x, +z)。
+- 相机默认在 `+z` 一侧斜俯视原点（俯角 30°，可在 renderConfig 中调整），所以屏幕左上 ≈ (−x, −z)，右下 ≈ (+x, +z)。
 
 ### 7.2 阵型参数
 ```ts
 export const FORMATION = {
-  colSpacing: 2.2,   // 同排相邻格子间距
+  colSpacing: 1.9,   // 同排相邻格子间距
   rowSpacing: 2.0,   // 前后排间距
-  allyFrontCenter:  { x:  4.5, z:  4.5 },  // 友方前排中心（col 2）
-  enemyFrontCenter: { x: -4.5, z: -4.5 },  // 敌方前排中心（col 2）
+  allyFrontCenter:  { x:  3.4, z:  3.4 },  // 友方前排中心（col 2）
+  enemyFrontCenter: { x: -3.4, z: -3.4 },  // 敌方前排中心（col 2）
 };
 // 双方连线方向：友方面朝 fAlly = normalize(-1, 0, -1)，敌方面朝 fEnemy = normalize(1, 0, 1)
 // 排方向（col 增大方向）：p = normalize(1, 0, -1)，两方相同，col 0 在屏幕左侧
@@ -582,15 +582,15 @@ position(side, row, col) = frontCenter(side)
 ### 7.3 计算结果（保留 3 位小数，由 formation.ts 按上式生成，不手填）
 | 格子 | 友方 (x, z) | 敌方 (x, z) |
 |---|---|---|
-| 前排 col0 | (1.389, 7.611) | (−7.611, −1.389) |
-| 前排 col1 | (2.944, 6.056) | (−6.056, −2.944) |
-| 前排 col2 | (4.500, 4.500) | (−4.500, −4.500) |
-| 前排 col3 | (6.056, 2.944) | (−2.944, −6.056) |
-| 前排 col4 | (7.611, 1.389) | (−1.389, −7.611) |
+| 前排 col0 | (0.713, 6.087) | (−6.087, −0.713) |
+| 前排 col1 | (2.056, 4.744) | (−4.744, −2.056) |
+| 前排 col2 | (3.400, 3.400) | (−3.400, −3.400) |
+| 前排 col3 | (4.744, 2.056) | (−2.056, −4.744) |
+| 前排 col4 | (6.087, 0.713) | (−0.713, −6.087) |
 | 后排 | 对应前排 + (1.414, 1.414) | 对应前排 + (−1.414, −1.414) |
 
 ### 7.4 单位分配
-- 友方：人物占前排 `row 0, col c`，他的宝宝占后排 `row 1, col c`（宝宝在主人身后一排，SPEC §4）。
+- 友方：人物占后排 `row 1, col c`，他的宝宝占前排 `row 0, col c`（宝宝在主人身前一排，SPEC §4）。
 - 敌方：Boss 在后排中央；详见 §8.3。
 - 近战冲锋的落点 = 目标位置 + 目标朝向 × 1.2（站在目标面前），由表现层计算，逻辑层不涉及坐标。
 - 逻辑层只用 `Slot`（row/col）；世界坐标只给 render 用。
@@ -638,23 +638,23 @@ position(side, row, col) = frontCenter(side)
 3. 发出 `TurnEnd`；再次执行胜负判定（防御性，默认规则下不会在此触发）；进入下一回合的 TurnStart → command。
 
 ### 8.3 初始阵容（`heroes.ts` / `enemies.ts`，数值为初始值，步骤 8 可调平衡）
-**友方人物（前排）**
+**友方人物（后排）**
 | id | 格子 | 名称 | 职业 | 武器 | attackMode | 普攻 | HP | MP | 物伤 | 法伤 | 防御 | 速度 |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
-| A0 | 0,0 | 夜隼 | physical（自由职业） | 弓 bow | ranged | basic_physical | 950 | 300 | 150 | 40 | 45 | 110 |
-| A1 | 0,1 | 烬刃 | physical | 刀 blade | melee | basic_physical | 1200 | 300 | 160 | 40 | 60 | 90 |
-| A2 | 0,2 | 雷咒 | magic | 法杖 staff | cast | basic_magic | 850 | 600 | 40 | 170 | 35 | 95 |
-| A3 | 0,3 | 缚魂 | seal | 剑 sword | melee | basic_physical | 1000 | 500 | 110 | 120 | 50 | 120 |
-| A4 | 0,4 | 守誓 | heal | 枪 spear | melee | basic_physical | 1000 | 600 | 100 | 140 | 50 | 85 |
+| A0 | 1,0 | 夜隼 | physical（自由职业） | 弓 bow | ranged | basic_physical | 950 | 300 | 150 | 40 | 45 | 110 |
+| A1 | 1,1 | 烬刃 | physical | 刀 blade | melee | basic_physical | 1200 | 300 | 160 | 40 | 60 | 90 |
+| A2 | 1,2 | 雷咒 | magic | 法杖 staff | cast | basic_magic | 850 | 600 | 40 | 170 | 35 | 95 |
+| A3 | 1,3 | 缚魂 | seal | 剑 sword | melee | basic_physical | 1000 | 500 | 110 | 120 | 50 | 120 |
+| A4 | 1,4 | 守誓 | heal | 枪 spear | melee | basic_physical | 1000 | 600 | 100 | 140 | 50 | 85 |
 
-**友方宝宝（后排，位于主人身后）**
+**友方宝宝（前排，位于主人身前）**
 | id | 格子 | 名称/形象 | 主人 | 职业 | attackMode | 普攻 | 技能 | HP | MP | 物伤 | 法伤 | 防御 | 速度 |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|
-| A5 | 1,0 | 影狼·灰 | A0 | physical | melee | basic_physical | combo_slash | 650 | 150 | 110 | 20 | 40 | 105 |
-| A6 | 1,1 | 影狼·赤 | A1 | physical | melee | basic_physical | combo_slash | 700 | 150 | 115 | 20 | 40 | 100 |
-| A7 | 1,2 | 骨龙幼崽 | A2 | magic | cast | basic_magic | group_spell | 600 | 300 | 30 | 120 | 30 | 90 |
-| A8 | 1,3 | 幽灵 | A3 | seal | cast | basic_magic | seal | 600 | 250 | 30 | 90 | 30 | 115 |
-| A9 | 1,4 | 魔偶 | A4 | heal | melee | basic_physical | group_heal | 900 | 250 | 80 | 90 | 60 | 70 |
+| A5 | 0,0 | 影狼·灰 | A0 | physical | melee | basic_physical | combo_slash | 650 | 150 | 110 | 20 | 40 | 105 |
+| A6 | 0,1 | 影狼·赤 | A1 | physical | melee | basic_physical | combo_slash | 700 | 150 | 115 | 20 | 40 | 100 |
+| A7 | 0,2 | 骨龙幼崽 | A2 | magic | cast | basic_magic | group_spell | 600 | 300 | 30 | 120 | 30 | 90 |
+| A8 | 0,3 | 幽灵 | A3 | seal | cast | basic_magic | seal | 600 | 250 | 30 | 90 | 30 | 115 |
+| A9 | 0,4 | 魔偶 | A4 | heal | melee | basic_physical | group_heal | 900 | 250 | 80 | 90 | 60 | 70 |
 
 **敌方**
 | id | 格子 | 名称 | 级别 | 职业 | attackMode | 普攻 | 技能 | HP | MP | 物伤 | 法伤 | 防御 | 速度 |

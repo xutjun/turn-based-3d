@@ -29,6 +29,7 @@ import { collectTicks, type AssetEntry, type AssetRegistry, type TickFn } from '
 import { createEnvironmentMap } from '../assets/environment';
 import { setGlowScale } from '../assets/materials';
 import { getRig } from '../assets/models/characters/rig';
+import { getCreatureHeight } from '../assets/models/creatures';
 import { equipWeapon, getWeaponGlow, setStaffElement } from '../assets/models/weapons';
 import { ASSET_KEYS } from '../data/assetKeys';
 import { createDefaultRegistry } from '../assets/registerDefaults';
@@ -64,6 +65,7 @@ export class PreviewPage {
   private model: Object3D | null = null;
   private weapon: Object3D | null = null; // 当前画面里的武器（单独预览的，或人物手持的）
   private weaponKey = '';
+  private baseDistance = 5.6; // 人物大小的模型的相机距离
   private holdWeapon = true; // 人物是否手持武器
   private element: StaffElement = 'thunder';
   private ticks: TickFn[] = [];
@@ -96,7 +98,7 @@ export class PreviewPage {
     key.shadow.mapSize.set(1024, 1024);
     key.shadow.camera.left = -3;
     key.shadow.camera.right = 3;
-    key.shadow.camera.top = 4;
+    key.shadow.camera.top = 6;
     key.shadow.camera.bottom = -1;
     key.shadow.bias = -0.0005;
     key.shadow.normalBias = 0.02;
@@ -123,12 +125,13 @@ export class PreviewPage {
     // 相机与轨道控制
     const yaw = (Number(query.get('yaw') ?? 25) * Math.PI) / 180;
     const dist = Number(query.get('dist')) || 5.6;
+    this.baseDistance = dist;
     this.camera.position.set(Math.sin(yaw) * dist, 2.0, Math.cos(yaw) * dist);
     this.controls = new OrbitControls(this.camera, this.renderer.domElement);
     this.controls.target.set(0, 0.95, 0);
     this.controls.enableDamping = true;
     this.controls.minDistance = 1.2;
-    this.controls.maxDistance = 14;
+    this.controls.maxDistance = 22;
     this.controls.maxPolarAngle = Math.PI * 0.52;
     this.controls.update();
 
@@ -204,14 +207,16 @@ export class PreviewPage {
     // 找出画面里的武器：单独预览的武器，或人物手持的武器
     this.weapon = null;
     this.weaponKey = '';
-    let focusY = 0.95;
+    // 相机对准模型中部；比人物高的模型（Boss）按比例拉远
+    const bounds = new Box3().setFromObject(this.model);
+    let focusY = Math.max(0.5, bounds.max.y / 2);
+    const fit = Math.max(1, bounds.max.y / 2.3);
     if (entry.category === 'weapon') {
       this.weapon = this.model;
       this.weaponKey = entry.key;
       // 武器原点在握持点，抬高到整把武器都在地面以上，并让相机对准中部
-      const box = new Box3().setFromObject(this.model);
-      this.model.position.y = WEAPON_LIFT - box.min.y;
-      focusY = WEAPON_LIFT + (box.max.y - box.min.y) / 2;
+      this.model.position.y = WEAPON_LIFT - bounds.min.y;
+      focusY = WEAPON_LIFT + (bounds.max.y - bounds.min.y) / 2;
     } else if (entry.previewWeapon && this.holdWeapon && this.registry.has(entry.previewWeapon.key)) {
       this.weapon = this.registry.create(entry.previewWeapon.key, entry.previewWeapon.params ?? {});
       this.weaponKey = entry.previewWeapon.key;
@@ -219,6 +224,8 @@ export class PreviewPage {
     }
     if (this.weapon && this.weaponKey === ASSET_KEYS.weaponStaff) setStaffElement(this.weapon as Group, this.element);
     this.controls.target.y = focusY;
+    const offset = this.camera.position.clone().sub(this.controls.target);
+    this.camera.position.copy(this.controls.target).addScaledVector(offset.normalize(), this.baseDistance * fit);
     this.ticks = collectTicks(this.model);
     setGlowScale(this.model, this.glow);
     this.renderPanel();
@@ -334,6 +341,10 @@ export class PreviewPage {
     const rig = this.model ? getRig(this.model) : undefined;
     const lines = [`${entry.label}`, `资源键：${entry.key}`, `网格 ${meshes} 个，三角面 ${Math.round(triangles)}`];
     if (rig && this.model) lines.push(`高度 ${(rig.height * this.model.scale.y).toFixed(2)}，带骨架关节`);
+    const creatureHeight = this.model ? getCreatureHeight(this.model) : undefined;
+    if (creatureHeight !== undefined && this.model) {
+      lines.push(`高度 ${(creatureHeight * this.model.scale.y).toFixed(2)}，带关节`);
+    }
     const weaponGlow = this.weapon ? getWeaponGlow(this.weapon) : undefined;
     if (weaponGlow) {
       const def = { ...weaponGlow.def, ...weaponGlow.currentColors };

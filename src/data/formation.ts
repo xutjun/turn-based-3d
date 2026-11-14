@@ -10,10 +10,10 @@ export const FORMATION_ROWS = 2; // 0 = 前排（靠近对方），1 = 后排
 export const FORMATION_COLS = 5; // 0 = 屏幕最左，4 = 屏幕最右
 
 export const FORMATION = {
-  colSpacing: 2.2, // 同排相邻格子间距
+  colSpacing: 1.9, // 同排相邻格子间距
   rowSpacing: 2.0, // 前后排间距
-  allyFrontCenter: { x: 4.5, z: 4.5 }, // 友方前排中心（col 2），画面右下
-  enemyFrontCenter: { x: -4.5, z: -4.5 }, // 敌方前排中心（col 2），画面左上
+  allyFrontCenter: { x: 3.4, z: 3.4 }, // 友方前排中心（col 2），画面右下
+  enemyFrontCenter: { x: -3.4, z: -3.4 }, // 敌方前排中心（col 2），画面左上
 };
 
 /** 地面上的二维向量（世界坐标的 x、z 分量） */

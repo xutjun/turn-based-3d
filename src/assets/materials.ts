@@ -184,6 +184,11 @@ export function boneSurfaceMaterial(opts: SurfaceOptions): MeshStandardMaterial 
   return surface(boneTextures(), opts, { metalness: 0, roughness: 1, normal: 1 });
 }
 
+/** 石质（魔偶等，带轮边光，可染色） */
+export function stoneSurfaceMaterial(opts: SurfaceOptions): MeshStandardMaterial {
+  return surface(stoneTextures(), opts, { metalness: 0.05, roughness: 1, normal: 1.5 });
+}
+
 /** 发光强度可整体缩放的材质上，记录基础强度的键 */
 export const GLOW_BASE_KEY = 'glowBase';
 

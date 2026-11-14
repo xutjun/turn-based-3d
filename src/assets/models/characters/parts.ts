@@ -6,15 +6,18 @@ import {
   BufferAttribute,
   BufferGeometry,
   CapsuleGeometry,
+  CatmullRomCurve3,
   CylinderGeometry,
   ExtrudeGeometry,
   LatheGeometry,
   Mesh,
   PlaneGeometry,
   Shape,
+  ShapeGeometry,
   SphereGeometry,
   TorusGeometry,
   Vector2,
+  Vector3,
   type Material,
   type Object3D,
 } from 'three';
@@ -265,4 +268,74 @@ export function chain(
     }
   }
   return mesh(mergeGeometries(parts), material, parent);
+}
+
+/**
+ * 渐细的弯管：沿一串控制点弯曲，半径从 r0 均匀收到 r1。用来做弯角、尾巴、爪、骨刺。
+ */
+export function taperedTube(
+  parent: Object3D,
+  material: Material,
+  points: [number, number, number][],
+  r0: number,
+  r1: number,
+  radial = 7,
+  steps = 12,
+): Mesh {
+  const curve = new CatmullRomCurve3(points.map(([x, y, z]) => new Vector3(x, y, z)));
+  const frames = curve.computeFrenetFrames(steps, false);
+  const positions: number[] = [];
+  const uvs: number[] = [];
+  const indices: number[] = [];
+  const p = new Vector3();
+  for (let i = 0; i <= steps; i++) {
+    const t = i / steps;
+    curve.getPointAt(t, p);
+    const r = r0 + (r1 - r0) * t;
+    const n = frames.normals[i]!;
+    const b = frames.binormals[i]!;
+    for (let j = 0; j <= radial; j++) {
+      const a = (j / radial) * Math.PI * 2;
+      const cx = Math.cos(a) * r;
+      const cy = Math.sin(a) * r;
+      positions.push(p.x + n.x * cx + b.x * cy, p.y + n.y * cx + b.y * cy, p.z + n.z * cx + b.z * cy);
+      uvs.push(j / radial, t);
+    }
+  }
+  const row = radial + 1;
+  for (let i = 0; i < steps; i++) {
+    for (let j = 0; j < radial; j++) {
+      const a = i * row + j;
+      const c = a + row;
+      // 逆时针绕序，法线朝外
+      indices.push(a, a + 1, c, a + 1, c + 1, c);
+    }
+  }
+  const geo = new BufferGeometry();
+  geo.setAttribute('position', new BufferAttribute(new Float32Array(positions), 3));
+  geo.setAttribute('uv', new BufferAttribute(new Float32Array(uvs), 2));
+  geo.setIndex(indices);
+  geo.computeVertexNormals();
+  return mesh(geo, material, parent);
+}
+
+/**
+ * 翼膜：把二维轮廓做成一张薄片（需要双面材质）。轮廓画在 xy 平面，x 向外、y 向上；
+ * 贴图坐标按轮廓的包围盒归一化，v = 0 在下缘，配合破布透明贴图可以得到撕裂的翼缘。
+ */
+export function membrane(parent: Object3D, material: Material, points: [number, number][]): Mesh {
+  const shape = new Shape();
+  points.forEach(([x, y], i) => (i === 0 ? shape.moveTo(x, y) : shape.lineTo(x, y)));
+  shape.closePath();
+  const geo = new ShapeGeometry(shape);
+  const xs = points.map((q) => q[0]);
+  const ys = points.map((q) => q[1]);
+  const minX = Math.min(...xs);
+  const minY = Math.min(...ys);
+  const w = Math.max(...xs) - minX || 1;
+  const h = Math.max(...ys) - minY || 1;
+  const pos = geo.getAttribute('position') as BufferAttribute;
+  const uv = geo.getAttribute('uv') as BufferAttribute;
+  for (let i = 0; i < pos.count; i++) uv.setXY(i, (pos.getX(i) - minX) / w, (pos.getY(i) - minY) / h);
+  return mesh(geo, material, parent);
 }

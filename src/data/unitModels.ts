@@ -1,7 +1,7 @@
 // 单位外观配置：单位模板（templateId）→ 使用哪个模型，以及传给模型 builder 的外观参数。
 // 想调整某个角色的颜色或比例，在 params 里覆盖对应 builder 的默认值即可，例如：
 //   hero_blade: { assetKey: ASSET_KEYS.heroKnight, params: { clothColor: 0x123456, scale: 1.1 } }
-// 没有列在这里的单位（宝宝、敌人在步骤 4c 完成前）使用占位体。
+// 没有列在这里的单位使用占位体。
 // 以后换成真实 glb 模型时，只需把同一个资源键注册成加载 glb 的工厂，这里不用改。
 
 import type { WeaponId } from '../core/types';
@@ -18,6 +18,21 @@ export const UNIT_MODELS: Record<string, UnitModelDef> = {
   hero_sword: { assetKey: ASSET_KEYS.heroSealer }, // 缚魂：封印系祭司
   hero_spear: { assetKey: ASSET_KEYS.heroHealer }, // 守誓：恢复系
   hero_bow: { assetKey: ASSET_KEYS.heroRanger }, // 夜隼：自由职业弓手
+  // 宝宝（体型约为人物的 0.6 倍）
+  pet_wolf_grey: { assetKey: ASSET_KEYS.petWolf }, // 影狼·灰
+  pet_wolf_red: {
+    assetKey: ASSET_KEYS.petWolf, // 影狼·赤：同一个模型换毛色
+    params: { furColor: 0x5a2a22, maneColor: 0x1e0c0a, eyeColor: 0xffa23a },
+  },
+  pet_bone_dragon: { assetKey: ASSET_KEYS.petBoneDragon },
+  pet_ghost: { assetKey: ASSET_KEYS.petGhost },
+  pet_golem: { assetKey: ASSET_KEYS.petGolem },
+  // 敌人（精英略大，Boss 约 2 倍；比例在各 builder 的默认 scale 里，可在 params 覆盖）
+  enemy_skeleton: { assetKey: ASSET_KEYS.enemySkeleton },
+  enemy_fallen_knight: { assetKey: ASSET_KEYS.enemyFallenKnight },
+  enemy_demon_priest: { assetKey: ASSET_KEYS.enemyDemonPriest },
+  enemy_necromancer: { assetKey: ASSET_KEYS.enemyNecromancer },
+  enemy_abyss_lord: { assetKey: ASSET_KEYS.enemyAbyssLord },
 };
 
 /**

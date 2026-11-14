@@ -15,6 +15,7 @@ export interface KnightParams extends CharacterBaseParams {
   leatherColor: number;
   eyeColor: number; // 面甲缝隙里的目光
   eyeIntensity: number;
+  crest: boolean; // 是否带盔顶的鳍
 }
 
 export const KNIGHT_DEFAULTS: KnightParams = {
@@ -27,6 +28,7 @@ export const KNIGHT_DEFAULTS: KnightParams = {
   leatherColor: 0x4a3222,
   eyeColor: 0xff7a2a,
   eyeIntensity: 5,
+  crest: true,
 };
 
 export function buildKnight(params: Partial<KnightParams> = {}): Group {
@@ -119,25 +121,27 @@ export function buildKnight(params: Partial<KnightParams> = {}): Group {
   box(rig.head, eye, 0.18, 0.02, 0.02, 0, 0.125, 0.128); // 横向视缝
   box(rig.head, trim, 0.026, 0.2, 0.03, 0, 0.09, 0.136); // 竖向鼻梁
   ring(rig.head, trim, 0.142, 0.012, 0.05, 5, 20);
-  const fin = extruded(
-    rig.head,
-    cloth,
-    [
-      [-0.15, 0.2],
-      [-0.12, 0.34],
-      [-0.02, 0.4],
-      [0.09, 0.37],
-      [0.15, 0.26],
-      [0.08, 0.275],
-      [0, 0.28],
-      [-0.08, 0.255],
-    ],
-    0.02,
-  );
-  fin.rotation.y = -Math.PI / 2; // 轮廓的 x 轴转到前后方向
+  if (c.crest) {
+    const fin = extruded(
+      rig.head,
+      cloth,
+      [
+        [-0.15, 0.2],
+        [-0.12, 0.34],
+        [-0.02, 0.4],
+        [0.09, 0.37],
+        [0.15, 0.26],
+        [0.08, 0.275],
+        [0, 0.28],
+        [-0.08, 0.255],
+      ],
+      0.02,
+    );
+    fin.rotation.y = -Math.PI / 2; // 轮廓的 x 轴转到前后方向
+  }
 
   // --- 披风 ---
   capeMesh(rig.cape, cloth, { topWidth: 0.5, bottomWidth: 0.78, length: 1.12, wrap: 0.07, flare: 0.3 });
 
-  return finishCharacter(rig, 'knight', 1.9, c.scale);
+  return finishCharacter(rig, 'knight', c.crest ? 1.9 : 1.78, c.scale);
 }

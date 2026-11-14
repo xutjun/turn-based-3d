@@ -1,4 +1,4 @@
-// 友方阵容：5 个人物（前排）+ 5 个宝宝（后排，站在主人身后）。对应 DESIGN.md §8.3。
+// 友方阵容：5 个人物（后排）+ 5 个宝宝（前排，站在主人身前）。对应 DESIGN.md §8.3。
 // 数值为初始值，步骤 8 可调平衡。技能列表（skillIds）在步骤 2 加入。
 
 import type { ClassId, Slot, Stats, UnitTemplate, WeaponId } from '../core/types';
@@ -23,7 +23,7 @@ function hero(
     side: 'ally',
     kind: 'hero',
     classId,
-    slot: { row: 0, col },
+    slot: { row: 1, col },
     weaponId,
     attackMode: weapon.attackMode,
     basicAttackSkillId: weapon.basicAttackSkillId,
@@ -52,7 +52,7 @@ function pet(
     kind: 'pet',
     classId,
     ownerId,
-    slot: { row: 1, col },
+    slot: { row: 0, col },
     attackMode,
     basicAttackSkillId,
     skillIds: [],

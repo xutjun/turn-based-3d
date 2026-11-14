@@ -7,11 +7,11 @@ export const CAMERA_CONFIG = {
   /** 'perspective' = 小 FOV 透视（默认）；'orthographic' = 正交 */
   type: 'perspective' as 'perspective' | 'orthographic',
   fov: 22, // 透视相机的垂直视角（度），越小越接近“伪等距”
-  elevationDeg: 40, // 俯角：35°~45°
+  elevationDeg: 30, // 俯角（SPEC 建议 35°~45°，按验收意见压低到 30°，人物更立体）
   azimuthDeg: 0, // 水平方位角：0 = 相机在 +z 一侧（敌方在左上、友方在右下）
-  distance: 46, // 相机到注视点的距离
-  target: { x: 0, y: 0.6, z: 0.3 }, // 注视点
-  orthoHeight: 19, // 正交相机可见的世界高度
+  distance: 32, // 相机到注视点的距离（越近人物越大）
+  target: { x: 0, y: 1.6, z: 0.8 }, // 注视点
+  orthoHeight: 12.6, // 正交相机可见的世界高度
   fitAspect: 1.6, // 窗口宽高比小于该值时自动放大可见范围，保证双方阵型都在画面内
   near: 1,
   far: 160,

@@ -22,17 +22,17 @@ describe('默认配置表', () => {
     }
   });
 
-  it('友方 5 个人物在前排、各持不同武器；宝宝在主人身后一排', () => {
+  it('友方 5 个人物在后排、各持不同武器；宝宝在主人身前一排', () => {
     const heroes = allies.filter((u) => u.kind === 'hero');
     const pets = allies.filter((u) => u.kind === 'pet');
     expect(heroes).toHaveLength(5);
     expect(pets).toHaveLength(5);
     expect(new Set(heroes.map((h) => h.weaponId)).size).toBe(5);
     for (const h of heroes) {
-      expect(h.slot.row).toBe(0);
+      expect(h.slot.row).toBe(1);
       const pet = pets.find((p) => p.id === h.petId)!;
       expect(pet.ownerId).toBe(h.id);
-      expect(pet.slot).toEqual({ row: 1, col: h.slot.col });
+      expect(pet.slot).toEqual({ row: 0, col: h.slot.col });
     }
   });
 

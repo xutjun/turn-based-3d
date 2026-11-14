@@ -6,3 +6,8 @@ export * from './mage';
 export * from './sealer';
 export * from './healer';
 export * from './ranger';
+export * from './skeleton';
+export * from './fallenKnight';
+export * from './demonPriest';
+export * from './necromancer';
+export * from './abyssLord';
