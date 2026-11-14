@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { BATTLE_CONFIG } from '../../src/data/battleConfig';
 import { createDefaultSetup } from '../../src/data/defaultSetup';
 import { isValidSlot, slotKey } from '../../src/data/formation';
+import { CLASS_SKILLS, RANGED_VARIANTS } from '../../src/data/classes';
 import { SKILLS } from '../../src/data/skills';
 
 describe('默认配置表', () => {
@@ -72,6 +73,113 @@ describe('默认配置表', () => {
     });
     for (const kind of ['physical', 'magic', 'heal'] as const) {
       expect(BATTLE_CONFIG.crit[kind]).toEqual({ rate: 0.1, multiplier: 1.5 });
+    }
+  });
+});
+
+describe('技能表合法性（DESIGN §4.1）', () => {
+  const all = Object.values(SKILLS);
+
+  it('SPEC 要求的技能都在表里，id 与名称不重复', () => {
+    for (const id of ['combo_slash', 'triple_shot', 'whirlwind', 'arrow_rain', 'group_spell', 'group_spell_fire', 'single_spell', 'seal', 'group_heal', 'revive']) {
+      expect(SKILLS[id], id).toBeDefined();
+      expect(SKILLS[id]!.id).toBe(id);
+    }
+    expect(new Set(all.map((s) => s.name)).size).toBe(all.length);
+    for (const s of all) expect(s.description.length, s.id).toBeGreaterThan(0);
+  });
+
+  it('执行模式与目标数、段数匹配', () => {
+    for (const s of all) {
+      if (s.pattern === 'single') expect([s.targetCount, s.hits], s.id).toEqual([1, 1]);
+      else if (s.pattern === 'multiHit') {
+        expect(s.targetCount, s.id).toBe(1);
+        expect(s.hits, s.id).toBeGreaterThanOrEqual(2);
+      } else {
+        expect(s.targetCount, s.id).toBeGreaterThanOrEqual(2);
+        expect(s.hits, s.id).toBe(1);
+      }
+      expect(s.hitRate, s.id).toBeGreaterThan(0);
+      expect(s.hitRate, s.id).toBeLessThanOrEqual(1);
+      expect(s.mpCost > 0, s.id).toBe(s.classId !== 'common'); // 只有普攻不耗魔法
+    }
+  });
+
+  it('目标数符合 SPEC：连斩 1 个 3 段、旋风斩 7、群体法术 6、封印 1、治疗 3、复活 1', () => {
+    expect(SKILLS['combo_slash']).toMatchObject({ targetCount: 1, hits: 3, pattern: 'multiHit' });
+    expect(SKILLS['whirlwind']).toMatchObject({ targetCount: 7, pattern: 'sequential' });
+    expect(SKILLS['group_spell']).toMatchObject({ targetCount: 6, pattern: 'simultaneous' });
+    expect(SKILLS['seal']).toMatchObject({ targetCount: 1, status: { type: 'seal', duration: 3 } });
+    expect(SKILLS['group_heal']).toMatchObject({ targetCount: 3, targetSide: 'ally', pattern: 'simultaneous' });
+    expect(SKILLS['revive']).toMatchObject({ targetCount: 1, reviveHpRatio: 0.3 });
+  });
+
+  it('复活 ⇔ 目标为倒地的友方；物理技能有近战和远程两种动画，法术类技能有施法动画', () => {
+    for (const s of all) {
+      expect(s.effect === 'revive', s.id).toBe(s.targetState === 'dead');
+      if (s.effect === 'revive') expect([s.targetSide, s.targetCount], s.id).toEqual(['ally', 1]);
+      if (s.effect !== 'damage') expect(s.damageType, s.id).toBe('magic');
+      if (s.effect === 'seal') expect(s.status, s.id).toBeDefined();
+      if (s.damageType === 'physical') {
+        expect(s.animation.melee, s.id).toBeDefined();
+        expect(s.animation.ranged, s.id).toBeDefined();
+      } else expect(s.animation.cast, s.id).toBeDefined();
+    }
+  });
+
+  it('弓箭手版本和火系版本与原技能数值完全相同，只是名称、说明、元素不同', () => {
+    const numbers = (id: string) => {
+      const { id: _id, name: _name, description: _d, element: _e, ...rest } = SKILLS[id]!;
+      return rest;
+    };
+    expect(numbers('triple_shot')).toEqual(numbers('combo_slash'));
+    expect(numbers('arrow_rain')).toEqual(numbers('whirlwind'));
+    expect(numbers('group_spell_fire')).toEqual(numbers('group_spell'));
+    expect(SKILLS['group_spell_fire']!.element).toBe('fire');
+  });
+});
+
+describe('单位的技能配置（DESIGN §4.3、§8.3）', () => {
+  const setup = createDefaultSetup(1);
+  const byId = Object.fromEntries(setup.units.map((u) => [u.id, u]));
+
+  it('每个单位的技能都属于自己的职业技能库，且不含普攻', () => {
+    for (const u of setup.units) {
+      for (const id of u.skillIds) {
+        expect(CLASS_SKILLS[u.classId], `${u.id} ${id}`).toContain(id);
+        expect(SKILLS[id]!.classId, `${u.id} ${id}`).toBe(u.classId);
+      }
+    }
+  });
+
+  it('弓箭版技能只给远程单位，远程单位不拿近战版', () => {
+    for (const u of setup.units) {
+      for (const id of u.skillIds) {
+        if (id in RANGED_VARIANTS) expect(u.attackMode, `${u.id} ${id}`).toBe('ranged');
+        if (Object.values(RANGED_VARIANTS).includes(id)) expect(u.attackMode, `${u.id} ${id}`).not.toBe('ranged');
+      }
+    }
+  });
+
+  it('五个人物的技能', () => {
+    expect(byId['A0']!.skillIds).toEqual(['triple_shot', 'arrow_rain']); // 弓
+    expect(byId['A1']!.skillIds).toEqual(['combo_slash', 'whirlwind']); // 刀
+    expect(byId['A2']!.skillIds).toEqual(['group_spell', 'single_spell']); // 法杖
+    expect(byId['A3']!.skillIds).toEqual(['seal']);
+    expect(byId['A4']!.skillIds).toEqual(['group_heal', 'revive']);
+  });
+
+  it('每只宝宝 1 个本职业技能；敌人没有复活，骷髅兵没有技能', () => {
+    for (const u of setup.units.filter((x) => x.kind === 'pet')) expect(u.skillIds, u.id).toHaveLength(1);
+    const enemies = setup.units.filter((x) => x.side === 'enemy');
+    for (const u of enemies) expect(u.skillIds, u.id).not.toContain('revive');
+    for (const u of enemies.filter((x) => x.rank === 'minion')) expect(u.skillIds).toEqual([]);
+    expect(byId['E7']!.skillIds).toEqual(['combo_slash', 'whirlwind']);
+  });
+
+  it('开局每个单位的魔法至少够放一次自己的每个技能', () => {
+    for (const u of setup.units) {
+      for (const id of u.skillIds) expect(u.mp, `${u.id} ${id}`).toBeGreaterThanOrEqual(SKILLS[id]!.mpCost);
     }
   });
 });

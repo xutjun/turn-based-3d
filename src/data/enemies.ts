@@ -1,5 +1,5 @@
 // 敌方阵容：10 个单位，小怪 + 精英 + 1 个 Boss。对应 DESIGN.md §8.3。
-// 数值为初始值，步骤 8 可调平衡。技能列表（skillIds）在步骤 2 加入。
+// 数值为初始值，步骤 8 可调平衡。敌人没有复活技能（敌人被击败即消失）。
 
 import type { ClassId, EnemyRank, Slot, Stats, UnitTemplate } from '../core/types';
 
@@ -11,6 +11,7 @@ interface EnemyArchetype {
   classId: ClassId;
   attackMode: UnitTemplate['attackMode'];
   basicAttackSkillId: string;
+  skillIds: string[]; // 不含普攻，必须是所属职业技能库的子集
   stats: Stats;
 }
 
@@ -22,6 +23,7 @@ const ARCHETYPES = {
     classId: 'physical',
     attackMode: 'melee',
     basicAttackSkillId: 'basic_physical',
+    skillIds: [],
     stats: { maxHp: 600, maxMp: 0, physAtk: 120, magAtk: 0, defense: 40, speed: 80 },
   },
   fallenKnight: {
@@ -31,6 +33,7 @@ const ARCHETYPES = {
     classId: 'physical',
     attackMode: 'melee',
     basicAttackSkillId: 'basic_physical',
+    skillIds: ['combo_slash'],
     stats: { maxHp: 1100, maxMp: 200, physAtk: 150, magAtk: 30, defense: 70, speed: 75 },
   },
   demonPriestSeal: {
@@ -40,6 +43,7 @@ const ARCHETYPES = {
     classId: 'seal',
     attackMode: 'cast',
     basicAttackSkillId: 'basic_magic',
+    skillIds: ['seal'],
     stats: { maxHp: 800, maxMp: 400, physAtk: 60, magAtk: 130, defense: 40, speed: 105 },
   },
   demonPriestHeal: {
@@ -49,6 +53,7 @@ const ARCHETYPES = {
     classId: 'heal',
     attackMode: 'cast',
     basicAttackSkillId: 'basic_magic',
+    skillIds: ['group_heal'],
     stats: { maxHp: 800, maxMp: 500, physAtk: 60, magAtk: 130, defense: 40, speed: 88 },
   },
   necromancer: {
@@ -58,6 +63,7 @@ const ARCHETYPES = {
     classId: 'magic',
     attackMode: 'cast',
     basicAttackSkillId: 'basic_magic',
+    skillIds: ['group_spell', 'single_spell'],
     stats: { maxHp: 750, maxMp: 500, physAtk: 40, magAtk: 160, defense: 35, speed: 92 },
   },
   abyssLord: {
@@ -67,6 +73,7 @@ const ARCHETYPES = {
     classId: 'physical',
     attackMode: 'melee',
     basicAttackSkillId: 'basic_physical',
+    skillIds: ['combo_slash', 'whirlwind'],
     stats: { maxHp: 4000, maxMp: 600, physAtk: 220, magAtk: 100, defense: 90, speed: 70 },
   },
 } satisfies Record<string, EnemyArchetype>;
@@ -90,7 +97,7 @@ function enemy(
     slot: { row, col },
     attackMode: archetype.attackMode,
     basicAttackSkillId: archetype.basicAttackSkillId,
-    skillIds: [],
+    skillIds: [...archetype.skillIds],
     stats: { ...archetype.stats, speed: speed ?? archetype.stats.speed },
   };
 }

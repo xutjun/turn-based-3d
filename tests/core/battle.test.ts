@@ -528,7 +528,7 @@ describe('MP 管理与技能可用性', () => {
     });
   });
 
-  it('被封印的单位技能置灰并被拒绝（封印的施加在步骤 2 实现）', () => {
+  it('被封印的单位技能置灰并被拒绝', () => {
     const sealed = caster(60);
     sealed.statuses = [{ type: 'seal', remainingTurns: 2, sourceId: 'E0', appliedTurn: 0 }];
     const { engine } = makeEngine([sealed, dummy()]);

@@ -1,7 +1,8 @@
 // 友方阵容：5 个人物（后排）+ 5 个宝宝（前排，站在主人身前）。对应 DESIGN.md §8.3。
-// 数值为初始值，步骤 8 可调平衡。技能列表（skillIds）在步骤 2 加入。
+// 数值为初始值，步骤 8 可调平衡。人物的技能取职业技能库（classes.ts），宝宝每只 1 个本职业技能。
 
 import type { ClassId, Slot, Stats, UnitTemplate, WeaponId } from '../core/types';
+import { heroSkillIds } from './classes';
 import { WEAPONS } from './weapons';
 
 type Col = Slot['col'];
@@ -27,7 +28,7 @@ function hero(
     weaponId,
     attackMode: weapon.attackMode,
     basicAttackSkillId: weapon.basicAttackSkillId,
-    skillIds: [],
+    skillIds: heroSkillIds(classId, weapon.attackMode),
     stats,
   };
 }
@@ -42,6 +43,7 @@ function pet(
   classId: ClassId,
   attackMode: UnitTemplate['attackMode'],
   basicAttackSkillId: string,
+  skillId: string,
   stats: Stats,
 ): UnitTemplate {
   return {
@@ -55,7 +57,7 @@ function pet(
     slot: { row: 0, col },
     attackMode,
     basicAttackSkillId,
-    skillIds: [],
+    skillIds: [skillId],
     stats,
   };
 }
@@ -79,11 +81,11 @@ export const HERO_TEMPLATES: UnitTemplate[] = [
 ];
 
 export const PET_TEMPLATES: UnitTemplate[] = [
-  pet('A5', 0, 'pet_wolf_grey', '影狼·灰', 'A0', 'physical', 'melee', 'basic_physical', s(650, 150, 110, 20, 40, 105)),
-  pet('A6', 1, 'pet_wolf_red', '影狼·赤', 'A1', 'physical', 'melee', 'basic_physical', s(700, 150, 115, 20, 40, 100)),
-  pet('A7', 2, 'pet_bone_dragon', '骨龙幼崽', 'A2', 'magic', 'cast', 'basic_magic', s(600, 300, 30, 120, 30, 90)),
-  pet('A8', 3, 'pet_ghost', '幽灵', 'A3', 'seal', 'cast', 'basic_magic', s(600, 250, 30, 90, 30, 115)),
-  pet('A9', 4, 'pet_golem', '魔偶', 'A4', 'heal', 'melee', 'basic_physical', s(900, 250, 80, 90, 60, 70)),
+  pet('A5', 0, 'pet_wolf_grey', '影狼·灰', 'A0', 'physical', 'melee', 'basic_physical', 'combo_slash', s(650, 150, 110, 20, 40, 105)),
+  pet('A6', 1, 'pet_wolf_red', '影狼·赤', 'A1', 'physical', 'melee', 'basic_physical', 'combo_slash', s(700, 150, 115, 20, 40, 100)),
+  pet('A7', 2, 'pet_bone_dragon', '骨龙幼崽', 'A2', 'magic', 'cast', 'basic_magic', 'group_spell_fire', s(600, 300, 30, 120, 30, 90)),
+  pet('A8', 3, 'pet_ghost', '幽灵', 'A3', 'seal', 'cast', 'basic_magic', 'seal', s(600, 250, 30, 90, 30, 115)),
+  pet('A9', 4, 'pet_golem', '魔偶', 'A4', 'heal', 'melee', 'basic_physical', 'group_heal', s(900, 250, 80, 90, 60, 70)),
 ];
 
 /** 友方全部 10 个单位，顺序 A0..A9 */

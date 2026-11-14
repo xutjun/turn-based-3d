@@ -161,6 +161,8 @@ async function runBattle(seed: number, skip: boolean) {
     engine.beginExecution();
     await idle();
     while (engine.getState().phase === 'execution') {
+      const waiting = engine.getState().awaitingCommandFor;
+      if (waiting !== null) engine.submitCommand(waiting, engine.suggestCommand(waiting));
       engine.stepAction();
       await idle();
       // 演出追上逻辑后，界面数值必须和逻辑层一致，且没有人留在站位之外
@@ -204,12 +206,25 @@ describe('BattleDirector：整场自动战斗', () => {
     const movers = new Set(fakes.log.filter((l) => l.startsWith('moveTo:')).map((l) => l.split(':')[1]!));
     expect(movers.size).toBeGreaterThan(0);
     for (const id of movers) expect(units[id]!.attackMode, id).toBe('melee');
-    // 弓箭手用箭矢，施法者用光弹
-    expect(fakes.log).toContain('projectile-arrow');
+    // 弓箭手用箭矢（普攻 / 三连射）或射向天空的光箭（箭雨），施法者用光弹
+    expect(fakes.log.some((l) => l === 'projectile-arrow' || l === 'projectile-skyArrow')).toBe(true);
     expect(fakes.log).toContain('projectile-bolt');
-    // 每次冲锋都对应一次返回
-    const count = (p: string): number => fakes.log.filter((l) => l.startsWith(p)).length;
-    expect(count('returnHome:')).toBe(count('moveTo:'));
+    // 每次离开站位（旋风斩会连续冲向多个目标）都以一次返回结束，返回之前不会有别的单位离开站位
+    let away: string | null = null;
+    let returns = 0;
+    for (const l of fakes.log) {
+      const id = l.split(':')[1]!;
+      if (l.startsWith('moveTo:')) {
+        expect(away === null || away === id, l).toBe(true);
+        away = id;
+      } else if (l.startsWith('returnHome:')) {
+        expect(away, l).toBe(id);
+        away = null;
+        returns += 1;
+      }
+    }
+    expect(away).toBeNull();
+    expect(returns).toBeGreaterThan(0);
   });
 });
 

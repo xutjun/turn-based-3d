@@ -1,4 +1,4 @@
-// AI 阈值（对应 DESIGN.md §8.4）。步骤 1 的 AI 只会普攻残血目标，这些阈值在步骤 2 启用。
+// AI 阈值（对应 DESIGN.md §8.4）。敌方与自动出手的宝宝共用。
 
 import type { AiConfig } from '../core/types';
 

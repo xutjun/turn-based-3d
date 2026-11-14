@@ -146,10 +146,18 @@ export function makeEngine(
   return { engine, events };
 }
 
-/** 把执行阶段跑完（直到进入下一回合的指令阶段或战斗结束），返回期间的事件 */
+/**
+ * 把执行阶段跑完（直到进入下一回合的指令阶段或战斗结束），返回期间的事件。
+ * 遇到刚复活、等待现场下指令的单位时，采用 AI 建议。
+ */
 export function runExecution(engine: BattleEngine): BattleEvent[] {
   const out: BattleEvent[] = [];
   while (engine.getState().phase === 'execution') {
+    const waiting = engine.getState().awaitingCommandFor;
+    if (waiting !== null) {
+      const r = engine.submitCommand(waiting, engine.suggestCommand(waiting));
+      if (!r.ok) throw new Error(`指令被拒绝：${waiting} ${r.reason}`);
+    }
     const batch = engine.stepAction();
     if (batch) out.push(...batch);
   }

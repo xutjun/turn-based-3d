@@ -52,3 +52,19 @@ export function pickUnitAt(x: number, y: number, boxes: readonly ScreenBox[]): U
   }
   return best?.id ?? null;
 }
+
+/** 界面面板的选择器：落在这些元素上的鼠标事件不算选目标 */
+export const PANEL_SELECTOR = '.dk-panel, .dk-result-veil, .hud-controls';
+
+/**
+ * 一次鼠标事件是否发生在界面面板上。
+ * 必须用事件派发时的路径（event.composedPath()）判断，不能用 target.closest()：
+ * 点技能按钮会让面板立刻重画，按钮随即脱离文档，closest() 找不到面板，
+ * 这次点击就会被当成点在战场上——按钮背后正好有单位时会直接把它选为目标。
+ */
+export function eventOnPanel(path: readonly unknown[]): boolean {
+  return path.some((node) => {
+    const el = node as { matches?: (selector: string) => boolean };
+    return typeof el.matches === 'function' && el.matches(PANEL_SELECTOR);
+  });
+}

@@ -1,6 +1,5 @@
 // 目标规则（对应 DESIGN.md §6）。
-// 步骤 1 实现：目标合法性、速度顺序、主目标失效时的重选。
-// 多目标补足与执行顺序在步骤 2 实现。
+// 目标合法性、速度顺序、主目标失效时的重选、多目标补足与执行顺序。
 
 import { isSealed } from './status';
 import type { BattleState, SkillDef, Unit, UnitId } from './types';
@@ -44,4 +43,34 @@ export function listValidTargets(state: BattleState, actor: Unit, skill: SkillDe
 /** 主目标失效时重选：按速度顺序取第一个合法目标；没有则返回 null（DESIGN §6.5） */
 export function pickRetarget(state: BattleState, actor: Unit, skill: SkillDef): UnitId | null {
   return listValidTargets(state, actor, skill)[0] ?? null;
+}
+
+/**
+ * 一次出手的全部目标，按执行顺序排列（DESIGN §6.3、§6.4）。界面预览和实际执行都调用本函数。
+ * - 主目标一定在内并排第一；其余合法单位按速度由快到慢补足到 targetCount，不足则全部命中。
+ * - 复活和单目标技能不补足，只取主目标。
+ * - 依次攻击的技能若配置为 leftToRight，主目标之后按列从左到右（同列前排在先）。
+ * 主目标不合法时返回空数组。
+ */
+export function resolveTargets(
+  state: BattleState,
+  actor: Unit,
+  skill: SkillDef,
+  primaryId: UnitId,
+): UnitId[] {
+  const primary = state.units[primaryId];
+  if (!primary || !isValidTarget(actor, skill, primary)) return [];
+  if (skill.targetCount <= 1 || skill.effect === 'revive') return [primaryId];
+
+  const rest = listValidTargets(state, actor, skill)
+    .filter((id) => id !== primaryId)
+    .slice(0, skill.targetCount - 1);
+  if (skill.pattern === 'sequential' && skill.sequenceOrder === 'leftToRight') {
+    rest.sort((a, b) => {
+      const sa = state.units[a]!.slot;
+      const sb = state.units[b]!.slot;
+      return sa.col !== sb.col ? sa.col - sb.col : sa.row - sb.row;
+    });
+  }
+  return [primaryId, ...rest];
 }

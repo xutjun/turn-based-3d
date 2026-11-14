@@ -1,7 +1,12 @@
 import { describe, expect, it } from 'vitest';
+import { BattleEngine } from '../../src/core/battle';
+import type { BattleEvent } from '../../src/core/events';
+import { createDefaultSetup } from '../../src/data/defaultSetup';
 import { ENEMY_TEMPLATES } from '../../src/data/enemies';
 import { ALLY_TEMPLATES } from '../../src/data/heroes';
-import { snapshotOf } from '../../src/ui/showcase/showcaseScript';
+import { autoPlay } from '../helpers';
+import { SKILLS } from '../../src/data/skills';
+import { buildShowcaseScript, snapshotOf } from '../../src/ui/showcase/showcaseScript';
 import { buildSkillDemos, DEMO_SKILLS } from '../../src/ui/showcase/skillDemoScripts';
 
 // 技能演示脚本是手工编排的事件：检查每个演示自身前后一致，符合 DESIGN §3 的事件约定
@@ -95,4 +100,54 @@ describe('技能演示脚本（?demo=skills）', () => {
       expect(actor).toBeNull();
     });
   }
+
+  it('技能 id、名称、消耗、动画、元素都与技能表一致', () => {
+    expect(DEMO_SKILLS).toBe(SKILLS);
+    expect(SKILLS['group_spell_fire']!.name).toBe('群体法术·烈焰');
+    expect(SKILLS['triple_shot']!.name).toBe('三连射');
+    expect(SKILLS['arrow_rain']!.name).toBe('箭雨');
+    const scripts = [...demos.map((d) => d.events), buildShowcaseScript(units)];
+    for (const events of scripts) {
+      for (const e of events) {
+        if (e.type !== 'SkillCast') continue;
+        const skill = SKILLS[e.skillId];
+        expect(skill, e.skillId).toBeDefined();
+        expect(e.mpCost, e.skillId).toBe(skill!.mpCost);
+        expect(e.animation, e.skillId).toBe(skill!.animation[e.delivery]);
+        expect(e.targets.length, e.skillId).toBeLessThanOrEqual(skill!.targetCount);
+        if (skill!.classId !== 'common') expect(e.element, e.skillId).toBe(skill!.element);
+        // 演示里的施放者在正式战斗里确实拥有这个技能
+        if (skill!.classId !== 'common') {
+          const owner = [...ALLY_TEMPLATES, ...ENEMY_TEMPLATES].find((t) => t.id === e.actorId)!;
+          expect(owner.skillIds, `${e.actorId} ${e.skillId}`).toContain(e.skillId);
+        }
+      }
+    }
+  });
+
+  it('逻辑层在正式战斗里发出的事件与演示脚本格式相同：同类事件的字段完全一致', () => {
+    const fields = (e: object): string => Object.keys(e).filter((k) => k !== 'seq' && k !== 'turn').sort().join(',');
+    const demoShapes = new Map<string, string>();
+    for (const e of demos.flatMap((d) => d.events)) demoShapes.set(e.type, fields(e));
+
+    const engineEvents: BattleEvent[] = [];
+    const engine = new BattleEngine(createDefaultSetup(2));
+    engine.events.onAny((e) => engineEvents.push(e));
+    autoPlay(engine);
+    const seen = new Set<string>();
+    for (const e of engineEvents) {
+      const expected = demoShapes.get(e.type);
+      if (expected === undefined) continue;
+      expect(fields(e), e.type).toBe(expected);
+      seen.add(e.type);
+    }
+    for (const type of ['SkillCast', 'HitResolved', 'HealResolved', 'UnitDied', 'UnitRevived', 'StatusApplied', 'StatusResisted', 'StatusTicked', 'StatusRemoved']) {
+      expect(seen.has(type), type).toBe(true);
+    }
+    // 正式战斗里出现的 技能 + 出手方式 + 动画 组合，演示里都演过
+    const combo = (e: { skillId: string; delivery: string; animation: string; element: string }): string =>
+      `${e.skillId}/${e.delivery}/${e.animation}/${e.element}`;
+    const demoCombos = new Set(demos.flatMap((d) => d.events).flatMap((e) => (e.type === 'SkillCast' ? [combo(e)] : [])));
+    for (const e of engineEvents) if (e.type === 'SkillCast') expect(demoCombos.has(combo(e)), combo(e)).toBe(true);
+  });
 });

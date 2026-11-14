@@ -401,25 +401,30 @@ UnitActEnd
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
 | `basic_physical` | 普攻 | common | 0 | damage | physical | 敌·存活 | 1 | single | 1 | 1.0 | 0.95 | 是 | meleeStrike / bowShot / — | none | — |
 | `basic_magic` | 法术普攻 | common | 0 | damage | magic | 敌·存活 | 1 | single | 1 | 1.0 | 0.95 | 否 | — / — / castBolt | fire | — |
-| `combo_slash` | 连斩 | physical | 40 | damage | physical | 敌·存活 | 1 | multiHit | 3 | 0.6 | 1.0 | 是 | comboSlash / tripleShot / — | none | 弓箭手为“原地三连射” |
-| `whirlwind` | 旋风斩 | physical | 80 | damage | physical | 敌·存活 | 7 | sequential | 1 | 0.7 | 1.0 | 是 | whirlwind / arrowRain / — | none | `sequenceOrder: 'speedDesc'`；弓箭手为“箭雨” |
+| `combo_slash` | 连斩 | physical | 40 | damage | physical | 敌·存活 | 1 | multiHit | 3 | 0.6 | 1.0 | 是 | comboSlash / tripleShot / — | none | 近战单位使用 |
+| `triple_shot` | 三连射 | physical | 40 | damage | physical | 敌·存活 | 1 | multiHit | 3 | 0.6 | 1.0 | 是 | comboSlash / tripleShot / — | none | 连斩的弓箭手版本：数值相同，远程单位使用 |
+| `whirlwind` | 旋风斩 | physical | 80 | damage | physical | 敌·存活 | 7 | sequential | 1 | 0.7 | 1.0 | 是 | whirlwind / arrowRain / — | none | `sequenceOrder: 'speedDesc'`；近战单位使用 |
+| `arrow_rain` | 箭雨 | physical | 80 | damage | physical | 敌·存活 | 7 | sequential | 1 | 0.7 | 1.0 | 是 | whirlwind / arrowRain / — | none | 旋风斩的弓箭手版本：数值相同，远程单位使用 |
 | `group_spell` | 群体法术·天雷 | magic | 80 | damage | magic | 敌·存活 | 6 | simultaneous | 1 | 0.8 | 1.0 | 否 | — / — / groupSpell | thunder | — |
+| `group_spell_fire` | 群体法术·烈焰 | magic | 80 | damage | magic | 敌·存活 | 6 | simultaneous | 1 | 0.8 | 1.0 | 否 | — / — / groupSpell | fire | 群体法术的火系版本：数值相同，骨龙幼崽使用 |
 | `single_spell` | 单体法术·炎爆 | magic | 50 | damage | magic | 敌·存活 | 1 | single | 1 | 1.6 | 1.0 | 否 | — / — / singleSpell | fire | SPEC §7.1 中的“可选补充” |
 | `seal` | 封印 | seal | 60 | seal | magic | 敌·存活且未被封印 | 1 | single | 1 | 0 | 0.75 | 否 | — / — / sealChain | seal | `status: { type: 'seal', duration: 3 }` |
 | `group_heal` | 群体治疗 | heal | 80 | heal | magic | 友·存活 | 3 | simultaneous | 1 | 1.0 | 1.0 | 否 | — / — / groupHeal | heal | — |
 | `revive` | 复活 | heal | 120 | revive | magic | 友·死亡 | 1 | single | 1 | 0 | 1.0 | 否 | — / — / revive | heal | `reviveHpRatio: 0.3` |
+
+> 步骤 2 补充：`triple_shot`、`arrow_rain`、`group_spell_fire` 不是新技能，而是 SPEC §7.1 里连斩 / 旋风斩的“弓箭手版本”和群体法术的另一种元素。它们在技能表里各占一行（用原技能改名称、说明、元素得到，数值由测试保证相同），这样指令面板、日志、飘字和技能演示模式显示的名称完全一致。
 
 单体治疗（SPEC §7.1 中的“可选补充”）本期不做，表结构已能支持（`effect: heal, pattern: single`）。
 
 ### 4.3 职业技能库（`classes.ts`）
 | 职业 | 技能库（不含普攻） |
 |---|---|
-| physical | `combo_slash`, `whirlwind` |
-| magic | `group_spell`, `single_spell` |
+| physical | `combo_slash`, `whirlwind`（近战）；`triple_shot`, `arrow_rain`（远程） |
+| magic | `group_spell`, `group_spell_fire`, `single_spell` |
 | seal | `seal` |
 | heal | `group_heal`, `revive` |
 
-- 友方人物：`skillIds` = 职业技能库。
+- 友方人物：`skillIds` 由 `heroSkillIds(职业, 出手方式)` 给出——物理系近战拿 `combo_slash, whirlwind`，弓箭手拿 `triple_shot, arrow_rain`；法术系拿 `group_spell, single_spell`；封印、恢复拿各自的全部技能。
 - 宝宝与敌人：`skillIds` 在模板里写明，必须是所属职业技能库的子集。
 - 敌人不能拥有 `revive`（敌人被击败即消失，见 §5.5）；步骤 2 用测试校验。
 
@@ -652,7 +657,7 @@ position(side, row, col) = frontCenter(side)
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|
 | A5 | 0,0 | 影狼·灰 | A0 | physical | melee | basic_physical | combo_slash | 650 | 150 | 110 | 20 | 40 | 105 |
 | A6 | 0,1 | 影狼·赤 | A1 | physical | melee | basic_physical | combo_slash | 700 | 150 | 115 | 20 | 40 | 100 |
-| A7 | 0,2 | 骨龙幼崽 | A2 | magic | cast | basic_magic | group_spell | 600 | 300 | 30 | 120 | 30 | 90 |
+| A7 | 0,2 | 骨龙幼崽 | A2 | magic | cast | basic_magic | group_spell_fire | 600 | 300 | 30 | 120 | 30 | 90 |
 | A8 | 0,3 | 幽灵 | A3 | seal | cast | basic_magic | seal | 600 | 250 | 30 | 90 | 30 | 115 |
 | A9 | 0,4 | 魔偶 | A4 | heal | melee | basic_physical | group_heal | 900 | 250 | 80 | 90 | 60 | 70 |
 
@@ -681,8 +686,8 @@ AI 在 `beginExecution()` 时、基于当时的状态决定指令；出手时目
   2. 没有候选时，对任意存活且未被封印、拥有技能的对方单位，取法伤最高者封印。
   3. 否则普攻残血敌人。
 - **其他**（物理系、法术系；SPEC §8：优先攻击残血目标）：主目标 = 残血敌人。
-  1. 存活对方单位数 ≥ `aoeMinTargets (3)` 且有群体技能（`whirlwind` / `group_spell`）→ 使用群体技能。
-  2. 否则有单体技能（`combo_slash` / `single_spell`）→ 使用单体技能。
+  1. 存活对方单位数 ≥ `aoeMinTargets (3)` 且有群体技能（目标数 > 1 的伤害技能：`whirlwind` / `arrow_rain` / `group_spell` / `group_spell_fire`）→ 使用群体技能。
+  2. 否则有单体技能（目标数 = 1 的伤害技能：`combo_slash` / `triple_shot` / `single_spell`）→ 使用单体技能。
   3. 否则普攻。
 - AI 不选防御指令。
 

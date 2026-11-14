@@ -127,6 +127,7 @@ function printEvent(e: BattleEvent): void {
     case 'SkillCast':
       detail(
         `      ${skillName(e.skillId)}（${DELIVERY_NAME[e.delivery]}）` +
+          (e.targets.length > 1 ? ` → ${e.targets.length} 个目标：${e.targets.join(' ')}` : '') +
           (e.mpCost > 0 ? `，魔法 ${e.mpBefore}→${e.mpAfter}` : ''),
       );
       break;
@@ -142,6 +143,32 @@ function printEvent(e: BattleEvent): void {
       break;
     case 'UnitDied':
       log(`      ✖ ${label(e.unitId)} ${e.vanish ? '被击败，从场上消失' : '倒地'}`);
+      break;
+    case 'HealResolved':
+      detail(
+        `      治疗 ${label(e.targetId)}：回复 ${e.amount}${e.isCrit ? '【暴击】' : ''}，气血 ${e.hpBefore}→${e.hpAfter}`,
+      );
+      break;
+    case 'StatusApplied':
+      detail(`      封印 ${label(e.unitId)}，持续 ${e.remainingTurns} 回合`);
+      break;
+    case 'StatusResisted':
+      detail(`      ${label(e.unitId)} 抵抗了封印`);
+      break;
+    case 'StatusTicked':
+      detail(`  · ${label(e.unitId)} 的封印还剩 ${e.remainingTurns} 回合`);
+      break;
+    case 'StatusRemoved':
+      if (e.reason === 'expired') detail(`  · ${label(e.unitId)} 的封印解除`);
+      break;
+    case 'UnitRevived':
+      log(
+        `      ✚ ${label(e.unitId)} 被复活，气血 ${e.hpAfter}/${e.maxHp}` +
+          (e.actsThisTurn ? '（本回合还能出手）' : '（本回合不再出手）'),
+      );
+      break;
+    case 'CommandRequested':
+      detail(`  ？ ${label(e.unitId)} 刚被复活，现场下指令`);
       break;
     case 'UnitActEnd':
       detail(`  ◀ ${label(e.actorId)} 行动结束`);
@@ -184,6 +211,12 @@ while (engine.getState().phase !== 'ended') {
   engine.beginExecution();
   // 执行阶段：一次一个单位出手
   while (engine.getState().phase === 'execution') {
+    // 刚复活的单位轮到出手：现场下指令
+    const waiting = engine.getState().awaitingCommandFor;
+    if (waiting !== null) {
+      const result = engine.submitCommand(waiting, engine.suggestCommand(waiting));
+      if (!result.ok) throw new Error(`指令被拒绝：${waiting} 原因 ${result.reason}`);
+    }
     engine.stepAction();
   }
 }

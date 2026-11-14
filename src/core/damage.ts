@@ -9,6 +9,9 @@
 //   base   = max(1, 攻击者法术伤害 × 技能倍率 − 目标防御 × 法术防御系数)
 //   damage = max(1, round(base × 随机浮动 × 暴击倍率 × 防御指令倍率))
 //
+// 治疗：
+//   amount = round(施法者法术伤害 × 技能倍率 × 随机浮动 × 暴击倍率)，不受防御影响
+//
 // 每一段伤害的随机数消耗顺序固定为：命中 → 浮动 → 暴击。
 // 未命中时只消耗“命中”这一个随机数，伤害为 0。
 
@@ -107,4 +110,26 @@ export function resolveDamage(
 
   const damage = Math.max(1, Math.round(base * variance * critMult * defendMult));
   return { isMiss: false, isCrit, defended: target.defending, damage };
+}
+
+/** 一个治疗目标的结算结果 */
+export interface HealResult {
+  isCrit: boolean;
+  amount: number; // 治疗量（还没有按气血上限截断）
+}
+
+/**
+ * 结算一次治疗（DESIGN §5.4）：治疗量 = round(法术伤害 × 倍率 × 随机浮动 × 暴击倍率)。
+ * 治疗不判定命中、不受防御影响；随机数消耗顺序为：浮动 → 暴击。
+ */
+export function resolveHeal(
+  source: DamageSource,
+  skill: Pick<DamageSkill, 'multiplier'>,
+  config: BattleConfig,
+  rng: Rng,
+): HealResult {
+  const variance = rollVariance(config, rng);
+  const isCrit = rollCrit(config.crit.heal, rng);
+  const critMult = isCrit ? config.crit.heal.multiplier : 1;
+  return { isCrit, amount: Math.round(source.magAtk * skill.multiplier * variance * critMult) };
 }

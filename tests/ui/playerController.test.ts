@@ -5,6 +5,10 @@ import { SKILLS } from '../../src/data/skills';
 import type { LogLine } from '../../src/ui/log/battleLog';
 import { PlayerBattleController, type UiPhase } from '../../src/ui/PlayerBattleController';
 import type { BattleSummary } from '../../src/ui/stats/BattleStats';
+import { makeSetup, makeUnit } from '../helpers';
+
+/** 用技能手动打的几场（种子固定，结果可复现） */
+const SKILL_SEEDS = [1, 2, 3];
 
 /** 让等待中的 Promise 续接跑完 */
 const tick = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0));
@@ -49,6 +53,57 @@ async function playManually(m: ReturnType<typeof createMatch>, maxSteps = 20000)
     commands += 1;
   }
   return commands;
+}
+
+/**
+ * 像玩家一样通过会话下指令，能放技能就放技能：
+ * 技能列表里的技能轮着用：找第一个可用且有目标的技能，悬停预览后点击确认；都不能用就普攻。
+ * 返回用过的技能，以及执行阶段里给刚复活的单位现场下指令的次数。
+ */
+async function playWithSkills(m: ReturnType<typeof createMatch>, maxSteps = 40000) {
+  const { controller, engine } = m;
+  const { session } = controller;
+  const used = new Set<string>();
+  let midTurn = 0;
+  for (let i = 0; i < maxSteps && m.result() === null; i++) {
+    if (session.mode === 'idle') {
+      await tick();
+      continue;
+    }
+    const state = engine.getState();
+    if (state.phase === 'execution') {
+      // 只有刚复活、轮到出手的单位才会在执行阶段要指令
+      expect(state.awaitingCommandFor).toBe(session.unitId);
+      expect(session.progress).toEqual({ index: 1, total: 1 });
+      midTurn += 1;
+    } else expect(state.phase).toBe('command');
+
+    session.openSkills();
+    let done = false;
+    // 每回合换一个技能起头，列表里的技能轮着用
+    const rows = session.skillRows;
+    const shift = rows.length > 0 ? state.turn % rows.length : 0;
+    for (const row of [...rows.slice(shift), ...rows.slice(0, shift)]) {
+      if (!row.enabled) continue;
+      session.chooseSkill(row.skill.id);
+      if (session.mode !== 'target') continue; // 没有可选目标（例如没人倒地时的复活）
+      const target = session.candidates[0]!;
+      session.hover(target);
+      const preview = session.preview;
+      expect(preview[0]).toBe(target);
+      expect(preview.length).toBeLessThanOrEqual(row.skill.targetCount);
+      expect(session.confirmTarget(target)).toBe(true);
+      used.add(row.skill.id);
+      done = true;
+      break;
+    }
+    if (!done) {
+      if (session.mode === 'skills') session.back();
+      session.chooseAttack();
+      expect(session.confirmTarget(session.candidates[0]!)).toBe(true);
+    }
+  }
+  return { used, midTurn };
 }
 
 describe('玩家战斗控制器', () => {
@@ -189,5 +244,77 @@ describe('玩家战斗控制器', () => {
     await running;
     expect(m.engine.getState().turn).toBe(1);
     expect(m.result()).toBeNull();
+  });
+
+  it('手动释放技能可以打完一场：每个友方技能都能在界面里选中并放出，日志里出现技能名', async () => {
+    const used = new Set<string>();
+    const names = new Set<string>();
+    for (const seed of SKILL_SEEDS) {
+      const m = createMatch(seed, false);
+      const running = m.controller.run();
+      const r = await playWithSkills(m);
+      await running;
+      expect(m.engine.getState().phase).toBe('ended');
+      expect(m.controller.session.mode).toBe('idle');
+      for (const id of r.used) used.add(id);
+      for (const l of m.log) for (const s of Object.values(SKILLS)) if (l.text.includes(`「${s.name}」`)) names.add(s.id);
+    }
+    const expected = ['triple_shot', 'arrow_rain', 'combo_slash', 'whirlwind', 'group_spell', 'group_spell_fire', 'single_spell', 'seal', 'group_heal', 'revive'];
+    for (const id of expected) {
+      expect(used.has(id), id).toBe(true);
+      expect(names.has(id), id).toBe(true);
+    }
+  });
+
+  it('复活后排在施法者之后的单位：执行阶段暂停，界面现场要指令，下完后它在本回合出手', async () => {
+    const engine = new BattleEngine(
+      makeSetup(
+        [
+          makeUnit('A0', 'ally', { name: '治疗师', classId: 'heal', skillIds: ['revive'], stats: { speed: 90, maxMp: 200 } }),
+          makeUnit('A1', 'ally', { name: '倒地者', hp: 0, alive: false, stats: { speed: 50 } }),
+          makeUnit('E0', 'enemy', { autoCommand: true, stats: { speed: 10, maxHp: 9999, physAtk: 11 } }),
+        ],
+        { skills: SKILLS },
+      ),
+    );
+    const phases: UiPhase[] = [];
+    const log: LogLine[] = [];
+    const controller = new PlayerBattleController({
+      engine,
+      skills: SKILLS,
+      idle: () => Promise.resolve(),
+      nextFrame: () => Promise.resolve(),
+      petAuto: false,
+      onPhase: (p) => phases.push(p),
+      onLog: (lines) => log.push(...lines),
+    });
+    const { session } = controller;
+    void controller.run();
+    await tick();
+
+    // 指令阶段：只有治疗师要下指令，复活倒地的队友
+    expect(session.unitId).toBe('A0');
+    expect(session.progress).toEqual({ index: 1, total: 1 });
+    session.openSkills();
+    session.chooseSkill('revive');
+    expect(session.candidates).toEqual(['A1']);
+    expect(session.confirmTarget('A1')).toBe(true);
+    for (let i = 0; i < 20 && session.mode === 'idle'; i++) await tick();
+
+    // 执行阶段中途：轮到刚复活的单位，界面回到下指令状态
+    expect(engine.getState().phase).toBe('execution');
+    expect(engine.getState().awaitingCommandFor).toBe('A1');
+    expect(session.unitId).toBe('A1');
+    expect(session.canGoBack).toBe(false); // 只有它一个，不能返回上一个
+    expect(controller.uiPhase).toBe('command');
+    expect(log.some((l) => l.text === '倒地者 被复活（气血 30/100）')).toBe(true);
+    session.chooseAttack();
+    expect(session.confirmTarget('E0')).toBe(true);
+    for (let i = 0; i < 20 && engine.getState().turn === 1; i++) await tick();
+
+    expect(engine.getState().turn).toBe(2);
+    expect(log.some((l) => l.text === '倒地者 攻击 E0')).toBe(true);
+    expect(phases.slice(0, 4)).toEqual(['command', 'execution', 'command', 'execution']);
+    controller.stop();
   });
 });

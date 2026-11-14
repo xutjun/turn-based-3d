@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import { CommandSession, type CommandEngine, type Notice } from '../../src/ui/command/CommandSession';
 import type { SkillDef, Unit } from '../../src/core/types';
+import { BattleEngine } from '../../src/core/battle';
+import type { BattleState } from '../../src/core/types';
+import { createDefaultSetup } from '../../src/data/defaultSetup';
+import { SKILLS } from '../../src/data/skills';
 import { makeEngine, makeUnit, TEST_SKILLS } from '../helpers';
 
 /** 用真实引擎建一个会话，并收集提示 */
@@ -216,8 +220,9 @@ describe('指令会话：非法操作给出提示且不崩溃', () => {
 });
 
 // ----------------------------------------------------------------------
-// 多目标技能与复活：core 的技能结算（步骤 2）尚未实现，这里用桩引擎验证界面这一侧——
+// 多目标技能与复活（桩引擎）：只验证界面这一侧——
 // 会话把引擎给出的预览原样交给界面，目标合法性按技能表的 targetSide / targetState 判断。
+// 用真实引擎和正式技能表的验证见本文件最后一组。
 // ----------------------------------------------------------------------
 
 const skillOf = (id: string, name: string, patch: Partial<SkillDef>): SkillDef => ({
@@ -347,5 +352,157 @@ describe('指令会话：多目标预览与复活目标', () => {
     expect(session.candidates).toEqual(['E1']);
     expect(session.confirmTarget('E0')).toBe(false);
     expect(notices.at(-1)?.text).toBe('目标不合法：E0 已被封印');
+  });
+});
+
+// ----------------------------------------------------------------------
+// 真实引擎 + 正式技能表 + 默认 10v10 阵容：界面里能选到、预览到、提交每一个技能
+// ----------------------------------------------------------------------
+
+describe('指令会话：默认阵容的技能（真实引擎）', () => {
+  function realSession() {
+    const engine = new BattleEngine(createDefaultSetup(1));
+    engine.start();
+    const notices: Notice[] = [];
+    const session = new CommandSession(engine, SKILLS, { onNotice: (n) => notices.push(n) });
+    void session.begin();
+    const state = engine.getState() as BattleState;
+    /** 把前面的单位都防御掉，轮到指定单位 */
+    const goTo = (id: string): void => {
+      for (let i = 0; i < 10 && session.unitId !== id; i++) session.chooseDefend();
+      expect(session.unitId).toBe(id);
+    };
+    return { engine, session, notices, state, goTo };
+  }
+
+  it('技能列表显示技能表里的名称、消耗和说明', () => {
+    const { session, goTo } = realSession();
+    const names = (id: string): string[] => {
+      goTo(id);
+      session.openSkills();
+      const rows = session.skillRows;
+      for (const r of rows) {
+        expect(r.enabled).toBe(true);
+        expect(r.skill.mpCost).toBeGreaterThan(0);
+        expect(r.skill.description.length).toBeGreaterThan(0);
+      }
+      session.back();
+      return rows.map((r) => r.skill.name);
+    };
+    expect(names('A0')).toEqual(['三连射', '箭雨']);
+    expect(names('A5')).toEqual(['连斩']);
+    expect(names('A1')).toEqual(['连斩', '旋风斩']);
+    expect(names('A2')).toEqual(['群体法术·天雷', '单体法术·炎爆']);
+    expect(names('A7')).toEqual(['群体法术·烈焰']);
+    expect(names('A3')).toEqual(['封印']);
+    expect(names('A8')).toEqual(['封印']);
+    expect(names('A4')).toEqual(['群体治疗', '复活']);
+    expect(names('A9')).toEqual(['群体治疗']);
+  });
+
+  it.each([
+    ['A0', 'triple_shot', 1],
+    ['A0', 'arrow_rain', 7],
+    ['A1', 'combo_slash', 1],
+    ['A1', 'whirlwind', 7],
+    ['A2', 'group_spell', 6],
+    ['A2', 'single_spell', 1],
+    ['A7', 'group_spell_fire', 6],
+    ['A3', 'seal', 1],
+  ])('%s 的 %s：可选 10 个敌人，预览命中 %i 个，提交后引擎收到技能指令', (unitId, skillId, count) => {
+    const { engine, session, goTo } = realSession();
+    goTo(unitId);
+    session.openSkills();
+    session.chooseSkill(skillId);
+    expect(session.mode).toBe('target');
+    expect(session.candidates).toHaveLength(10);
+    expect(session.candidates.every((id) => id.startsWith('E'))).toBe(true);
+    session.hover('E7');
+    expect(session.preview).toHaveLength(count);
+    expect(session.preview[0]).toBe('E7'); // 鼠标指着的主目标一定在内
+    expect(session.confirmTarget('E7')).toBe(true);
+    expect(engine.getState().commands[unitId]).toEqual({ kind: 'skill', skillId, targetId: 'E7' });
+  });
+
+  it('敌人减少后，旋风斩和群体法术的预览随之减少', () => {
+    const { session, state, goTo } = realSession();
+    for (const id of ['E0', 'E1', 'E2', 'E3', 'E4', 'E5']) Object.assign(state.units[id]!, { hp: 0, alive: false });
+    goTo('A1');
+    session.openSkills();
+    session.chooseSkill('whirlwind');
+    expect(session.candidates).toEqual(['E6', 'E7', 'E8', 'E9']);
+    session.hover('E8');
+    expect(session.preview).toHaveLength(4);
+  });
+
+  it('群体治疗：可选存活的我方单位，预览 3 个；存活不足 3 个时减少', () => {
+    const { session, state, goTo } = realSession();
+    goTo('A4');
+    session.openSkills();
+    session.chooseSkill('group_heal');
+    expect(session.candidates).toHaveLength(10);
+    expect(session.candidates.every((id) => id.startsWith('A'))).toBe(true);
+    session.hover('A9');
+    expect(session.preview).toHaveLength(3);
+    expect(session.preview[0]).toBe('A9');
+    for (const id of ['A0', 'A1', 'A2', 'A3', 'A5', 'A6', 'A7', 'A8']) Object.assign(state.units[id]!, { hp: 0, alive: false });
+    session.hover(null);
+    session.hover('A4');
+    expect(session.preview).toEqual(['A4', 'A9']);
+  });
+
+  it('复活：没有人倒地时不能选；有人倒地时只能选倒地的队友，预览 1 个', () => {
+    const { engine, session, notices, state, goTo } = realSession();
+    goTo('A4');
+    session.openSkills();
+    session.chooseSkill('revive');
+    expect(session.mode).toBe('skills');
+    expect(notices.at(-1)?.text).toBe('没有可选目标：「复活」只能选择倒地的队友');
+
+    Object.assign(state.units['A1']!, { hp: 0, alive: false });
+    session.chooseSkill('revive');
+    expect(session.mode).toBe('target');
+    expect(session.candidates).toEqual(['A1']);
+    expect(session.confirmTarget('A2')).toBe(false);
+    expect(notices.at(-1)?.text).toBe('目标不合法：「复活」只能选择倒地的队友');
+    session.hover('A1');
+    expect(session.preview).toEqual(['A1']);
+    expect(session.confirmTarget('A1')).toBe(true);
+    expect(engine.getState().commands['A4']).toEqual({ kind: 'skill', skillId: 'revive', targetId: 'A1' });
+  });
+
+  it('魔法不足的技能置灰，其余仍可用；被封印时全部置灰', () => {
+    const { session, notices, state, goTo } = realSession();
+    state.units['A1']!.mp = 50; // 够连斩（40），不够旋风斩（80）
+    goTo('A1');
+    session.openSkills();
+    expect(session.skillRows.map((r) => [r.skill.id, r.enabled, r.disabledReason])).toEqual([
+      ['combo_slash', true, undefined],
+      ['whirlwind', false, 'noMp'],
+    ]);
+    session.chooseSkill('whirlwind');
+    expect(session.mode).toBe('skills');
+    expect(notices.at(-1)?.text).toBe('魔法不足：「旋风斩」需要 80 点魔法，当前只有 50 点');
+
+    state.units['A1']!.statuses.push({ type: 'seal', remainingTurns: 2, sourceId: 'E5', appliedTurn: 1 });
+    expect(session.sealed).toBe(true);
+    expect(session.skillRows.every((r) => !r.enabled && r.disabledReason === 'sealed')).toBe(true);
+    session.chooseSkill('combo_slash');
+    expect(session.mode).toBe('skills');
+    session.back();
+    session.chooseAttack(); // 仍可普攻
+    expect(session.mode).toBe('target');
+  });
+
+  it('已被封印的敌人不在封印的可选目标里', () => {
+    const { session, notices, state, goTo } = realSession();
+    state.units['E6']!.statuses.push({ type: 'seal', remainingTurns: 3, sourceId: 'A8', appliedTurn: 1 });
+    goTo('A3');
+    session.openSkills();
+    session.chooseSkill('seal');
+    expect(session.candidates).toHaveLength(9);
+    expect(session.candidates).not.toContain('E6');
+    expect(session.confirmTarget('E6')).toBe(false);
+    expect(notices.at(-1)?.text).toBe('目标不合法：亡灵法师 已被封印');
   });
 });

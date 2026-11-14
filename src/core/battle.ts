@@ -9,13 +9,12 @@ import { EventBus, type BattleEvent, type BattleEventInput, type UnitSnapshot } 
 import { createRng, type Rng } from './rng';
 import {
   executeSkill,
-  isSkillSupported,
   resolveAnimation,
   resolveDelivery,
   type ExecContext,
 } from './skillExecutor';
-import { isSealed } from './status';
-import { isValidTarget, pickRetarget } from './targeting';
+import { isSealed, tickStatuses } from './status';
+import { isValidTarget, pickRetarget, resolveTargets } from './targeting';
 import { buildTurnOrder } from './turnOrder';
 import type {
   AiConfig,
@@ -130,15 +129,14 @@ export class BattleEngine {
   }
 
   /**
-   * 某技能以某主目标出手时会命中的全部目标（界面预览用）。
-   * 步骤 1 只支持单目标；多目标补足在步骤 2 实现。
+   * 某技能以某主目标出手时会命中的全部目标（界面预览用），与执行时用的是同一个函数。
+   * 主目标不合法时返回空数组。
    */
   previewTargets(unitId: UnitId, skillId: SkillId, primaryId: UnitId): UnitId[] {
     const unit = this.state.units[unitId];
     const skill = this.skills[skillId];
-    const primary = this.state.units[primaryId];
-    if (!unit || !skill || !primary || !isValidTarget(unit, skill, primary)) return [];
-    return [primaryId];
+    if (!unit || !skill) return [];
+    return resolveTargets(this.state, unit, skill, primaryId);
   }
 
   /** 按 AI 规则给出该单位的建议指令（自动战斗、命令行模拟用） */
@@ -165,7 +163,7 @@ export class BattleEngine {
   /**
    * 提交指令。
    * 指令阶段：给任意待指令单位下指令，可重复提交覆盖。
-   * 执行阶段：只接受 awaitingCommandFor 指向的单位（复活单位现场下指令，步骤 2 启用）。
+   * 执行阶段：只接受 awaitingCommandFor 指向的单位（刚复活、轮到它出手的单位现场下指令）。
    */
   submitCommand(unitId: UnitId, cmd: Command): SubmitResult {
     const { state } = this;
@@ -179,10 +177,6 @@ export class BattleEngine {
 
     const reason = validateCommand(state, this.skills, unit, cmd);
     if (reason) return { ok: false, reason };
-    if (cmd.kind === 'skill' && !isSkillSupported(this.skills[cmd.skillId]!)) {
-      // 步骤 1 尚未实现的技能类型一律拒绝
-      return { ok: false, reason: 'unknownSkill' };
-    }
 
     state.commands[unitId] = { ...cmd };
     if (awaiting) state.awaitingCommandFor = null;
@@ -224,6 +218,7 @@ export class BattleEngine {
   /**
    * 执行下一个单位的一次出手，返回这次出手发出的全部事件。
    * 最后一个单位出手后，同一次返回值里会附带回合结算和下一回合开始的事件。
+   * 轮到本回合刚被复活、还没有指令的手动单位时，只发出 CommandRequested 并暂停，等 submitCommand()。
    * 战斗已结束时返回 null。
    */
   stepAction(): BattleEvent[] | null {
@@ -241,8 +236,16 @@ export class BattleEngine {
       if (index === -1) {
         this.settleTurn();
       } else {
+        const actor = state.units[state.turnOrder[index]!]!;
+        if (state.commands[actor.id] === undefined && !actor.autoCommand) {
+          // 本回合被复活的手动单位：倒地时没有指令（或指令已作废），暂停等玩家现场下指令
+          state.actionCursor = index;
+          state.awaitingCommandFor = actor.id;
+          this.emit({ type: 'CommandRequested', unitId: actor.id });
+          return collected;
+        }
         state.actionCursor = index + 1;
-        this.performAction(state.units[state.turnOrder[index]!]!);
+        this.performAction(actor);
         // 每次出手后做胜负判定；没有剩余出手者时进入结算
         if (!this.checkBattleEnd() && this.findNextActorIndex(state.actionCursor) === -1) {
           this.settleTurn();
@@ -340,7 +343,7 @@ export class BattleEngine {
   /** 一个单位的一次出手 */
   private performAction(actor: Unit): void {
     const { state } = this;
-    // 正常情况下每个存活单位都有指令；缺失时（防御性）由 AI 决定
+    // 正常情况下每个存活单位都有指令；本回合被复活的自动单位没有，由 AI 现场决定
     const cmd = state.commands[actor.id] ?? decideCommand(state, this.skills, this.ai, actor.id);
     this.emit({ type: 'UnitActStart', actorId: actor.id, command: { ...cmd } });
 
@@ -392,8 +395,8 @@ export class BattleEngine {
       primary = state.units[nextId]!;
     }
 
-    // 魔法在出手瞬间一次性扣除
-    const targets = [primary.id];
+    // 按主目标补足全部目标；魔法在出手瞬间一次性扣除（多段、多目标也只扣一次）
+    const targets = resolveTargets(state, actor, skill, primary.id);
     const delivery = resolveDelivery(skill, actor);
     const mpBefore = actor.mp;
     actor.mp = mpBefore - skill.mpCost;
@@ -415,11 +418,15 @@ export class BattleEngine {
     this.emit({ type: 'UnitActEnd', actorId: actor.id });
   }
 
-  /** 回合结算：清除防御，发出 TurnEnd，进入下一回合 */
+  /** 回合结算：状态递减，清除防御，发出 TurnEnd，进入下一回合 */
   private settleTurn(): void {
     const { state } = this;
     state.phase = 'settlement';
-    // 步骤 2 在这里加入状态（封印）的回合递减
+    // 状态（封印）剩余回合递减，到期解除
+    tickStatuses(
+      state.unitIds.map((id) => state.units[id]!),
+      (e) => this.emit(e),
+    );
     for (const id of state.unitIds) state.units[id]!.defending = false;
     this.emit({ type: 'TurnEnd' });
     if (this.checkBattleEnd()) return;

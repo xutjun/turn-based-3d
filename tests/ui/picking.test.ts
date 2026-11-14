@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { pickUnitAt, screenBoxOf } from '../../src/ui/input/picking';
+import { eventOnPanel, PANEL_SELECTOR, pickUnitAt, screenBoxOf } from '../../src/ui/input/picking';
 
 const pick = { minHalfWidth: 20, widthRatio: 0.3, headPadding: 30, footPadding: 10 };
 
@@ -31,5 +31,24 @@ describe('鼠标拾取', () => {
     const same = screenBoxOf('E2', { x: 100, y: 300 }, { x: 100, y: 200 }, pick);
     expect(pickUnitAt(100, 250, [back, same])).toBe('E2');
     expect(pickUnitAt(100, 250, [same, back])).toBe('E2');
+  });
+});
+
+describe('面板上的点击不算选目标', () => {
+  /** 仿一个元素：只认自己的 class */
+  const node = (cls: string) => ({ matches: (selector: string) => selector.split(',').some((s) => s.trim() === `.${cls}`) });
+
+  it('事件路径上有面板就算点在面板上，即使被点的按钮已经脱离文档', () => {
+    // 点技能按钮时面板立刻重画：按钮已不在文档里，但派发路径仍然记录了它当时所在的面板
+    const path = [node('dk-skill'), node('dk-skills'), node('dk-panel'), node('dk-ui'), {}, {}];
+    expect(eventOnPanel(path)).toBe(true);
+    expect(eventOnPanel([node('hud-controls'), {}])).toBe(true);
+    expect(eventOnPanel([node('dk-result-veil')])).toBe(true);
+  });
+
+  it('点在战场上（路径里没有面板）不算', () => {
+    expect(eventOnPanel([node('canvas'), node('dk-ui'), {}, {}])).toBe(false);
+    expect(eventOnPanel([])).toBe(false);
+    expect(PANEL_SELECTOR).toContain('.dk-panel');
   });
 });

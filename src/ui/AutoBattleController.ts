@@ -64,6 +64,12 @@ export class AutoBattleController {
 
       // 执行阶段：一次结算一个单位的出手，演完再结算下一个
       while (engine.getState().phase === 'execution' && !this.stopped) {
+        // 刚复活的单位轮到出手：同样代替玩家现场下指令
+        const waiting = engine.getState().awaitingCommandFor;
+        if (waiting !== null) {
+          const result = engine.submitCommand(waiting, engine.suggestCommand(waiting));
+          if (!result.ok) throw new Error(`指令被拒绝：${waiting}（${result.reason}）`);
+        }
         engine.stepAction();
         await director.idle();
         this.verify();

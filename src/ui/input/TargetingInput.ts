@@ -7,7 +7,7 @@ import { SELECTION_CONFIG } from '../../data/uiConfig';
 import type { RingMark } from '../../render/scene/selectionRings';
 import type { CommandSession } from '../command/CommandSession';
 import type { HeadMark } from '../hud/BattleHud';
-import { pickUnitAt, screenBoxOf, type ScreenBox } from './picking';
+import { eventOnPanel, pickUnitAt, screenBoxOf, type ScreenBox } from './picking';
 
 export interface TargetingDeps {
   container: HTMLElement;
@@ -82,8 +82,8 @@ export class TargetingInput {
 
   /** 事件是否落在界面面板上（面板上的点击不算选目标） */
   private onPanel(e: Event): boolean {
-    const target = e.target as Element | null;
-    return !!target?.closest?.('.dk-panel, .dk-result-veil, .hud-controls');
+    // 用派发路径判断：被点的按钮可能已经随面板重画而脱离文档
+    return eventOnPanel(e.composedPath());
   }
 
   private locate(e: MouseEvent): UnitId | null {

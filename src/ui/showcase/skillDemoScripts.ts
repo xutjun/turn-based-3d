@@ -1,28 +1,16 @@
 // 技能演示模式（?demo=skills）的事件脚本：每个演示是一次出手的事件序列，可以单独触发。
 //
-// 说明：逻辑层目前只结算普攻，连斩、旋风斩、群体法术、封印、治疗、复活的结算属于步骤 2。
-// 这里用 core/events.ts 已经定义好的事件格式手工编排，喂给和正式战斗同一个 BattleDirector，
-// 所以这里看到的演出，就是这些技能的事件在正式战斗里出现时的演出。
-// 伤害数值是演示数据，不代表任何规则或公式；技能名、消耗取自 DESIGN.md §4.2。
+// 这里用 core/events.ts 的事件格式手工编排，喂给和正式战斗同一个 BattleDirector；
+// 逻辑层在正式战斗里发出的事件与这里格式相同（技能 id、出手方式、动画、stepIndex 的用法都一致），
+// 所以这里看到的演出，就是这些技能在正式战斗里的演出。
+// 伤害数值是演示数据，不代表任何规则或公式；技能 id、名称、消耗全部取自技能表（data/skills.ts）。
 
 import type { BattleEventInput, UnitSnapshot } from '../../core/events';
 import type { AnimType, Delivery, Element, SkillId, UnitId } from '../../core/types';
+import { SKILLS } from '../../data/skills';
 
-/** 演示里用到的技能：显示名与消耗（DESIGN §4.2） */
-export const DEMO_SKILLS: Record<SkillId, { name: string; mpCost: number }> = {
-  basic_physical: { name: '普攻', mpCost: 0 },
-  basic_magic: { name: '法术普攻', mpCost: 0 },
-  combo_slash: { name: '连斩', mpCost: 40 },
-  triple_shot: { name: '三连射', mpCost: 40 },
-  whirlwind: { name: '旋风斩', mpCost: 80 },
-  arrow_rain: { name: '箭雨', mpCost: 80 },
-  group_spell: { name: '群体法术·天雷', mpCost: 80 },
-  group_spell_fire: { name: '群体法术·烈焰', mpCost: 80 },
-  single_spell: { name: '单体法术·炎爆', mpCost: 50 },
-  seal: { name: '封印', mpCost: 60 },
-  group_heal: { name: '群体治疗', mpCost: 80 },
-  revive: { name: '复活', mpCost: 120 },
-};
+/** 演示里用到的技能：显示名与消耗，与技能表一致 */
+export const DEMO_SKILLS: Readonly<Record<SkillId, { name: string; mpCost: number }>> = SKILLS;
 
 export interface SkillDemo {
   id: string; // 地址参数 play=<id> 用
