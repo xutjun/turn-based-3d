@@ -349,3 +349,167 @@ export function energyFlowTexture(seed = 1): Texture {
     return tex;
   });
 }
+
+const hexCss = (c: number): string => `#${c.toString(16).padStart(6, '0')}`;
+
+/**
+ * 纹饰带：底色上的一排几何花纹（菱形、圆点、折线）和上下两道滚边，贴图自带颜色，横向可平铺。
+ * 用作袍边、领口、披风镶边的颜色贴图。
+ */
+export function ornamentStripTexture(ground: number, ink: number, seed = 1): Texture {
+  return cached(`ornament:${ground}:${ink}:${seed}`, () => {
+    const w = 512;
+    const h = 64;
+    const canvas = createCanvas(w, h);
+    const ctx = get2d(canvas);
+    const rng = createRng(seed);
+    ctx.fillStyle = hexCss(ground);
+    ctx.fillRect(0, 0, w, h);
+    // 做旧：随机的暗斑
+    for (let i = 0; i < 90; i++) {
+      ctx.fillStyle = `rgba(0,0,0,${0.05 + rng.next() * 0.12})`;
+      ctx.fillRect(rng.next() * w, rng.next() * h, 4 + rng.next() * 22, 2 + rng.next() * 8);
+    }
+    ctx.strokeStyle = hexCss(ink);
+    ctx.fillStyle = hexCss(ink);
+    ctx.lineWidth = 4;
+    for (const y of [7, h - 7]) {
+      ctx.beginPath();
+      ctx.moveTo(0, y);
+      ctx.lineTo(w, y);
+      ctx.stroke();
+    }
+    ctx.lineWidth = 3;
+    const count = 16;
+    const cell = w / count;
+    const style = Math.floor(rng.next() * 3);
+    for (let i = 0; i < count; i++) {
+      const cx = (i + 0.5) * cell;
+      ctx.beginPath();
+      if (style === 0 || i % 2 === 0) {
+        // 菱形
+        ctx.moveTo(cx, 16);
+        ctx.lineTo(cx + cell * 0.32, h / 2);
+        ctx.lineTo(cx, h - 16);
+        ctx.lineTo(cx - cell * 0.32, h / 2);
+        ctx.closePath();
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.arc(cx, h / 2, 3, 0, Math.PI * 2);
+        ctx.fill();
+      } else if (style === 1) {
+        // 竖折线
+        ctx.moveTo(cx - cell * 0.25, 18);
+        ctx.lineTo(cx + cell * 0.25, h / 2);
+        ctx.lineTo(cx - cell * 0.25, h - 18);
+        ctx.stroke();
+      } else {
+        ctx.arc(cx, h / 2, 6, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+    // 磨损：擦掉一些花纹
+    ctx.fillStyle = hexCss(ground);
+    for (let i = 0; i < 26; i++) {
+      ctx.globalAlpha = 0.5 + rng.next() * 0.4;
+      ctx.fillRect(rng.next() * w, 10 + rng.next() * (h - 20), 3 + rng.next() * 10, 2 + rng.next() * 5);
+    }
+    ctx.globalAlpha = 1;
+    const tex = canvasTexture(canvas);
+    tex.wrapS = RepeatWrapping;
+    tex.wrapT = RepeatWrapping;
+    return tex;
+  });
+}
+
+/**
+ * 符文光点：黑底上零散的小符文和光点，两个方向都可平铺，用作自发光贴图（emissiveMap）。
+ * 贴在甲片、石块、骨头上，就是“刻在表面、微微发亮”的符文刻痕。
+ * @param density 每张贴图上的符文数量
+ */
+export function runeSpeckTexture(seed = 1, density = 14): Texture {
+  return cached(`speck:${seed}:${density}`, () => {
+    const size = 256;
+    const canvas = createCanvas(size, size);
+    const ctx = get2d(canvas);
+    const rng = createRng(seed);
+    ctx.fillStyle = '#000000';
+    ctx.fillRect(0, 0, size, size);
+    ctx.strokeStyle = '#ffffff';
+    ctx.fillStyle = '#ffffff';
+    ctx.lineCap = 'round';
+    ctx.shadowColor = '#ffffff';
+    ctx.shadowBlur = 4;
+    for (let i = 0; i < density; i++) {
+      // 离边缘留出余量，保证平铺时不被切断
+      const x = 16 + rng.next() * (size - 32);
+      const y = 16 + rng.next() * (size - 32);
+      const s = 5 + rng.next() * 7;
+      ctx.lineWidth = 1.6 + rng.next() * 1.2;
+      ctx.beginPath();
+      ctx.moveTo(x, y - s);
+      ctx.lineTo(x, y + s);
+      const strokes = 1 + Math.floor(rng.next() * 3);
+      for (let k = 0; k < strokes; k++) {
+        ctx.moveTo(x + (rng.next() - 0.5) * s * 1.6, y + (rng.next() - 0.5) * s * 2);
+        ctx.lineTo(x + (rng.next() - 0.5) * s * 1.6, y + (rng.next() - 0.5) * s * 2);
+      }
+      ctx.stroke();
+      if (rng.next() > 0.5) {
+        ctx.beginPath();
+        ctx.arc(x + (rng.next() - 0.5) * 20, y + (rng.next() - 0.5) * 20, 1.5, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+    const tex = canvasTexture(canvas);
+    tex.wrapS = RepeatWrapping;
+    tex.wrapT = RepeatWrapping;
+    return tex;
+  });
+}
+
+/**
+ * 裂纹光：黑底上几条分叉的亮裂纹（熔岩缝、魂火缝），两个方向都可平铺，用作自发光贴图。
+ */
+export function crackGlowTexture(seed = 1, cracks = 9): Texture {
+  return cached(`crack:${seed}:${cracks}`, () => {
+    const size = 256;
+    const canvas = createCanvas(size, size);
+    const ctx = get2d(canvas);
+    const rng = createRng(seed);
+    ctx.fillStyle = '#000000';
+    ctx.fillRect(0, 0, size, size);
+    ctx.strokeStyle = '#ffffff';
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    ctx.shadowColor = '#ffffff';
+    ctx.shadowBlur = 6;
+    const branch = (x: number, y: number, angle: number, len: number, width: number): void => {
+      ctx.lineWidth = width;
+      ctx.beginPath();
+      ctx.moveTo(x, y);
+      const steps = 4 + Math.floor(rng.next() * 3);
+      for (let i = 0; i < steps; i++) {
+        angle += (rng.next() - 0.5) * 1.1;
+        x += Math.cos(angle) * (len / steps);
+        y += Math.sin(angle) * (len / steps);
+        ctx.lineTo(x, y);
+        if (width > 1.6 && rng.next() > 0.6) {
+          ctx.stroke();
+          branch(x, y, angle + (rng.next() > 0.5 ? 0.9 : -0.9), len * 0.45, width * 0.6);
+          ctx.lineWidth = width;
+          ctx.beginPath();
+          ctx.moveTo(x, y);
+        }
+      }
+      ctx.stroke();
+    };
+    for (let i = 0; i < cracks; i++) {
+      branch(30 + rng.next() * (size - 60), 30 + rng.next() * (size - 60), rng.next() * Math.PI * 2, 40 + rng.next() * 50, 2.2 + rng.next() * 1.6);
+    }
+    const tex = canvasTexture(canvas);
+    tex.wrapS = RepeatWrapping;
+    tex.wrapT = RepeatWrapping;
+    return tex;
+  });
+}

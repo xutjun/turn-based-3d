@@ -12,7 +12,7 @@ export interface WeaponBaseParams {
   glow: WeaponGlowDef; // 发光参数，默认取 data/weapons.ts
 }
 
-export const WEAPON_RIM: RimOptions = RIM_CONFIG.ally;
+export const WEAPON_RIM: RimOptions = RIM_CONFIG.weapon;
 
 /**
  * 把二维轮廓拉伸成刃片：轮廓画在“宽度 × 长度”平面上（x = 朝刃口方向，y = 朝尖端方向），

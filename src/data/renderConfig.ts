@@ -102,9 +102,12 @@ export const PLACEHOLDER_CONFIG = {
 
 /** 轮边光：模型轮廓边缘的一圈亮边，增强暗场里的可读性 */
 export const RIM_CONFIG = {
-  ally: { color: 0x8fb8ff, strength: 0.85, power: 2.2 }, // 友方：冷蓝白
-  enemy: { color: 0xff5a3a, strength: 0.6, power: 2.4 }, // 敌方：暗红
-} satisfies Record<Side, { color: number; strength: number; power: number }>;
+  // 步骤 10：亮边收窄、减弱，并加一点“底色提亮”（lift），让各部件自己的配色在暗场里也看得出来，
+  // 不再被一整圈同色亮边盖成单色。
+  ally: { color: 0x9fc2ff, strength: 0.5, power: 3.0, lift: 0.18 }, // 友方：冷蓝白
+  enemy: { color: 0xff5a3a, strength: 0.6, power: 2.4, lift: 0 }, // 敌方：暗红
+  weapon: { color: 0x8fb8ff, strength: 0.85, power: 2.2, lift: 0 }, // 友方武器（保持步骤 4 的观感）
+} satisfies Record<Side | 'weapon', { color: number; strength: number; power: number; lift: number }>;
 
 /**
  * 低画质模式（右上角“画质”按钮，或地址加 ?quality=low）：给没有独立显卡的机器用。

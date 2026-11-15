@@ -8,8 +8,13 @@ import {
   CapsuleGeometry,
   CatmullRomCurve3,
   CylinderGeometry,
+  ConeGeometry,
   ExtrudeGeometry,
+  IcosahedronGeometry,
   LatheGeometry,
+  Matrix4,
+  OctahedronGeometry,
+  Quaternion,
   Mesh,
   PlaneGeometry,
   Shape,
@@ -137,31 +142,58 @@ export interface ClothShape {
   length: number;
   wrap?: number; // 两侧向前弯的程度
   flare?: number; // 下摆向后飘出的程度（负值 = 向前）
+  folds?: number; // 竖向褶皱的条数（0 = 只有细微的起伏）
+  foldDepth?: number; // 褶皱深度（米），越往下摆越深
 }
 
 export function capeMesh(parent: Object3D, material: Material, opts: ClothShape): Mesh {
   return mesh(clothGeometry(opts), material, parent);
 }
 
-/** 披风/布片的几何体（见 capeMesh） */
-export function clothGeometry(opts: ClothShape): BufferGeometry {
-  const segX = 8;
-  const segY = 12;
-  const geo = new PlaneGeometry(1, opts.length, segX, segY);
+/**
+ * 披风/布片的几何体（见 capeMesh）。
+ * @param range 只生成整块布的一段（0 = 顶边，1 = 下摆），用来在同一个曲面上贴镶边
+ * @param offset 沿 −z（布的外侧）偏移一点，避免镶边和布面重叠闪烁
+ */
+export function clothGeometry(opts: ClothShape, range: [number, number] = [0, 1], offset = 0): BufferGeometry {
+  const folds = opts.folds ?? 0;
+  const foldDepth = opts.foldDepth ?? 0.03;
+  const segX = folds > 0 ? Math.min(28, folds * 4) : 8;
+  const segY = Math.max(1, Math.round(12 * (range[1] - range[0])));
+  const geo = new PlaneGeometry(1, 1, segX, segY);
   const pos = geo.getAttribute('position') as BufferAttribute;
   const wrap = opts.wrap ?? 0.1;
   const flare = opts.flare ?? 0.22;
   for (let i = 0; i < pos.count; i++) {
     const u = pos.getX(i); // −0.5 ~ 0.5
-    const t = 0.5 - pos.getY(i) / opts.length; // 0 = 顶边，1 = 下摆
+    const t = range[0] + (range[1] - range[0]) * (0.5 - pos.getY(i)); // 0 = 顶边，1 = 下摆
     const width = opts.topWidth + (opts.bottomWidth - opts.topWidth) * t;
     const x = u * width;
     // 两侧向前弯（裹住肩背），越往下越向后飘
-    const z = wrap * (4 * u * u) - flare * t * t - 0.02 * Math.sin(u * 14 + t * 5) * t;
-    pos.setXYZ(i, x, -t * opts.length, z);
+    let z = wrap * (4 * u * u) - flare * t * t - 0.02 * Math.sin(u * 14 + t * 5) * t;
+    // 竖向褶皱：顶边收拢处几乎没有，越往下越深
+    if (folds > 0) z += foldDepth * Math.sin(u * folds * Math.PI * 2 + 0.6) * (0.25 + 0.75 * t);
+    pos.setXYZ(i, x, -t * opts.length, z - offset);
   }
   geo.computeVertexNormals();
   return geo;
+}
+
+/**
+ * 披风镶边：贴在同一块披风曲面上的一条横带（from、to 为沿长度方向的位置，0 = 顶边，1 = 下摆）。
+ * 放在与披风相同的位置即可严丝合缝。
+ */
+export function capeTrim(
+  parent: Object3D,
+  material: Material,
+  shape: ClothShape,
+  from: number,
+  to: number,
+  repeat = 1,
+): Mesh {
+  const m = mesh(clothGeometry(shape, [from, to], 0.006), material, parent);
+  if (repeat !== 1) scaleUv(m, repeat, 1);
+  return m;
 }
 
 /**
@@ -338,4 +370,237 @@ export function membrane(parent: Object3D, material: Material, points: [number, 
   const uv = geo.getAttribute('uv') as BufferAttribute;
   for (let i = 0; i < pos.count; i++) uv.setXY(i, (pos.getX(i) - minX) / w, (pos.getY(i) - minY) / h);
   return mesh(geo, material, parent);
+}
+
+// ---------------------------------------------------------------------------
+// 步骤 10 新增的细节部件：甲片叠层、铆钉、手甲、靴子、毛领、挂件等。
+// 都只生成一个网格（内部先合并几何体），不会明显增加绘制调用。
+// ---------------------------------------------------------------------------
+
+/** 缩放一个网格的贴图坐标（让锁子甲、织纹等贴图在小部件上保持合适的疏密） */
+export function scaleUv(m: Mesh, su: number, sv = su): Mesh {
+  const uv = m.geometry.getAttribute('uv') as BufferAttribute | undefined;
+  if (uv) for (let i = 0; i < uv.count; i++) uv.setXY(i, uv.getX(i) * su, uv.getY(i) * sv);
+  return m;
+}
+
+/**
+ * 叠层甲片（鱼鳞般一片压一片的甲裙、臂甲、颈甲）：一个带台阶的旋转体。
+ * 原点在顶边，向 −y 延伸；每一片的下沿比下一片的上沿略宽，形成层叠的檐口。
+ */
+export function lames(
+  parent: Object3D,
+  material: Material,
+  opts: { rTop: number; rBottom: number; length: number; count: number; lip?: number; segments?: number },
+): Mesh {
+  const lip = opts.lip ?? 0.012;
+  const pts: [number, number][] = [];
+  for (let i = 0; i < opts.count; i++) {
+    const t0 = i / opts.count;
+    const t1 = (i + 1) / opts.count;
+    const r = opts.rTop + (opts.rBottom - opts.rTop) * t0;
+    pts.push([r, -t0 * opts.length], [r + lip, -t1 * opts.length]);
+  }
+  return lathe(parent, material, pts, opts.segments ?? 14);
+}
+
+/** 一组铆钉 / 小圆钉：合并成一个网格。points 为各钉的位置 */
+export function rivets(parent: Object3D, material: Material, points: [number, number, number][], radius = 0.009): Mesh {
+  const base = new IcosahedronGeometry(radius, 0);
+  const parts = points.map(([x, y, z]) => base.clone().translate(x, y, z));
+  base.dispose();
+  return mesh(mergeGeometries(parts), material, parent);
+}
+
+/** 绕 y 轴排一圈铆钉（腰带、盔沿、护腕上的钉） */
+export function rivetRing(
+  parent: Object3D,
+  material: Material,
+  radius: number,
+  count: number,
+  y = 0,
+  size = 0.009,
+  depthScale = 1,
+  arc: [number, number] = [0, Math.PI * 2],
+): Mesh {
+  const pts: [number, number, number][] = [];
+  for (let i = 0; i < count; i++) {
+    const a = arc[0] + ((i + 0.5) / count) * (arc[1] - arc[0]);
+    pts.push([Math.sin(a) * radius, y, Math.cos(a) * radius * depthScale]);
+  }
+  return rivets(parent, material, pts, size);
+}
+
+/** 一组圆锥（尖刺、毛簇、羽毛根）：每项 = 位置 + 朝向 + 底半径 + 长度，合并成一个网格 */
+export interface ConeSpec {
+  at: [number, number, number];
+  dir: [number, number, number]; // 尖端指向
+  radius: number;
+  length: number;
+  flat?: number; // 压扁比例（1 = 圆锥，0.4 = 扁片）
+}
+
+export function cones(parent: Object3D, material: Material, list: readonly ConeSpec[], radial = 5): Mesh {
+  const up = new Vector3(0, 1, 0);
+  const q = new Quaternion();
+  const m = new Matrix4();
+  const parts = list.map((c) => {
+    const g = new ConeGeometry(c.radius, c.length, radial);
+    g.translate(0, c.length / 2, 0); // 底面在原点
+    if (c.flat !== undefined) g.scale(1, 1, c.flat);
+    q.setFromUnitVectors(up, new Vector3(...c.dir).normalize());
+    g.applyMatrix4(m.makeRotationFromQuaternion(q));
+    g.translate(...c.at);
+    return g;
+  });
+  return mesh(mergeGeometries(parts), material, parent);
+}
+
+/** 确定性的小随机数（细节部件的位置抖动用，不依赖全局随机） */
+export function jitter(seed: number): () => number {
+  let s = seed >>> 0 || 1;
+  return () => {
+    s = (Math.imul(s, 1664525) + 1013904223) >>> 0;
+    return s / 4294967296;
+  };
+}
+
+/**
+ * 毛领 / 毛边：绕 y 轴一圈向外下方炸开的毛簇。
+ * @param arc 覆盖的角度范围（0 = 正前方 +z，逆时针）
+ */
+export function furCollar(
+  parent: Object3D,
+  material: Material,
+  opts: {
+    radius: number;
+    y?: number;
+    count?: number;
+    length?: number;
+    thickness?: number;
+    depthScale?: number;
+    droop?: number; // 向下垂的程度（0 = 水平炸开，1 = 贴着往下）
+    rows?: number;
+    seed?: number;
+    arc?: [number, number];
+  },
+): Mesh {
+  const rnd = jitter(opts.seed ?? 7);
+  const count = opts.count ?? 22;
+  const rows = opts.rows ?? 2;
+  const len = opts.length ?? 0.09;
+  const droop = opts.droop ?? 0.6;
+  const [a0, a1] = opts.arc ?? [0, Math.PI * 2];
+  const list: ConeSpec[] = [];
+  for (let r = 0; r < rows; r++) {
+    for (let i = 0; i < count; i++) {
+      const a = a0 + ((i + (r % 2) * 0.5 + (rnd() - 0.5) * 0.5) / count) * (a1 - a0);
+      const rad = opts.radius * (1 - r * 0.12);
+      const sx = Math.sin(a);
+      const cz = Math.cos(a);
+      list.push({
+        at: [sx * rad, (opts.y ?? 0) + r * len * 0.35, cz * rad * (opts.depthScale ?? 1)],
+        dir: [sx, -droop + (rnd() - 0.5) * 0.5 + r * 0.25, cz],
+        radius: (opts.thickness ?? 0.024) * (0.8 + rnd() * 0.5),
+        length: len * (0.75 + rnd() * 0.6),
+        flat: 0.6,
+      });
+    }
+  }
+  return cones(parent, material, list, 4);
+}
+
+/** 宝石 / 水晶：八面体 */
+export function gem(parent: Object3D, material: Material, radius: number, x = 0, y = 0, z = 0, stretch = 1.3): Mesh {
+  const m = mesh(new OctahedronGeometry(radius, 0), material, parent);
+  m.position.set(x, y, z);
+  m.scale.y = stretch;
+  return m;
+}
+
+/**
+ * 手甲 / 手套：喇叭口护腕 + 手背 + 并拢的四指 + 拇指。挂在 hand 关节上（原点在腕部，手向 −y）。
+ * @param cuff 护腕喇叭口的材质（不传则与手同材质）
+ */
+export function gauntlet(
+  hand: Object3D,
+  material: Material,
+  opts: { cuff?: Material; knuckle?: Material; size?: number; cuffLength?: number; side?: 1 | -1 } = {},
+): void {
+  const s = opts.size ?? 1;
+  const side = opts.side ?? 1;
+  const cuffLen = opts.cuffLength ?? 0.07;
+  const cuff = mesh(new CylinderGeometry(0.062 * s, 0.046 * s, cuffLen, 10, 1), opts.cuff ?? material, hand);
+  cuff.position.y = cuffLen / 2 - 0.01;
+  box(hand, material, 0.082 * s, 0.065 * s, 0.05 * s, 0, -0.035 * s, 0); // 手背
+  const fingers = box(hand, material, 0.078 * s, 0.05 * s, 0.045 * s, 0, -0.085 * s, 0.012 * s);
+  fingers.rotation.x = -0.5; // 四指微屈（握着武器）
+  const thumb = box(hand, material, 0.024 * s, 0.05 * s, 0.026 * s, side * -0.045 * s, -0.05 * s, 0.022 * s);
+  thumb.rotation.z = side * 0.5;
+  if (opts.knuckle) box(hand, opts.knuckle, 0.086 * s, 0.016 * s, 0.054 * s, 0, -0.062 * s, 0.004 * s);
+}
+
+/**
+ * 靴子：鞋跟 + 脚背 + 鞋尖 + 鞋底，可带翻边靴筒口。挂在 foot 关节上（原点在踝部，脚底在 −0.08 左右）。
+ */
+export function boot(
+  foot: Object3D,
+  material: Material,
+  opts: { sole?: Material; trim?: Material; width?: number; length?: number; toeUp?: number; cuff?: number } = {},
+): void {
+  const w = opts.width ?? 0.1;
+  const len = opts.length ?? 0.25;
+  box(foot, material, w, 0.085, len * 0.5, 0, -0.035, -0.005); // 脚跟到脚背
+  const instep = box(foot, material, w * 0.96, 0.07, len * 0.42, 0, -0.03, len * 0.3);
+  instep.rotation.x = 0.28; // 脚背向鞋尖下倾
+  const toe = ball(foot, material, w * 0.5, 0, -0.052 + (opts.toeUp ?? 0), len * 0.52, [0.96, 0.62, 1.25]);
+  toe.rotation.x = -(opts.toeUp ?? 0) * 4;
+  box(foot, opts.sole ?? material, w * 1.06, 0.018, len * 0.98, 0, -0.078, len * 0.2); // 鞋底
+  if (opts.cuff) {
+    const c = mesh(new CylinderGeometry(opts.cuff * 1.12, opts.cuff, 0.05, 10, 1), opts.trim ?? material, foot);
+    c.position.y = 0.06;
+  }
+}
+
+/** 腰包：皮包 + 翻盖 + 金属扣 */
+export function pouch(
+  parent: Object3D,
+  leather: Material,
+  metal: Material,
+  x: number,
+  y: number,
+  z: number,
+  size = 1,
+  yaw = 0,
+): Object3D {
+  const body = box(parent, leather, 0.085 * size, 0.09 * size, 0.05 * size, x, y, z);
+  body.rotation.y = yaw;
+  box(body, leather, 0.09 * size, 0.04 * size, 0.056 * size, 0, 0.03 * size, 0.002);
+  box(body, metal, 0.02 * size, 0.022 * size, 0.012 * size, 0, 0.012 * size, 0.03 * size);
+  return body;
+}
+
+/** 小药瓶：玻璃瓶身（发光材质）+ 木塞 */
+export function vial(parent: Object3D, glass: Material, cork: Material, x: number, y: number, z: number, size = 1): void {
+  const b = mesh(new CylinderGeometry(0.018 * size, 0.022 * size, 0.06 * size, 7), glass, parent);
+  b.position.set(x, y, z);
+  const c = mesh(new CylinderGeometry(0.012 * size, 0.012 * size, 0.022 * size, 6), cork, parent);
+  c.position.set(x, y + 0.04 * size, z);
+}
+
+/** 绕 y 轴的一段布条 / 皮带（敞口圆筒），贴图横向重复 repeat 次：纹饰带、袍边滚边用 */
+export function band(
+  parent: Object3D,
+  material: Material,
+  opts: { rTop: number; rBottom: number; height: number; y?: number; depthScale?: number; repeat?: number; segments?: number },
+): Mesh {
+  const m = mesh(
+    new CylinderGeometry(opts.rTop, opts.rBottom, opts.height, opts.segments ?? 24, 1, true),
+    material,
+    parent,
+  );
+  m.position.y = opts.y ?? 0;
+  m.scale.z = opts.depthScale ?? 1;
+  if (opts.repeat && opts.repeat !== 1) scaleUv(m, opts.repeat, 1);
+  return m;
 }

@@ -261,3 +261,52 @@ export function clothTextures(seed = 41): TextureSet {
     ),
   );
 }
+
+/** 锁子甲：错行密排的小铁环，环与环之间是深色的缝隙 */
+export function chainmailTextures(seed = 51): TextureSet {
+  return cached(`mail:${seed}`, () =>
+    generateTextureSet(
+      512,
+      (u, v, out) => {
+        const n = 30; // 每张贴图的环数（偶数行，保证上下平铺）
+        const gy = v * n;
+        const row = Math.floor(gy);
+        const fx = (u * n + (row % 2) * 0.5) % 1;
+        const fy = gy - row;
+        const d = Math.hypot(fx - 0.5, fy - 0.5);
+        const ringShape = 1 - smoothstep(0.05, 0.17, Math.abs(d - 0.33));
+        const grime = smoothstep(0.4, 0.75, fbm(u * 6, v * 6, seed + 3, 4, 6));
+        const rust = smoothstep(0.62, 0.82, fbm(u * 9, v * 9, seed + 7, 3, 9));
+        const tone = (0.2 + 0.62 * ringShape) * (1 - grime * 0.35);
+        out.r = clamp01(lerp(tone, tone * 0.9 + 0.08, rust));
+        out.g = clamp01(lerp(tone, tone * 0.62, rust));
+        out.b = clamp01(lerp(tone * 1.04, tone * 0.45, rust));
+        out.height = clamp01(0.2 + 0.7 * ringShape);
+        out.roughness = clamp01(0.75 - 0.35 * ringShape + grime * 0.2 + rust * 0.2);
+      },
+      4,
+    ),
+  );
+}
+
+/** 毛皮：沿 v 方向的毛流，成簇的明暗和少量杂色毛 */
+export function furTextures(seed = 61): TextureSet {
+  return cached(`fur:${seed}`, () =>
+    generateTextureSet(
+      512,
+      (u, v, out) => {
+        const strand = valueNoise(u * 120, v * 10, seed, 0);
+        const fine = valueNoise(u * 260, v * 22, seed + 3, 0);
+        const clump = fbm(u * 9, v * 5, seed + 5, 3, 0);
+        const patch = smoothstep(0.5, 0.8, fbm(u * 4, v * 4, seed + 9, 3, 4));
+        const tone = 0.56 + (strand - 0.5) * 0.24 + (fine - 0.5) * 0.14 + (clump - 0.5) * 0.3 - patch * 0.18;
+        out.r = clamp01(tone);
+        out.g = clamp01(tone * 0.97);
+        out.b = clamp01(tone * 0.93);
+        out.height = clamp01(0.5 + (strand - 0.5) * 0.7 + (clump - 0.5) * 0.3);
+        out.roughness = clamp01(0.82 + (fine - 0.5) * 0.2);
+      },
+      3,
+    ),
+  );
+}

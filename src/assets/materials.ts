@@ -13,7 +13,9 @@ import {
 import type { TextureSet } from './textures/canvas';
 import {
   boneTextures,
+  chainmailTextures,
   clothTextures,
+  furTextures,
   ironTextures,
   leatherTextures,
   plateTextures,
@@ -95,6 +97,8 @@ export interface RimOptions {
   color: number;
   strength: number;
   power: number; // 越大亮边越窄
+  /** 底色提亮：把表面自身的颜色按这个比例加到自发光里，暗场中也能分辨出材质的配色（默认 0） */
+  lift?: number;
 }
 
 /**
@@ -106,6 +110,7 @@ export function applyRimLight<T extends MeshStandardMaterial>(material: T, rim: 
     uRimColor: { value: new Color(rim.color) },
     uRimStrength: { value: rim.strength },
     uRimPower: { value: rim.power },
+    uRimLift: { value: rim.lift ?? 0 },
   };
   material.userData['rimUniforms'] = uniforms;
   material.onBeforeCompile = (shader) => {
@@ -113,7 +118,7 @@ export function applyRimLight<T extends MeshStandardMaterial>(material: T, rim: 
     shader.fragmentShader = shader.fragmentShader
       .replace(
         '#include <common>',
-        '#include <common>\nuniform vec3 uRimColor;\nuniform float uRimStrength;\nuniform float uRimPower;',
+        '#include <common>\nuniform vec3 uRimColor;\nuniform float uRimStrength;\nuniform float uRimPower;\nuniform float uRimLift;',
       )
       .replace(
         '#include <emissivemap_fragment>',
@@ -121,6 +126,7 @@ export function applyRimLight<T extends MeshStandardMaterial>(material: T, rim: 
         {
           float rimDot = 1.0 - saturate(dot(normalize(vViewPosition), normal));
           totalEmissiveRadiance += uRimColor * pow(rimDot, uRimPower) * uRimStrength;
+          totalEmissiveRadiance += diffuseColor.rgb * uRimLift;
         }`,
       );
   };
@@ -179,6 +185,34 @@ export function clothMaterial(opts: SurfaceOptions): MeshStandardMaterial {
   return surface(clothTextures(), opts, { metalness: 0, roughness: 1, normal: 1.1 });
 }
 
+/** 锁子甲：密排的小铁环 */
+export function mailMaterial(opts: SurfaceOptions): MeshStandardMaterial {
+  // 锁环的疏密由各部件的贴图坐标决定（见 parts.ts 的 scaleUv）
+  return surface(chainmailTextures(), opts, { metalness: 0.8, roughness: 1, normal: 1.6 });
+}
+
+/** 毛皮：顺着一个方向的毛流 */
+export function furMaterial(opts: SurfaceOptions): MeshStandardMaterial {
+  return surface(furTextures(), opts, { metalness: 0, roughness: 1, normal: 1.8 });
+}
+
+/**
+ * 花边 / 纹饰带：贴图本身带颜色（见 textures/sprites.ts 的 ornamentStripTexture），用在袍边、领口、披风镶边。
+ */
+export function bandMaterial(
+  map: Texture,
+  opts: { rim?: RimOptions; metalness?: number; roughness?: number; doubleSide?: boolean } = {},
+): MeshStandardMaterial {
+  const mat = new MeshStandardMaterial({
+    map,
+    metalness: opts.metalness ?? 0.35,
+    roughness: opts.roughness ?? 0.6,
+    side: opts.doubleSide ? DoubleSide : FrontSide,
+  });
+  if (opts.rim) applyRimLight(mat, opts.rim);
+  return mat;
+}
+
 /** 骨质（带轮边光，可染色） */
 export function boneSurfaceMaterial(opts: SurfaceOptions): MeshStandardMaterial {
   return surface(boneTextures(), opts, { metalness: 0, roughness: 1, normal: 1 });
@@ -199,17 +233,31 @@ export const GLOW_BASE_KEY = 'glowBase';
 export function glowMaterial(
   color: number,
   intensity: number,
-  opts: { emissiveMap?: Texture; baseColor?: number; doubleSide?: boolean } = {},
+  opts: {
+    emissiveMap?: Texture;
+    baseColor?: number;
+    doubleSide?: boolean;
+    /** 底面用的表面贴图（石头、铁甲 …）：发光符文刻在有质感的表面上，而不是纯色底上 */
+    surface?: TextureSet;
+    metalness?: number;
+    rim?: RimOptions;
+  } = {},
 ): MeshStandardMaterial {
   const mat = new MeshStandardMaterial({
     color: opts.baseColor ?? 0x050505,
     emissive: new Color(color),
     emissiveIntensity: intensity,
     emissiveMap: opts.emissiveMap ?? null,
-    roughness: 0.6,
-    metalness: 0,
+    roughness: opts.surface ? 1 : 0.6,
+    metalness: opts.metalness ?? 0,
     side: opts.doubleSide ? DoubleSide : FrontSide,
   });
+  if (opts.surface) {
+    mat.map = opts.surface.map;
+    mat.normalMap = opts.surface.normalMap;
+    mat.roughnessMap = opts.surface.roughnessMap;
+  }
+  if (opts.rim) applyRimLight(mat, opts.rim);
   mat.userData[GLOW_BASE_KEY] = intensity;
   return mat;
 }

@@ -1,11 +1,30 @@
 // 自由职业（物理系）· 游侠弓手：轻皮甲、尖兜帽、单肩短斗篷、背后箭袋。剪影特征：修长、双腿分明、斜披风与箭羽。
+// 步骤 10 细化：棕皮甲（钉饰、缝线皮带）+ 墨绿斗篷 + 灰毛皮披肩 + 铁扣件；腰包、腿上的猎刀、
+// 翻边长靴、护膝、带钉护腕，箭袋上有皮带和金属箍。
 
 import { BoxGeometry, CylinderGeometry, type BufferGeometry, type Group } from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
-import { clothMaterial, glowMaterial, leatherMaterial, plateMaterial } from '../../materials';
+import { clothMaterial, furMaterial, glowMaterial, leatherMaterial, plateMaterial } from '../../materials';
 import { tatterAlphaTexture } from '../../textures/sprites';
 import { ALLY_RIM, finishCharacter, type CharacterBaseParams } from './common';
-import { ball, box, capeMesh, extruded, hood, lathe, mesh, ring, seg, softSeg } from './parts';
+import {
+  ball,
+  boot,
+  box,
+  capeMesh,
+  extruded,
+  furCollar,
+  gauntlet,
+  hood,
+  lathe,
+  mesh,
+  pouch,
+  ring,
+  rivetRing,
+  rivets,
+  seg,
+  softSeg,
+} from './parts';
 import { createRig, DEFAULT_DIMS } from './rig';
 
 export interface RangerParams extends CharacterBaseParams {
@@ -15,6 +34,7 @@ export interface RangerParams extends CharacterBaseParams {
   cloakColor: number; // 斗篷与兜帽
   metalColor: number; // 扣件
   featherColor: number; // 箭羽
+  furColor: number; // 毛皮披肩
   eyeColor: number;
   eyeIntensity: number;
 }
@@ -22,12 +42,13 @@ export interface RangerParams extends CharacterBaseParams {
 export const RANGER_DEFAULTS: RangerParams = {
   scale: 0.98,
   rim: ALLY_RIM,
-  leatherColor: 0x6b4a30,
-  darkLeatherColor: 0x33241a,
-  clothColor: 0x39403a,
-  cloakColor: 0x27433d,
-  metalColor: 0x8a8672,
-  featherColor: 0xb8b29a,
+  leatherColor: 0x8a5a34,
+  darkLeatherColor: 0x46301f,
+  clothColor: 0x5a6350,
+  cloakColor: 0x2f6a4c,
+  metalColor: 0xa9a48c,
+  featherColor: 0xd8d2b8,
+  furColor: 0x9a8f7c,
   eyeColor: 0x62e6cc,
   eyeIntensity: 2.6,
 };
@@ -43,6 +64,7 @@ export function buildRanger(params: Partial<RangerParams> = {}): Group {
   const cloakSolid = clothMaterial({ color: c.cloakColor, rim, doubleSide: true });
   const metal = plateMaterial({ color: c.metalColor, rim });
   const feather = clothMaterial({ color: c.featherColor, rim, doubleSide: true });
+  const fur = furMaterial({ color: c.furColor, rim });
   const eye = glowMaterial(c.eyeColor, c.eyeIntensity);
   const shadow = clothMaterial({ color: 0x060606 });
 
@@ -56,7 +78,16 @@ export function buildRanger(params: Partial<RangerParams> = {}): Group {
     strip.rotation.order = 'YXZ';
     strip.rotation.set(-0.15, a, 0);
   }
-  box(rig.hips, dark, 0.09, 0.1, 0.06, 0.17, -0.03, 0.06).rotation.y = 0.5;
+  rivetRing(rig.hips, metal, 0.19, 10, 0.06, 0.008, 0.85);
+  pouch(rig.hips, dark, metal, 0.18, -0.03, 0.07, 1.05, 0.7);
+  pouch(rig.hips, leather, metal, -0.17, -0.04, -0.09, 0.9, -2.2);
+  // 皮裙片上的钉
+  const studs: [number, number, number][] = [];
+  for (let i = 0; i < 6; i++) {
+    const a = (i / 6) * Math.PI * 2 + Math.PI / 6;
+    studs.push([Math.sin(a) * 0.165, -0.2, Math.cos(a) * 0.128]);
+  }
+  rivets(rig.hips, metal, studs, 0.01);
 
   // --- 躯干：皮甲、斜挎的箭袋背带 ---
   lathe(rig.spine, leather, [
@@ -73,6 +104,29 @@ export function buildRanger(params: Partial<RangerParams> = {}): Group {
   const strap = box(rig.chest, dark, 0.045, 0.5, 0.012, 0, 0.03, 0.142);
   strap.rotation.z = -0.72;
   box(rig.chest, metal, 0.05, 0.05, 0.02, 0.05, 0.09, 0.15);
+  // 皮甲：胸前的加厚皮片、缝线和钉饰，腹部两道束带
+  const chestPad = ball(rig.chest, dark, 0.15, 0, 0.1, 0.03, [1.05, 0.8, 0.82]);
+  chestPad.position.z = 0.035;
+  rivets(rig.chest, metal, [
+    [-0.1, 0.17, 0.118],
+    [0.1, 0.17, 0.118],
+    [-0.13, 0.08, 0.11],
+    [0.13, 0.08, 0.11],
+    [-0.09, 0.0, 0.125],
+    [0.09, 0.0, 0.125],
+  ]);
+  for (const y of [0.07, 0.17]) {
+    ring(rig.spine, dark, 0.15, 0.012, y, 4, 18).scale.set(1, 0.82, 1);
+    box(rig.spine, metal, 0.03, 0.03, 0.014, 0.05, y, 0.125);
+  }
+  // 毛皮披肩：搭在双肩和后背
+  const mantle = lathe(rig.chest, fur, [
+    [0.1, 0.27],
+    [0.2, 0.235],
+    [0.255, 0.17],
+  ]);
+  mantle.scale.z = 0.9;
+  furCollar(rig.chest, fur, { radius: 0.255, y: 0.165, count: 22, length: 0.1, thickness: 0.028, depthScale: 0.9, droop: 0.9, rows: 2, seed: 11 });
   lathe(rig.chest, cloakSolid, [
     [0.1, 0.2],
     [0.115, 0.26],
@@ -84,6 +138,9 @@ export function buildRanger(params: Partial<RangerParams> = {}): Group {
   quiver.position.set(-0.07, 0.04, -0.16);
   quiver.rotation.z = 0.5;
   ring(quiver, metal, 0.056, 0.008, 0.24, 5, 12);
+  ring(quiver, metal, 0.05, 0.007, -0.2, 5, 12);
+  ring(quiver, leather, 0.056, 0.012, 0.08, 4, 12);
+  ring(quiver, leather, 0.052, 0.012, -0.08, 4, 12);
   const shafts: BufferGeometry[] = [];
   const fletch: BufferGeometry[] = [];
   for (let i = 0; i < 6; i++) {
@@ -108,19 +165,37 @@ export function buildRanger(params: Partial<RangerParams> = {}): Group {
     softSeg(arm.elbow, cloth, 0.25, 0.046);
     seg(arm.elbow, leather, bracer, 0.056, 0.05).position.y = -0.24 + bracer / 2;
     ring(arm.elbow, metal, 0.055, 0.007, -0.24 + bracer, 5, 12);
-    ball(arm.hand, dark, 0.042, 0, -0.03, 0, [1, 1.3, 0.9]);
+    rivetRing(arm.elbow, metal, 0.055, 5, -0.24 + bracer / 2, 0.007);
+    ring(arm.shoulder, dark, 0.057, 0.009, -0.2, 4, 12); // 臂带
+    gauntlet(arm.hand, dark, { side: arm === rig.armL ? 1 : -1, size: 0.85, cuffLength: 0.045 });
   }
   const pad = ball(rig.armR.shoulder, leather, 0.085, -0.02, 0.01, 0, [1.15, 0.8, 1.2]);
   pad.rotation.z = 0.3;
+  const pad2 = ball(rig.armR.shoulder, dark, 0.07, -0.05, -0.05, 0, [1.1, 0.75, 1.15]);
+  pad2.rotation.z = 0.7;
+  rivets(rig.armR.shoulder, metal, [
+    [-0.04, 0.06, 0.07],
+    [-0.04, 0.06, -0.07],
+    [-0.1, 0.0, 0],
+  ]);
 
   // --- 双腿：布裤、及膝长靴 ---
   for (const leg of [rig.legL, rig.legR]) {
     softSeg(leg.hip, cloth, 0.44, 0.072);
-    ball(leg.knee, leather, 0.062, 0, 0, 0.02);
+    ball(leg.knee, leather, 0.066, 0, 0, 0.022, [1, 1.15, 0.9]); // 皮护膝
+    rivets(leg.knee, metal, [[0, 0, 0.083]], 0.011);
     seg(leg.knee, dark, 0.4, 0.068, 0.054);
-    ring(leg.knee, leather, 0.07, 0.012, -0.03, 5, 14);
-    box(leg.foot, dark, 0.09, 0.075, 0.24, 0, -0.042, 0.055);
+    // 靴筒翻边和两道绑带
+    mesh(new CylinderGeometry(0.082, 0.07, 0.07, 10, 1), leather, leg.knee).position.y = -0.085;
+    ring(leg.knee, leather, 0.064, 0.008, -0.2, 4, 12);
+    ring(leg.knee, leather, 0.059, 0.008, -0.3, 4, 12);
+    boot(leg.foot, dark, { sole: leather, width: 0.092, length: 0.24 });
   }
+  // 左腿外侧绑着的猎刀
+  ring(rig.legL.hip, dark, 0.08, 0.01, -0.16, 4, 12);
+  const knife = box(rig.legL.hip, dark, 0.03, 0.17, 0.02, 0.082, -0.22, 0.01);
+  box(knife, metal, 0.045, 0.014, 0.03, 0, 0.09, 0);
+  box(knife, leather, 0.022, 0.07, 0.022, 0, 0.13, 0);
 
   // --- 头：尖兜帽、蒙面、帽侧的羽毛 ---
   ball(rig.head, shadow, 0.098, 0, 0.115, 0);
@@ -145,7 +220,15 @@ export function buildRanger(params: Partial<RangerParams> = {}): Group {
   plume.rotation.set(-0.5, Math.PI / 2, 0);
 
   // --- 斗篷：偏向左肩的短斗篷，下摆撕裂 ---
-  const cape = capeMesh(rig.cape, cloak, { topWidth: 0.44, bottomWidth: 0.6, length: 0.78, wrap: 0.12, flare: 0.2 });
+  const cape = capeMesh(rig.cape, cloak, {
+    topWidth: 0.44,
+    bottomWidth: 0.64,
+    length: 0.82,
+    wrap: 0.12,
+    flare: 0.2,
+    folds: 4,
+    foldDepth: 0.03,
+  });
   cape.position.x = 0.06;
   cape.rotation.z = 0.1;
 
