@@ -107,20 +107,73 @@ export interface RimOptions {
 }
 
 /**
- * 给材质加轮边光（菲涅耳）：视线与表面法线夹角越大（越靠近轮廓）越亮。
- * 实现方式是在标准材质的片元着色器里往自发光项上加一项。
+ * 布料飘动（步骤 10 · C 组）：在顶点着色器里让“带飘动权重的顶点”沿法线方向缓慢摆动。
+ * 权重是几何体上的 aSway 属性（披风、袍摆、破旗、锁链在 parts.ts 里写入，挂点处为 0、下摆处为 1）；
+ * 没有这个属性的几何体权重恒为 0，完全不受影响。这样飘动不需要任何额外的关节和绘制调用。
+ *
+ * 全局量（所有材质共用同一个对象）：时间、画质开关；每个材质自己的量：相位、幅度、频率，
+ * 由单位的待机动画按“这个单位自己的相位”写入（见 render/units/IdleAnimator.ts）。
  */
-export function applyRimLight<T extends MeshStandardMaterial>(material: T, rim: RimOptions): T {
-  const uniforms = {
-    uRimColor: { value: new Color(rim.color) },
-    uRimStrength: { value: rim.strength },
-    uRimPower: { value: rim.power },
-    uRimLift: { value: rim.lift ?? 0 },
-    uTopShade: { value: rim.topShade ?? 0 },
+export const SWAY_GLOBAL = {
+  uSwayTime: { value: 0 },
+  uSwayQuality: { value: 1 }, // 低画质下置 0，关闭飘动
+};
+
+export interface SwayUniforms {
+  uSwayPhase: { value: number };
+  uSwayAmp: { value: number }; // 最大位移（米，模型缩放前）
+  uSwayHz: { value: number };
+}
+
+export const SWAY_UNIFORMS_KEY = 'swayUniforms';
+const SWAY_DEFAULT_AMP = 0.03;
+const SWAY_DEFAULT_HZ = 0.45;
+
+const SWAY_VERTEX_DECL = `
+attribute float aSway;
+attribute vec3 aSwayDir;
+uniform float uSwayTime;
+uniform float uSwayQuality;
+uniform float uSwayPhase;
+uniform float uSwayAmp;
+uniform float uSwayHz;`;
+
+const SWAY_VERTEX_BODY = `
+{
+  float swayW = aSway * uSwayAmp * uSwayQuality;
+  if (swayW != 0.0) {
+    float swayPh = uSwayTime * uSwayHz * 6.2832 + uSwayPhase + position.y * 5.0 + position.x * 2.5;
+    vec3 swayDir = dot(aSwayDir, aSwayDir) > 0.0 ? aSwayDir : objectNormal;
+    transformed += swayDir * swayW * (0.65 * sin(swayPh) + 0.35 * sin(swayPh * 1.83 + 1.7));
+  }
+}`;
+
+/**
+ * 给材质装上角色用的着色器补丁：布料飘动（总是装），以及可选的轮边光。
+ */
+function patchCharacterShader<T extends MeshStandardMaterial>(material: T, rim?: RimOptions): T {
+  const sway: SwayUniforms = {
+    uSwayPhase: { value: 0 },
+    uSwayAmp: { value: SWAY_DEFAULT_AMP },
+    uSwayHz: { value: SWAY_DEFAULT_HZ },
   };
-  material.userData['rimUniforms'] = uniforms;
+  material.userData[SWAY_UNIFORMS_KEY] = sway;
+  const rimUniforms = rim
+    ? {
+        uRimColor: { value: new Color(rim.color) },
+        uRimStrength: { value: rim.strength },
+        uRimPower: { value: rim.power },
+        uRimLift: { value: rim.lift ?? 0 },
+        uTopShade: { value: rim.topShade ?? 0 },
+      }
+    : undefined;
+  if (rimUniforms) material.userData['rimUniforms'] = rimUniforms;
   material.onBeforeCompile = (shader) => {
-    Object.assign(shader.uniforms, uniforms);
+    Object.assign(shader.uniforms, SWAY_GLOBAL, sway, rimUniforms ?? {});
+    shader.vertexShader = shader.vertexShader
+      .replace('#include <common>', `#include <common>${SWAY_VERTEX_DECL}`)
+      .replace('#include <begin_vertex>', `#include <begin_vertex>${SWAY_VERTEX_BODY}`);
+    if (!rimUniforms) return;
     shader.fragmentShader = shader.fragmentShader
       .replace(
         '#include <common>',
@@ -138,8 +191,16 @@ export function applyRimLight<T extends MeshStandardMaterial>(material: T, rim: 
         }`,
       );
   };
-  material.customProgramCacheKey = () => 'rim';
+  material.customProgramCacheKey = () => (rimUniforms ? 'rim+sway' : 'sway');
   return material;
+}
+
+/**
+ * 给材质加轮边光（菲涅耳）：视线与表面法线夹角越大（越靠近轮廓）越亮。
+ * 实现方式是在标准材质的片元着色器里往自发光项上加一项（同时装上布料飘动，见上）。
+ */
+export function applyRimLight<T extends MeshStandardMaterial>(material: T, rim: RimOptions): T {
+  return patchCharacterShader(material, rim);
 }
 
 /** 角色表面材质的公共参数 */
@@ -265,10 +326,14 @@ export function glowMaterial(
     mat.normalMap = opts.surface.normalMap;
     mat.roughnessMap = opts.surface.roughnessMap;
   }
-  if (opts.rim) applyRimLight(mat, opts.rim);
+  // 没有轮边光的发光材质也装上飘动（符文长带、翼膜脉络这类发光的布面要跟着一起飘）
+  patchCharacterShader(mat, opts.rim);
   mat.userData[GLOW_BASE_KEY] = intensity;
   return mat;
 }
+
+/** 发光材质上记录“当前整体倍率”的键（setGlowScale 写入） */
+export const GLOW_SCALE_KEY = 'glowScale';
 
 /** 模型节点上的“发光倍率回调”键：武器等自己管理发光的模型用它接收整体倍率 */
 export const GLOW_SCALE_HOOK = 'glowScaleHook';
@@ -286,7 +351,9 @@ export function setGlowScale(root: Object3D, scale: number): void {
     const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
     for (const m of mats) {
       const base = m.userData[GLOW_BASE_KEY] as number | undefined;
-      if (base !== undefined) (m as MeshStandardMaterial).emissiveIntensity = base * scale;
+      if (base === undefined) continue;
+      m.userData[GLOW_SCALE_KEY] = scale; // 待机的发光呼吸在这个倍率之上再乘（见 IdleAnimator）
+      (m as MeshStandardMaterial).emissiveIntensity = base * scale;
     }
   });
 }

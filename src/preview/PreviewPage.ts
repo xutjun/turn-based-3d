@@ -5,7 +5,7 @@
 // 地址参数（方便截图和直达某个模型）：
 //   model=资源键   glow=发光倍率   spin=0 关闭自动旋转   yaw=初始水平角（度）
 //   weapon=0 人物不持武器   element=fire|thunder|seal|heal 法杖元素   dist=相机距离
-//   silhouette=1 剪影测试（模型纯黑、背景浅灰）
+//   silhouette=1 剪影测试（模型纯黑、背景浅灰）   idle=0 关闭待机动画（看静止站姿）
 
 import {
   Box3,
@@ -28,7 +28,7 @@ import {
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { collectTicks, type AssetEntry, type AssetRegistry, type TickFn } from '../assets/AssetRegistry';
 import { createEnvironmentMap } from '../assets/environment';
-import { setGlowScale } from '../assets/materials';
+import { setGlowScale, SWAY_GLOBAL } from '../assets/materials';
 import { getRig } from '../assets/models/characters/rig';
 import { getCreatureHeight } from '../assets/models/creatures';
 import { equipWeapon, getWeaponGlow, setStaffElement } from '../assets/models/weapons';
@@ -39,6 +39,9 @@ import { ENVIRONMENT_CONFIG, FOG_CONFIG, LIGHT_CONFIG } from '../data/renderConf
 import { STAFF_ELEMENT_COLORS, type StaffElement } from '../data/weapons';
 import { applySilhouette, silhouetteRequested } from '../render/debug/silhouette';
 import { createPostFx, type PostFx } from '../render/postfx/composer';
+import { IdleAnimator } from '../render/units/IdleAnimator';
+import { seedOf } from '../render/units/idleMotion';
+import { idleStyleOfAsset } from '../data/unitModels';
 
 const GLOW_LEVELS = [0, 0.5, 1, 2]; // 可切换的发光倍率
 const CATEGORY_LABEL: Record<string, string> = {
@@ -71,6 +74,8 @@ export class PreviewPage {
   private holdWeapon = true; // 人物是否手持武器
   private element: StaffElement = 'thunder';
   private ticks: TickFn[] = [];
+  private idle: IdleAnimator | null = null; // 当前模型的待机动画（武器没有）
+  private idleOn = true;
   private index = 0;
   private glow = 1;
   private spin = true;
@@ -159,6 +164,7 @@ export class PreviewPage {
     const glow = Number(query.get('glow'));
     if (query.has('glow') && Number.isFinite(glow)) this.glow = glow;
     this.spin = query.get('spin') !== '0';
+    this.idleOn = query.get('idle') !== '0';
     this.holdWeapon = query.get('weapon') !== '0';
     const element = query.get('element') as StaffElement | null;
     if (element && STAFF_ELEMENTS.includes(element)) this.element = element;
@@ -230,6 +236,9 @@ export class PreviewPage {
     this.camera.position.copy(this.controls.target).addScaledVector(offset.normalize(), this.baseDistance * fit);
     this.ticks = collectTicks(this.model);
     setGlowScale(this.model, this.glow);
+    // 待机动画：与战场里同一套（预览页不合并网格，所以这里看到的就是各关节原本的动作）
+    const idleStyle = idleStyleOfAsset(entry.key);
+    this.idle = idleStyle ? new IdleAnimator(this.model, idleStyle, seedOf(entry.key)) : null;
     // 调试：地址加 ?silhouette=1 做剪影测试
     if (silhouetteRequested()) applySilhouette(this.scene, this.turntable);
     this.renderPanel();
@@ -326,6 +335,14 @@ export class PreviewPage {
         this.renderPanel();
       }),
     );
+    if (this.idle) {
+      this.panel.append(
+        button(`待机动画：${this.idleOn ? '开' : '关'}`, this.idleOn, () => {
+          this.idleOn = !this.idleOn;
+          this.renderPanel();
+        }),
+      );
+    }
     const tip = document.createElement('div');
     tip.textContent = '拖动旋转 · 滚轮缩放 · ← → 切换 · 空格闪光';
     tip.style.cssText = 'margin-top:8px;font-size:12px;color:#8a7a50;';
@@ -367,6 +384,15 @@ export class PreviewPage {
     this.time += dt;
     if (this.spin) this.turntable.rotation.y += dt * SPIN_SPEED;
     for (const tick of this.ticks) tick(this.time, dt);
+    SWAY_GLOBAL.uSwayTime.value = this.time;
+    if (this.idle && this.model) {
+      const idle = this.idle;
+      idle.update(this.time, this.idleOn ? 1 : 0, true);
+      idle.addToRig();
+      const k = this.model.scale.y;
+      this.model.position.set(idle.offsets.shift * k, (idle.offsets.bob + idle.offsets.float) * k, 0);
+      this.model.rotation.z = idle.offsets.roll;
+    }
     this.controls.update();
     this.postFx.render(this.time);
   }

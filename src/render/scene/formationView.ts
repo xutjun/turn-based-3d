@@ -10,7 +10,7 @@ import type { UnitId, UnitTemplate } from '../../core/types';
 import { facingYawOf, slotPosition } from '../../data/formation';
 import { getRig } from '../../assets/models/characters/rig';
 import { mergeStaticMeshes } from '../../assets/optimize';
-import { animatedJointsOf } from '../units/animatedJoints';
+import { allAnimatedJoints, JOINT_PREFIX } from '../units/animatedJoints';
 import { PLACEHOLDER_CONFIG, RENDER_OPTIMIZE } from '../../data/renderConfig';
 import { UNIT_MODELS, WEAPON_MODELS } from '../../data/unitModels';
 
@@ -52,17 +52,13 @@ function createUnitModel(registry: AssetRegistry, t: UnitTemplate): Object3D {
   return registry.create(ASSET_KEYS.placeholderUnit, params);
 }
 
-/** 模型里关节节点的名字前缀（characters/rig.ts 与 creatures/common.ts 的约定） */
-const JOINT_PREFIX = 'joint:';
-
 /**
  * 合并一个单位模型里不会单独运动的网格。
- * 人形：只有演出会转动的关节（肩、肘、腰、胸、头）作为边界，腿、手、颈等静止关节下的部件并进上一级；
- * 宝宝和没有骨架的模型：目前只做整体动作，所有关节都算静止。
+ * 只有登记在 units/animatedJoints.ts 里的关节作为边界：人形的肩、肘、腰、胸、头，
+ * 以及待机动画会转的额外关节（宝宝的头、尾、翅膀 …，Boss 的双翼）；其余关节下的部件并进上一级。
  */
 function mergeUnitMeshes(model: Object3D): void {
-  const rig = getRig(model);
-  const moving = new Set<Object3D>(rig ? Object.values(animatedJointsOf(rig)) : []);
+  const moving = new Set<Object3D>(Object.values(allAnimatedJoints(model, getRig(model))));
   mergeStaticMeshes(model, {
     isStatic: (node) => node.name.startsWith(JOINT_PREFIX) && !moving.has(node),
     shadowLayer: RENDER_OPTIMIZE.shadowLayer,

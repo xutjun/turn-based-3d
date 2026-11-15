@@ -13,6 +13,10 @@ import type { UnitTemplate } from '../../core/types';
 import type { SoundPlayer } from '../../assets/audio/SoundEngine';
 import type { SoundName } from '../../data/audioConfig';
 import { animatedJointsOf } from './animatedJoints';
+import { IdleAnimator } from './IdleAnimator';
+import { seedOf } from './idleMotion';
+import { IDLE_CONFIG } from '../../data/idleConfig';
+import { UNIT_MODELS } from '../../data/unitModels';
 import { releaseSound, windupSound } from './soundCues';
 import { chargeYaw, turnToward } from './turning';
 import { facingOf, facingYawOf, slotPosition } from '../../data/formation';
@@ -48,6 +52,7 @@ interface JointRest {
 
 export class UnitView implements StageUnit {
   readonly id: string;
+  private readonly templateId: string;
   readonly side: UnitTemplate['side'];
   readonly kind: UnitTemplate['kind'];
   readonly radius: number;
@@ -79,7 +84,6 @@ export class UnitView implements StageUnit {
   private readonly weaponRestX: number;
   private readonly hpAnchor: Object3D | undefined;
   private readonly flashMaterials: MeshStandardMaterial[] = [];
-  private readonly phase: number;
   private readonly tmp = new Vector3();
   private dead = false;
   /** 原始朝向（面向对方）与当前朝向：只有近战冲锋途中两者不同 */
@@ -93,6 +97,11 @@ export class UnitView implements StageUnit {
   private glowMove = 0;
   private sealBands: Mesh[] | null = null;
   private sealed = false;
+  /** 待机动画：每个单位自己的相位和周期（按单位 id 取种子），见 IdleAnimator */
+  private readonly idle: IdleAnimator;
+  /** 待机权重（0~1）：出手、受击、冲锋时平滑降到 0，结束后平滑回到 1 */
+  private idleWeight = 1;
+  private lastIdleTime = 0;
 
   constructor(
     template: UnitTemplate,
@@ -102,6 +111,7 @@ export class UnitView implements StageUnit {
     private readonly sound: SoundPlayer = { play: () => undefined },
   ) {
     this.id = template.id;
+    this.templateId = template.templateId;
     this.side = template.side;
     this.kind = template.kind;
     this.radius = template.rank === 'boss' ? STAGING.unitRadius.boss : STAGING.unitRadius[template.kind];
@@ -109,7 +119,6 @@ export class UnitView implements StageUnit {
     this.facing = facingOf(template.side);
     this.ground = { ...this.home };
     this.baseScale = model.scale.x;
-    this.phase = (template.slot.col * 1.7 + template.slot.row * 2.9 + (template.side === 'ally' ? 0 : 1.3)) % 6.28;
 
     // 先转朝向（y），再做前后俯仰（x）：这样俯仰总是沿着单位自己的前后方向
     model.rotation.order = 'YXZ';
@@ -146,6 +155,8 @@ export class UnitView implements StageUnit {
       }
     });
 
+    this.idle = new IdleAnimator(model, UNIT_MODELS[template.templateId]?.idle ?? 'stiff', seedOf(template.id));
+    this.idle.update(0, 1);
     this.applyPose();
   }
 
@@ -307,7 +318,22 @@ export class UnitView implements StageUnit {
     this.ground.x = this.home.x;
     this.ground.z = this.home.z;
     this.model.visible = true;
-    this.applyPose(this.scheduler.time);
+    this.idleWeight = 1;
+    this.idle.update(this.lastIdleTime, 1);
+    this.applyPose();
+  }
+
+  /** 调试：这个单位当前的待机状态（权重、呼吸相位、转头角度、周期倍率），window.__idle() 用 */
+  idleSnapshot(): { weight: number; breath: number; headYaw: number; roll: number; rate: number; style: string } {
+    const o = this.idle.offsets;
+    return {
+      weight: this.idleWeight,
+      breath: o.breath,
+      headYaw: o.headYaw,
+      roll: o.roll,
+      rate: this.idle.traits.rate,
+      style: UNIT_MODELS[this.templateId]?.idle ?? 'stiff',
+    };
   }
 
   setDefending(on: boolean): void {
@@ -384,9 +410,23 @@ export class UnitView implements StageUnit {
   // 每帧
   // ------------------------------------------------------------------
 
-  /** 每帧调用：把姿态参数应用到模型上（time 为调度器的演出时间） */
-  update(time: number): void {
-    this.applyPose(time);
+  /**
+   * 每帧调用：把姿态参数应用到模型上。
+   * @param time 调度器的演出时间（封印锁链的旋转用）
+   * @param idleTime 待机动画用的时间：场景的连续时间，不受“跳过动画”影响，保证待机动作不会突然跳变
+   */
+  update(time: number, idleTime = time): void {
+    const dt = Math.min(0.1, Math.max(0, idleTime - this.lastIdleTime));
+    this.lastIdleTime = idleTime;
+    // 待机权重：有出手 / 受击 / 冲锋动作时目标为 0，否则为 1；按固定速率平滑靠近，切换没有跳变
+    const p = this.pose;
+    const busy = Math.min(1, Math.max(p.windup, p.strike, p.lean * 3, p.side * 4, p.hop * 6, this.away ? 1 : 0));
+    const target = (1 - busy) * (1 - (1 - IDLE_CONFIG.guardScale) * p.guard);
+    this.idleWeight += (target - this.idleWeight) * (1 - Math.exp(-IDLE_CONFIG.blendRate * dt));
+    // 倒地后只保留极轻微的变化；消失的单位不动
+    const down = (1 - (1 - IDLE_CONFIG.fallenScale) * p.fall) * (1 - p.shrink);
+    this.idle.update(idleTime, this.idleWeight * down);
+    this.applyPose();
     if (this.sealed && this.sealBands) {
       this.sealBands[0]!.rotation.y = time * 1.4;
       this.sealBands[1]!.rotation.y = -time * 1.1;
@@ -395,13 +435,12 @@ export class UnitView implements StageUnit {
     }
   }
 
-  private applyPose(time = 0): void {
+  private applyPose(): void {
     const p = this.pose;
     const m = this.model;
-    const alive = 1 - p.fall;
-    // 待机起伏：倒地后停止
-    const breath = Math.sin(time * 1.7 + this.phase) * alive;
-    const bob = (this.kind === 'pet' ? 0.014 : 0.008) * this.baseScale * breath;
+    // 待机：整体的起伏、漂浮、重心转移（都已乘过待机权重，出手和倒地时自然归零）
+    const idle = this.idle.offsets;
+    const bob = (idle.bob + idle.float) * this.baseScale;
 
     // 出手时身体的前后移动：蓄力后撤，出手前扑
     const lungeScale = this.rig ? 0.5 : 1; // 非人形主要靠整体前扑表现攻击
@@ -438,18 +477,22 @@ export class UnitView implements StageUnit {
     m.rotation.y = this.yaw;
     // 侧移方向：朝向的垂直方向
     const s = this.baseScale;
+    const side = p.side + idle.shift; // 重心转移带起的一点点左右位移（厘米级，不算离开站位）
     m.position.set(
-      this.ground.x + fx * forward * s - fz * p.side * s,
+      this.ground.x + fx * forward * s - fz * side * s,
       p.hop + lift * s + bob,
-      this.ground.z + fz * forward * s + fx * p.side * s,
+      this.ground.z + fz * forward * s + fx * side * s,
     );
     // 前倾为正；受击后仰、倒地向后躺平
     m.rotation.x = pitch - p.lean - 0.08 * p.guard - (Math.PI / 2) * EASE.in(p.fall);
-    m.rotation.z = roll;
+    m.rotation.z = roll + idle.roll;
     const k = this.baseScale * (1 - 0.97 * p.shrink);
     m.scale.setScalar(k);
 
-    if (this.rig) this.applyRigPose(breath);
+    if (this.rig) {
+      this.applyRigPose();
+      this.idle.addToRig(); // 待机偏移加在出手 / 受击姿态之上
+    }
 
     // 闪白
     if (p.flash > 0 || this.flashWasOn) {
@@ -465,7 +508,7 @@ export class UnitView implements StageUnit {
   private flashWasOn = false;
 
   /** 人形角色：驱动手臂、腰、头的关节 */
-  private applyRigPose(breath: number): void {
+  private applyRigPose(): void {
     const p = this.pose;
     const r = this.rest;
     const set = (name: string, dx: number, dy = 0, dz = 0): number => {
@@ -521,7 +564,7 @@ export class UnitView implements StageUnit {
     set('shoulderL', shoulderL);
     set('elbowL', elbowL);
     set('spine', 0, twist);
-    set('chest', 0.012 * breath - 0.25 * p.lean);
+    set('chest', -0.25 * p.lean);
     set('head', 0.3 * p.lean - 0.1 * p.guard);
 
     // 弓要保持竖直：手臂抬起多少，武器就反向转回多少（都绕 x 轴，可以直接相加）

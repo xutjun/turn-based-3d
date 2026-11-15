@@ -75,9 +75,17 @@ export class BattleStage implements Stage {
     for (const view of this.views.values()) view.reset();
   }
 
-  /** 每帧更新所有单位的姿态 */
-  update(): void {
-    for (const view of this.views.values()) view.update(this.scheduler.time);
+  /**
+   * 每帧更新所有单位的姿态。
+   * @param idleTime 待机动画用的连续时间（场景时间）；不传则用演出时间
+   */
+  update(idleTime: number = this.scheduler.time): void {
+    for (const view of this.views.values()) view.update(this.scheduler.time, idleTime);
+  }
+
+  /** 调试：所有单位当前的待机状态 */
+  idleSnapshot(): Record<UnitId, ReturnType<UnitView['idleSnapshot']>> {
+    return Object.fromEntries([...this.views].map(([id, view]) => [id, view.idleSnapshot()]));
   }
 
   /** 当前离开站位的单位（任意时刻最多 1 个，且只能是正在近战冲锋的出手者） */

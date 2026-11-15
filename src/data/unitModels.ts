@@ -6,33 +6,42 @@
 
 import type { WeaponId } from '../core/types';
 import { ASSET_KEYS, type AssetKey } from './assetKeys';
+import type { IdleStyleId } from './idleConfig';
 
 export interface UnitModelDef {
   assetKey: AssetKey;
   params?: Record<string, unknown>;
+  /** 待机动画的风格（见 data/idleConfig.ts）；不填按 'stiff' */
+  idle?: IdleStyleId;
+}
+
+/** 某个模型（资源键）的待机风格：预览页没有单位模板，按资源键查 */
+export function idleStyleOfAsset(assetKey: string): IdleStyleId | undefined {
+  return Object.values(UNIT_MODELS).find((d) => d.assetKey === assetKey)?.idle;
 }
 
 export const UNIT_MODELS: Record<string, UnitModelDef> = {
-  hero_blade: { assetKey: ASSET_KEYS.heroKnight }, // 烬刃：物理系重甲骑士
-  hero_staff: { assetKey: ASSET_KEYS.heroMage }, // 雷咒：法术系法师
-  hero_sword: { assetKey: ASSET_KEYS.heroSealer }, // 缚魂：封印系祭司
-  hero_spear: { assetKey: ASSET_KEYS.heroHealer }, // 守誓：恢复系
-  hero_bow: { assetKey: ASSET_KEYS.heroRanger }, // 夜隼：自由职业弓手
+  hero_blade: { assetKey: ASSET_KEYS.heroKnight, idle: 'stiff' }, // 烬刃：物理系重甲骑士
+  hero_staff: { assetKey: ASSET_KEYS.heroMage, idle: 'flowing' }, // 雷咒：法术系法师
+  hero_sword: { assetKey: ASSET_KEYS.heroSealer, idle: 'flowing' }, // 缚魂：封印系祭司
+  hero_spear: { assetKey: ASSET_KEYS.heroHealer, idle: 'flowing' }, // 守誓：恢复系
+  hero_bow: { assetKey: ASSET_KEYS.heroRanger, idle: 'nimble' }, // 夜隼：自由职业弓手
   // 宝宝（体型约为人物的 0.6 倍）
-  pet_wolf_grey: { assetKey: ASSET_KEYS.petWolf }, // 影狼·灰
+  pet_wolf_grey: { assetKey: ASSET_KEYS.petWolf, idle: 'beast' }, // 影狼·灰
   pet_wolf_red: {
     assetKey: ASSET_KEYS.petWolf, // 影狼·赤：同一个模型换毛色
+    idle: 'beast',
     params: { furColor: 0xb8562c, bellyColor: 0xdc9a5c, maneColor: 0x4a1a0e, eyeColor: 0xffc03a },
   },
-  pet_bone_dragon: { assetKey: ASSET_KEYS.petBoneDragon },
-  pet_ghost: { assetKey: ASSET_KEYS.petGhost },
-  pet_golem: { assetKey: ASSET_KEYS.petGolem },
+  pet_bone_dragon: { assetKey: ASSET_KEYS.petBoneDragon, idle: 'winged' },
+  pet_ghost: { assetKey: ASSET_KEYS.petGhost, idle: 'spectral' },
+  pet_golem: { assetKey: ASSET_KEYS.petGolem, idle: 'construct' },
   // 敌人（精英略大，Boss 约 2 倍；比例在各 builder 的默认 scale 里，可在 params 覆盖）
-  enemy_skeleton: { assetKey: ASSET_KEYS.enemySkeleton },
-  enemy_fallen_knight: { assetKey: ASSET_KEYS.enemyFallenKnight },
-  enemy_demon_priest: { assetKey: ASSET_KEYS.enemyDemonPriest },
-  enemy_necromancer: { assetKey: ASSET_KEYS.enemyNecromancer },
-  enemy_abyss_lord: { assetKey: ASSET_KEYS.enemyAbyssLord },
+  enemy_skeleton: { assetKey: ASSET_KEYS.enemySkeleton, idle: 'rattle' },
+  enemy_fallen_knight: { assetKey: ASSET_KEYS.enemyFallenKnight, idle: 'stiff' },
+  enemy_demon_priest: { assetKey: ASSET_KEYS.enemyDemonPriest, idle: 'flowing' },
+  enemy_necromancer: { assetKey: ASSET_KEYS.enemyNecromancer, idle: 'flowing' },
+  enemy_abyss_lord: { assetKey: ASSET_KEYS.enemyAbyssLord, idle: 'overlord' },
 };
 
 /**

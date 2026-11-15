@@ -28,6 +28,12 @@ import {
 } from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 
+/** 飘动权重的顶点属性名（配合 materials.ts 的布料飘动着色器） */
+export const SWAY_ATTR = 'aSway';
+export const SWAY_DIR_ATTR = 'aSwayDir';
+/** 袍摆的飘动比披风克制：下沿的权重上限 */
+const SKIRT_SWAY = 0.5;
+
 export function mesh(geometry: BufferGeometry, material: Material, parent?: Object3D): Mesh {
   const m = new Mesh(geometry, material);
   m.castShadow = true;
@@ -164,6 +170,7 @@ export function clothGeometry(opts: ClothShape, range: [number, number] = [0, 1]
   const pos = geo.getAttribute('position') as BufferAttribute;
   const wrap = opts.wrap ?? 0.1;
   const flare = opts.flare ?? 0.22;
+  const sway = new Float32Array(pos.count);
   for (let i = 0; i < pos.count; i++) {
     const u = pos.getX(i); // −0.5 ~ 0.5
     const t = range[0] + (range[1] - range[0]) * (0.5 - pos.getY(i)); // 0 = 顶边，1 = 下摆
@@ -174,7 +181,9 @@ export function clothGeometry(opts: ClothShape, range: [number, number] = [0, 1]
     // 竖向褶皱：顶边收拢处几乎没有，越往下越深
     if (folds > 0) z += foldDepth * Math.sin(u * folds * Math.PI * 2 + 0.6) * (0.25 + 0.75 * t);
     pos.setXYZ(i, x, -t * opts.length, z - offset);
+    sway[i] = Math.pow(t, 1.4); // 飘动权重：顶边（挂点）不动，越往下摆越大
   }
+  geo.setAttribute(SWAY_ATTR, new BufferAttribute(sway, 1));
   geo.computeVertexNormals();
   return geo;
 }
@@ -215,6 +224,7 @@ export function robeSkirt(
   const geo = new LatheGeometry(profile, 28);
   const pos = geo.getAttribute('position') as BufferAttribute;
   const folds = opts.folds ?? 9;
+  const sway = new Float32Array(pos.count);
   for (let i = 0; i < pos.count; i++) {
     const x = pos.getX(i);
     const z = pos.getZ(i);
@@ -223,7 +233,9 @@ export function robeSkirt(
     const k = 1 + 0.07 * Math.sin(ang * folds) * t; // 褶皱越往下越深
     pos.setX(i, x * k);
     pos.setZ(i, z * k * (opts.depthScale ?? 0.85));
+    sway[i] = SKIRT_SWAY * t * t; // 腰部不动，下沿轻轻鼓动
   }
+  geo.setAttribute(SWAY_ATTR, new BufferAttribute(sway, 1));
   geo.computeVertexNormals();
   return mesh(geo, material, parent);
 }
@@ -281,6 +293,9 @@ export function chain(
   const parts: BufferGeometry[] = [];
   const link = new TorusGeometry(linkRadius, linkRadius * 0.32, 5, 10);
   let index = 0;
+  // 飘动：只有两个点的链是“垂挂”的（上端固定，越往下摆得越大）；多个点的链两端都挂着，只有中段轻轻晃
+  const hanging = path.length === 2;
+  const total = path.length - 1;
   for (let i = 0; i < path.length - 1; i++) {
     const [ax, ay, az] = path[i]!;
     const [bx, by, bz] = path[i + 1]!;
@@ -295,6 +310,14 @@ export function chain(
       g.rotateZ(Math.atan2(by - ay, Math.hypot(bx - ax, bz - az)) + Math.PI / 2);
       g.rotateY(-Math.atan2(bz - az, bx - ax));
       g.translate(ax + (bx - ax) * t, ay + (by - ay) * t, az + (bz - az) * t);
+      const along = (i + t) / total;
+      const weight = hanging ? along : 0.35 * Math.sin(Math.PI * along);
+      const n = g.getAttribute('position').count;
+      g.setAttribute(SWAY_ATTR, new BufferAttribute(new Float32Array(n).fill(weight), 1));
+      // 链环整体侧向摆动（不是沿各自的法线鼓胀）
+      const dir = new Float32Array(n * 3);
+      for (let v = 0; v < n; v++) dir.set([0.9, 0, 0.45], v * 3);
+      g.setAttribute(SWAY_DIR_ATTR, new BufferAttribute(dir, 3));
       parts.push(g);
       index += 1;
     }
@@ -592,13 +615,24 @@ export function vial(parent: Object3D, glass: Material, cork: Material, x: numbe
 export function band(
   parent: Object3D,
   material: Material,
-  opts: { rTop: number; rBottom: number; height: number; y?: number; depthScale?: number; repeat?: number; segments?: number },
+  opts: {
+    rTop: number;
+    rBottom: number;
+    height: number;
+    y?: number;
+    depthScale?: number;
+    repeat?: number;
+    segments?: number;
+    /** 飘动权重：贴在袍摆下沿的滚边要跟着袍摆一起动。不填时，位置在腰以下 0.3 米之外的按袍边处理 */
+    sway?: number;
+  },
 ): Mesh {
-  const m = mesh(
-    new CylinderGeometry(opts.rTop, opts.rBottom, opts.height, opts.segments ?? 24, 1, true),
-    material,
-    parent,
-  );
+  const geo = new CylinderGeometry(opts.rTop, opts.rBottom, opts.height, opts.segments ?? 24, 1, true);
+  const swayWeight = opts.sway ?? ((opts.y ?? 0) < -0.3 ? SKIRT_SWAY * 0.7 : 0);
+  if (swayWeight > 0) {
+    geo.setAttribute(SWAY_ATTR, new BufferAttribute(new Float32Array(geo.getAttribute('position').count).fill(swayWeight), 1));
+  }
+  const m = mesh(geo, material, parent);
   m.position.y = opts.y ?? 0;
   m.scale.z = opts.depthScale ?? 1;
   if (opts.repeat && opts.repeat !== 1) scaleUv(m, opts.repeat, 1);

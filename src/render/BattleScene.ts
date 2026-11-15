@@ -22,6 +22,9 @@ import { createGroundFog } from './scene/groundFog';
 import { createLighting } from './scene/lighting';
 import { SelectionRings } from './scene/selectionRings';
 import { applySilhouette, silhouetteRequested } from './debug/silhouette';
+import { SWAY_GLOBAL } from '../assets/materials';
+import { IDLE_CONFIG } from '../data/idleConfig';
+import { IDLE_RUNTIME } from './units/IdleAnimator';
 import { BattleStage } from './units/BattleStage';
 
 const MAX_FRAME_DT = 0.1; // 切回标签页时限制单帧时间跨度
@@ -54,6 +57,8 @@ export interface PerfSnapshot {
 declare global {
   interface Window {
     __perf?: () => PerfSnapshot;
+    /** 调试：所有单位当前的待机状态（权重、呼吸相位、周期倍率 …） */
+    __idle?: () => Record<string, { weight: number; breath: number; headYaw: number; roll: number; rate: number; style: string }>;
     __capture?: (time: number) => string;
   }
 }
@@ -153,6 +158,7 @@ export class BattleScene {
       this.postFx.setBloom(false);
     }
     window.__perf = () => this.perfSnapshot();
+    window.__idle = () => this.stage.idleSnapshot();
     window.__capture = (time) => this.captureAt(time);
 
     this.resizeObserver = new ResizeObserver(() => this.resize());
@@ -213,7 +219,8 @@ export class BattleScene {
     for (const tick of this.ticks) tick(this.time, dt);
     // 演出：先推进调度器（动画改姿态参数），再把姿态应用到模型，最后通知界面层更新
     this.scheduler.update(dt);
-    this.stage.update();
+    SWAY_GLOBAL.uSwayTime.value = this.time;
+    this.stage.update(this.time);
     this.fx.update();
     this.cameraRig.update(dt);
     this.rings.update(this.time);
@@ -234,6 +241,11 @@ export class BattleScene {
     this.low = on;
     const low = QUALITY_CONFIG.low;
     this.postFx.setBloom(on ? low.bloom : true);
+    // 待机的次要动画（布料飘动、张望和小动作、颤动）在低画质下关闭；呼吸、翅膀、漂浮、发光呼吸保留
+    SWAY_GLOBAL.uSwayQuality.value = on && !IDLE_CONFIG.lowQuality.cloth ? 0 : 1;
+    IDLE_RUNTIME.cloth = !(on && !IDLE_CONFIG.lowQuality.cloth);
+    IDLE_RUNTIME.events = !(on && !IDLE_CONFIG.lowQuality.events);
+    IDLE_RUNTIME.tremble = !(on && !IDLE_CONFIG.lowQuality.tremble);
     this.fx.particleScale = on ? low.particleScale : 1;
     this.scene.traverse((o) => {
       const light = o as DirectionalLight;
