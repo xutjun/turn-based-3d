@@ -22,7 +22,7 @@ export const UNIT_MODELS: Record<string, UnitModelDef> = {
   pet_wolf_grey: { assetKey: ASSET_KEYS.petWolf }, // 影狼·灰
   pet_wolf_red: {
     assetKey: ASSET_KEYS.petWolf, // 影狼·赤：同一个模型换毛色
-    params: { furColor: 0x8a3e2c, maneColor: 0x2a100c, eyeColor: 0xffa23a },
+    params: { furColor: 0xb8562c, bellyColor: 0xdc9a5c, maneColor: 0x4a1a0e, eyeColor: 0xffc03a },
   },
   pet_bone_dragon: { assetKey: ASSET_KEYS.petBoneDragon },
   pet_ghost: { assetKey: ASSET_KEYS.petGhost },
