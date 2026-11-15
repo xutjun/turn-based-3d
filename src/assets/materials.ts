@@ -99,6 +99,11 @@ export interface RimOptions {
   power: number; // 越大亮边越窄
   /** 底色提亮：把表面自身的颜色按这个比例加到自发光里，暗场中也能分辨出材质的配色（默认 0） */
   lift?: number;
+  /**
+   * 顶面提亮 / 底面压暗：朝上的面按 1 + topShade 提亮，朝下的面按 1 − topShade 压暗，侧面不变（默认 0）。
+   * 给石块这类大体块用，靠明暗而不是杂色拉开层次。
+   */
+  topShade?: number;
 }
 
 /**
@@ -111,6 +116,7 @@ export function applyRimLight<T extends MeshStandardMaterial>(material: T, rim: 
     uRimStrength: { value: rim.strength },
     uRimPower: { value: rim.power },
     uRimLift: { value: rim.lift ?? 0 },
+    uTopShade: { value: rim.topShade ?? 0 },
   };
   material.userData['rimUniforms'] = uniforms;
   material.onBeforeCompile = (shader) => {
@@ -118,7 +124,7 @@ export function applyRimLight<T extends MeshStandardMaterial>(material: T, rim: 
     shader.fragmentShader = shader.fragmentShader
       .replace(
         '#include <common>',
-        '#include <common>\nuniform vec3 uRimColor;\nuniform float uRimStrength;\nuniform float uRimPower;\nuniform float uRimLift;',
+        '#include <common>\nuniform vec3 uRimColor;\nuniform float uRimStrength;\nuniform float uRimPower;\nuniform float uRimLift;\nuniform float uTopShade;',
       )
       .replace(
         '#include <emissivemap_fragment>',
@@ -126,6 +132,8 @@ export function applyRimLight<T extends MeshStandardMaterial>(material: T, rim: 
         {
           float rimDot = 1.0 - saturate(dot(normalize(vViewPosition), normal));
           totalEmissiveRadiance += uRimColor * pow(rimDot, uRimPower) * uRimStrength;
+          vec3 upView = normalize((viewMatrix * vec4(0.0, 1.0, 0.0, 0.0)).xyz);
+          diffuseColor.rgb *= 1.0 + uTopShade * dot(normal, upView);
           totalEmissiveRadiance += diffuseColor.rgb * uRimLift;
         }`,
       );

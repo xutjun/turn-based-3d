@@ -21,6 +21,7 @@ import { createFormationView, type FormationView } from './scene/formationView';
 import { createGroundFog } from './scene/groundFog';
 import { createLighting } from './scene/lighting';
 import { SelectionRings } from './scene/selectionRings';
+import { applySilhouette, silhouetteRequested } from './debug/silhouette';
 import { BattleStage } from './units/BattleStage';
 
 const MAX_FRAME_DT = 0.1; // 切回标签页时限制单帧时间跨度
@@ -146,6 +147,11 @@ export class BattleScene {
     this.ticks = collectTicks(this.scene);
 
     this.setLowQuality(initialLowQuality(), false);
+    // 调试：地址加 ?silhouette=1 做剪影测试（单位纯黑、背景浅灰、隐藏其余物件）
+    if (silhouetteRequested()) {
+      applySilhouette(this.scene, this.formation.group);
+      this.postFx.setBloom(false);
+    }
     window.__perf = () => this.perfSnapshot();
     window.__capture = (time) => this.captureAt(time);
 

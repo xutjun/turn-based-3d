@@ -5,6 +5,7 @@
 // 地址参数（方便截图和直达某个模型）：
 //   model=资源键   glow=发光倍率   spin=0 关闭自动旋转   yaw=初始水平角（度）
 //   weapon=0 人物不持武器   element=fire|thunder|seal|heal 法杖元素   dist=相机距离
+//   silhouette=1 剪影测试（模型纯黑、背景浅灰）
 
 import {
   Box3,
@@ -36,6 +37,7 @@ import { createDefaultRegistry } from '../assets/registerDefaults';
 import { groundTextures } from '../assets/textures/surfaces';
 import { ENVIRONMENT_CONFIG, FOG_CONFIG, LIGHT_CONFIG } from '../data/renderConfig';
 import { STAFF_ELEMENT_COLORS, type StaffElement } from '../data/weapons';
+import { applySilhouette, silhouetteRequested } from '../render/debug/silhouette';
 import { createPostFx, type PostFx } from '../render/postfx/composer';
 
 const GLOW_LEVELS = [0, 0.5, 1, 2]; // 可切换的发光倍率
@@ -228,6 +230,8 @@ export class PreviewPage {
     this.camera.position.copy(this.controls.target).addScaledVector(offset.normalize(), this.baseDistance * fit);
     this.ticks = collectTicks(this.model);
     setGlowScale(this.model, this.glow);
+    // 调试：地址加 ?silhouette=1 做剪影测试
+    if (silhouetteRequested()) applySilhouette(this.scene, this.turntable);
     this.renderPanel();
     this.renderInfo(entry);
   }
