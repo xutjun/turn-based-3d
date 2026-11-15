@@ -1,5 +1,5 @@
 // 人形骨架：用 Group 层级搭出的关节树。
-// 模型的所有部件都挂在关节上，步骤 5 的动画只需要旋转这些关节：
+// 模型的所有部件都挂在关节上，动画只需要旋转这些关节（目前实际会转的关节见 render/units/animatedJoints.ts）：
 //   待机 = 胸、头、披风的轻微起伏；攻击 = 肩、肘、脊柱；施法 = 双臂上举；
 //   受击 = 脊柱后仰；倒地 / 复活 = 根节点与髋部整体旋转。
 //
@@ -63,10 +63,6 @@ export const DEFAULT_DIMS: RigDims = {
   neck: 0.07,
   headHeight: 0.24,
 };
-
-/** 预留的动画名称，步骤 5 按这些名字实现 */
-export const CHARACTER_ANIMATIONS = ['idle', 'attack', 'cast', 'hit', 'die', 'revive'] as const;
-export type CharacterAnimation = (typeof CHARACTER_ANIMATIONS)[number];
 
 const RIG_KEY = 'rig';
 

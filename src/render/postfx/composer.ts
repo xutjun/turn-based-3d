@@ -58,6 +58,8 @@ const GradeShader = {
 export interface PostFx {
   render(time: number): void;
   setSize(width: number, height: number, pixelRatio: number): void;
+  /** 开关辉光（低画质模式关闭） */
+  setBloom(on: boolean): void;
 }
 
 export function createPostFx(renderer: WebGLRenderer, scene: Scene, camera: Camera, config = POSTFX_CONFIG): PostFx {
@@ -88,6 +90,9 @@ export function createPostFx(renderer: WebGLRenderer, scene: Scene, camera: Came
     setSize(width: number, height: number, pixelRatio: number): void {
       composer.setPixelRatio(pixelRatio);
       composer.setSize(width, height);
+    },
+    setBloom(on: boolean): void {
+      bloom.enabled = on;
     },
   };
 }

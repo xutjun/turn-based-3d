@@ -175,7 +175,7 @@ export function bannerTexture(seed = 1): Texture {
 
 /**
  * 占位血条：深色边框 + 红色气血条；友方下面多一条蓝色魔法条。
- * 步骤 5 接入战斗后换成可变长度的正式血条。
+ * 正式单位的头顶条由界面层（ui/hud）绘制。
  */
 export function placeholderBarTexture(withMp: boolean): Texture {
   return cached(`bar:${withMp}`, () => {

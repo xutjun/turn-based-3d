@@ -1,13 +1,15 @@
 // 战斗场景：渲染器、场景、相机、渲染循环、窗口自适应，以及演出用的时间调度器和舞台。
 // 这里不包含战斗逻辑：逻辑事件由 director/BattleDirector 转成演出，界面在 ui/ 里。
 
-import { Color, FogExp2, PCFShadowMap, Scene, Vector3, WebGLRenderer } from 'three';
+import { Color, FogExp2, PCFShadowMap, Scene, Vector3, WebGLRenderer, type DirectionalLight, type Object3D } from 'three';
 import { collectTicks, type TickFn } from '../assets/AssetRegistry';
+import { SoundEngine } from '../assets/audio/SoundEngine';
 import { createEnvironmentMap } from '../assets/environment';
 import { createDefaultRegistry } from '../assets/registerDefaults';
 import { ENEMY_TEMPLATES } from '../data/enemies';
 import { ALLY_TEMPLATES } from '../data/heroes';
-import { ENVIRONMENT_CONFIG, FOG_CONFIG } from '../data/renderConfig';
+import { enableShadowLayer } from '../assets/optimize';
+import { ENVIRONMENT_CONFIG, FOG_CONFIG, LIGHT_CONFIG, QUALITY_CONFIG, RENDER_OPTIMIZE } from '../data/renderConfig';
 import { createBattleCamera, type BattleCamera } from './camera/battleCamera';
 import { createDebugOverlay, type DebugOverlay } from './debug/debugOverlay';
 import { Scheduler } from './director/Scheduler';
@@ -21,8 +23,39 @@ import { createLighting } from './scene/lighting';
 import { SelectionRings } from './scene/selectionRings';
 import { BattleStage } from './units/BattleStage';
 
-const MAX_PIXEL_RATIO = 2; // 高分屏上限，避免后处理开销过大
 const MAX_FRAME_DT = 0.1; // 切回标签页时限制单帧时间跨度
+
+/** 开场用哪种画质：地址参数 ?quality=low / high 优先，其次是上次的选择，默认高画质 */
+function initialLowQuality(): boolean {
+  const param = new URLSearchParams(location.search).get('quality');
+  if (param === 'low') return true;
+  if (param === 'high') return false;
+  try {
+    return localStorage.getItem(QUALITY_CONFIG.storageKey) === 'low';
+  } catch {
+    return false;
+  }
+}
+
+/** 性能快照，见 BattleScene.perfSnapshot() */
+export interface PerfSnapshot {
+  drawCalls: number; // 整帧的绘制调用（含阴影和后处理各遍）
+  triangles: number;
+  frameMs: number; // 上一帧到这一帧的真实间隔
+  updateMs: number; // 逻辑部分（动画、特效、界面更新，不含渲染）的耗时
+  geometries: number; // 显存里的几何体数量
+  textures: number;
+  programs: number; // 着色器程序数量
+  objects: Record<string, number>; // 场景各部分当前要画的物体数
+  units: Record<string, string>; // 每个单位的明细
+}
+
+declare global {
+  interface Window {
+    __perf?: () => PerfSnapshot;
+    __capture?: (time: number) => string;
+  }
+}
 
 export class BattleScene {
   readonly scene = new Scene();
@@ -40,18 +73,28 @@ export class BattleScene {
   readonly fx: FxSystem;
   /** 演出镜头：推近、跟随、抖动 */
   readonly cameraRig: CameraRig;
+  /** 音效：全部用 Web Audio 合成；第一次点击 / 按键后才能出声 */
+  readonly sound: SoundEngine;
   /** 最近一帧的真实耗时（秒），性能自检用 */
   lastFrameDt = 0;
   /** 最近一帧里逻辑部分（动画、特效、界面更新，不含渲染）的耗时（毫秒） */
   lastUpdateMs = 0;
   /** 最近一帧的绘制调用数（含后处理各遍） */
   lastDrawCalls = 0;
+  /** 最近一帧画的三角形数 */
+  lastTriangles = 0;
 
   private readonly postFx: PostFx;
   private readonly ticks: TickFn[];
   private readonly resizeObserver: ResizeObserver;
   private readonly frameListeners: (() => void)[] = [];
   private readonly projected = new Vector3();
+  private low = false;
+  /** 画质开关，给界面上的“画质”按钮用 */
+  readonly quality = {
+    isLow: (): boolean => this.low,
+    setLow: (on: boolean): void => this.setLowQuality(on, true),
+  };
   private width = 1;
   private height = 1;
   private time = 0;
@@ -72,6 +115,9 @@ export class BattleScene {
     this.scene.environment = createEnvironmentMap(this.renderer);
     this.scene.environmentIntensity = ENVIRONMENT_CONFIG.intensity;
 
+    // 调试：地址加 ?merge=0 关闭网格合并，用来对比优化前后的外观和绘制调用
+    if (new URLSearchParams(location.search).get('merge') === '0') RENDER_OPTIMIZE.mergeStaticMeshes = false;
+
     const registry = createDefaultRegistry();
     const templates = [...ALLY_TEMPLATES, ...ENEMY_TEMPLATES];
     this.formation = createFormationView(registry, templates);
@@ -79,7 +125,8 @@ export class BattleScene {
     this.cameraRig = new CameraRig(this.battleCamera, this.scheduler);
     const fx = new FxSystem(this.scheduler, this.battleCamera.camera);
     this.fx = fx;
-    this.stage = new BattleStage(templates, this.formation.units, this.scheduler, fx, this.cameraRig);
+    this.sound = new SoundEngine({ rate: () => this.scheduler.timeScale, skip: () => this.scheduler.skip });
+    this.stage = new BattleStage(templates, this.formation.units, this.scheduler, fx, this.cameraRig, this.sound);
     this.scene.add(
       createLighting(),
       createBattlefield(registry),
@@ -87,6 +134,8 @@ export class BattleScene {
       this.formation.group,
       fx.group,
     );
+    // 其余投射阴影的物体（没有交给阴影代理的）进入阴影图层
+    enableShadowLayer(this.scene, RENDER_OPTIMIZE.shadowLayer);
     this.rings = new SelectionRings(templates);
     this.scene.add(this.rings.group);
 
@@ -95,6 +144,10 @@ export class BattleScene {
 
     this.postFx = createPostFx(this.renderer, this.scene, this.battleCamera.camera);
     this.ticks = collectTicks(this.scene);
+
+    this.setLowQuality(initialLowQuality(), false);
+    window.__perf = () => this.perfSnapshot();
+    window.__capture = (time) => this.captureAt(time);
 
     this.resizeObserver = new ResizeObserver(() => this.resize());
     this.resizeObserver.observe(container);
@@ -121,6 +174,18 @@ export class BattleScene {
     this.frame(this.lastMs + dt * 1000);
   }
 
+  /**
+   * 调试用：停掉自动渲染，把场景时间和演出时间都定在 time 秒，画一帧并返回这一帧的 PNG（data URL）。
+   * 用来在完全相同的时间点对比两种配置的画面（例如合并网格开 / 关）。
+   */
+  captureAt(time: number): string {
+    this.setManual(true);
+    this.time = time;
+    this.scheduler.time = time;
+    this.frame(this.lastMs); // 间隔为 0：不推进任何动画，只按给定时间摆姿态
+    return this.renderer.domElement.toDataURL('image/png');
+  }
+
   /** 停止渲染并释放资源 */
   dispose(): void {
     this.renderer.setAnimationLoop(null);
@@ -128,6 +193,7 @@ export class BattleScene {
     this.debug.dispose();
     this.rings.dispose();
     this.fx.dispose();
+    this.sound.dispose();
     this.renderer.dispose();
     this.renderer.domElement.remove();
   }
@@ -150,7 +216,88 @@ export class BattleScene {
     this.renderer.info.reset();
     this.postFx.render(this.time);
     this.lastDrawCalls = this.renderer.info.render.calls;
+    this.lastTriangles = this.renderer.info.render.triangles;
     this.debug.frame(nowMs);
+  }
+
+  /**
+   * 切换低画质：关闭辉光、降低阴影贴图分辨率、减少粒子和雾片、不按高分屏放大分辨率。
+   * @param remember 是否记住这次选择（下次打开页面沿用）
+   */
+  setLowQuality(on: boolean, remember: boolean): void {
+    this.low = on;
+    const low = QUALITY_CONFIG.low;
+    this.postFx.setBloom(on ? low.bloom : true);
+    this.fx.particleScale = on ? low.particleScale : 1;
+    this.scene.traverse((o) => {
+      const light = o as DirectionalLight;
+      if (!light.isDirectionalLight || !light.castShadow) return;
+      const size = on ? low.shadowMapSize : LIGHT_CONFIG.moon.shadowMapSize;
+      if (light.shadow.mapSize.x === size) return;
+      light.shadow.mapSize.set(size, size);
+      // 换分辨率要丢掉旧的阴影贴图，下一帧会按新尺寸重建
+      light.shadow.map?.dispose();
+      light.shadow.map = null;
+    });
+    const fog = this.scene.getObjectByName('groundFog');
+    fog?.children.forEach((puff, i) => {
+      puff.visible = !on || i < fog.children.length * low.groundFogRatio;
+    });
+    this.resize();
+    if (remember) {
+      try {
+        localStorage.setItem(QUALITY_CONFIG.storageKey, on ? 'low' : 'high');
+      } catch {
+        // 无痕模式等情况下不能写本地存储：不影响本次生效
+      }
+    }
+  }
+
+  /**
+   * 性能快照（window.__perf() 可在控制台查看）：最近一帧的绘制调用、三角形数、逻辑耗时，
+   * 显存里的几何体 / 贴图 / 着色器数量，以及场景里各部分各有多少个要画的物体。
+   */
+  perfSnapshot(): PerfSnapshot {
+    const info = this.renderer.info;
+    const objects: Record<string, number> = {};
+    for (const child of this.scene.children) {
+      let count = 0;
+      child.traverseVisible((o) => {
+        const r = o as Object3D & { isMesh?: boolean; isPoints?: boolean; isLine?: boolean; isSprite?: boolean };
+        if (r.isMesh || r.isPoints || r.isLine || r.isSprite) count += 1;
+      });
+      if (count > 0) objects[child.name || child.type] = count;
+    }
+    // 每个单位的明细：网格 / 精灵 / 粒子各多少个，用了多少种材质
+    const units: Record<string, string> = {};
+    for (const [id, model] of this.formation.units) {
+      let meshes = 0;
+      let sprites = 0;
+      let points = 0;
+      let transparent = 0;
+      const materials = new Set<unknown>();
+      model.traverseVisible((o) => {
+        const r = o as Object3D & { isMesh?: boolean; isPoints?: boolean; isSprite?: boolean; material?: { transparent?: boolean } };
+        if (r.isMesh) {
+          meshes += 1;
+          materials.add(r.material);
+          if (r.material?.transparent) transparent += 1;
+        } else if (r.isSprite) sprites += 1;
+        else if (r.isPoints) points += 1;
+      });
+      units[id] = `网格 ${meshes}（半透明 ${transparent}，材质 ${materials.size} 种） 精灵 ${sprites} 粒子 ${points}`;
+    }
+    return {
+      units,
+      drawCalls: this.lastDrawCalls,
+      triangles: this.lastTriangles,
+      frameMs: this.lastFrameDt * 1000,
+      updateMs: this.lastUpdateMs,
+      geometries: info.memory.geometries,
+      textures: info.memory.textures,
+      programs: info.programs?.length ?? 0,
+      objects,
+    };
   }
 
   /** 注册每帧回调（界面层用它更新头顶条和飘字），在渲染之前调用 */
@@ -172,7 +319,8 @@ export class BattleScene {
   private resize(): void {
     const width = Math.max(1, this.container.clientWidth);
     const height = Math.max(1, this.container.clientHeight);
-    const pixelRatio = Math.min(MAX_PIXEL_RATIO, devicePixelRatio || 1);
+    const cap = this.low ? QUALITY_CONFIG.low.maxPixelRatio : QUALITY_CONFIG.maxPixelRatio;
+    const pixelRatio = Math.min(cap, devicePixelRatio || 1);
     this.width = width;
     this.height = height;
     this.renderer.setPixelRatio(pixelRatio);

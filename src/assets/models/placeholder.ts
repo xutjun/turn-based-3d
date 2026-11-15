@@ -1,4 +1,4 @@
-// 单位占位体：步骤 4 做出正式角色模型之前，用简单几何体标出站位、朝向、敌我和职业。
+// 单位占位体：没有登记正式模型的单位（data/unitModels.ts 里没有它的 templateId）用简单几何体标出站位、朝向、敌我和职业。
 // 模型默认面朝 +z，由调用方按阵营旋转。
 
 import {
@@ -26,10 +26,10 @@ export interface PlaceholderParams {
   hpBarGap: number; // 血条离头顶的距离
 }
 
-/** 占位体上预留的挂点名称，步骤 5 用它定位头顶血条 */
+/** 占位体上预留的挂点名称，界面层用它定位头顶血条 */
 export const HP_ANCHOR_NAME = 'hpAnchor';
 
-/** 占位血条精灵（友方多一条魔法条）。步骤 5 接入战斗后换成可变长度的正式血条 */
+/** 占位血条精灵（友方多一条魔法条）。正式单位的头顶条由界面层（ui/hud）绘制。 */
 export function createPlaceholderBar(side: Side): Sprite {
   const bar = new Sprite(
     new SpriteMaterial({

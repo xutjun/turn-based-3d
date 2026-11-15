@@ -35,6 +35,8 @@ export interface PlayerDebug {
   session: CommandSession;
   logLines(): number;
   resultVisible(): boolean;
+  /** 立刻再战一次（自检用：连续开很多场，看内存是否持续增长） */
+  rematch(): void;
 }
 
 declare global {
@@ -82,6 +84,8 @@ export class PlayerBattleApp {
       scheduler,
       project: (world) => this.scene.worldToScreen(world),
       headPosition: (id, out) => stage.unit(id).headPosition(out),
+      quality: this.scene.quality,
+      sound: this.scene.sound,
     });
     this.scene.onFrame(() => this.hud.update());
 
@@ -191,6 +195,7 @@ export class PlayerBattleApp {
       session: controller.session,
       logLines: () => this.log.lineCount,
       resultVisible: () => this.result.visible,
+      rematch: () => this.rematch(),
     };
 
     controller.run().catch((err: unknown) => {

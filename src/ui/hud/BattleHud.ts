@@ -22,6 +22,17 @@ export interface HudDeps {
   project: Projector;
   /** 取某单位头顶条的世界坐标 */
   headPosition(id: UnitId, out: Vector3): Vector3;
+  /** 音效（可选）：提供后右上角多出音效开关和音量滑块，界面按钮带点击音 */
+  sound?: {
+    readonly volume: number;
+    readonly muted: boolean;
+    readonly supported: boolean;
+    setVolume(volume: number): void;
+    setMuted(muted: boolean): void;
+    play(name: 'click'): void;
+  };
+  /** 画质开关（可选）：提供后右上角多一个“画质”按钮 */
+  quality?: { isLow(): boolean; setLow(on: boolean): void };
 }
 
 /** 头顶条上的标记 */
@@ -86,7 +97,10 @@ const CSS = `
   letter-spacing:6px; white-space:nowrap; color:#f0dfae; text-shadow:0 0 8px #000,0 2px 4px #000;
   background:linear-gradient(90deg,rgba(10,10,12,0),rgba(10,10,12,.82) 20%,rgba(10,10,12,.82) 80%,rgba(10,10,12,0));
   border-top:1px solid rgba(150,120,70,.7); border-bottom:1px solid rgba(150,120,70,.7); opacity:0; }
-.hud-controls { position:absolute; right:12px; top:10px; display:flex; gap:4px; pointer-events:auto; z-index:5; }
+.hud-controls { position:absolute; right:12px; top:10px; width:262px; display:flex; flex-wrap:wrap; justify-content:flex-end;
+  align-items:center; gap:4px; pointer-events:auto; z-index:5; }
+.hud-volume { width:78px; height:4px; margin:0 2px 0 4px; accent-color:#c9a85a; cursor:pointer; }
+.hud-volume:disabled { opacity:.4; cursor:default; }
 .hud-btn { padding:4px 10px; font:inherit; font-size:14px; cursor:pointer; color:#d8c690; background:rgba(40,36,30,.92);
   border:1px solid rgba(150,120,70,.7); }
 .hud-btn.on { color:#1a1408; background:#c9a85a; }
@@ -164,12 +178,14 @@ export class BattleHud implements DirectorHud {
     this.renderControls();
     addEventListener('keydown', this.onKey);
     deps.container.addEventListener('pointermove', this.onPointerMove);
+    deps.container.addEventListener('click', this.onClickSound, true);
     deps.container.addEventListener('pointerleave', this.onPointerLeave);
   }
 
   dispose(): void {
     removeEventListener('keydown', this.onKey);
     this.deps.container.removeEventListener('pointermove', this.onPointerMove);
+    this.deps.container.removeEventListener('click', this.onClickSound, true);
     this.deps.container.removeEventListener('pointerleave', this.onPointerLeave);
     this.root.remove();
   }
@@ -186,6 +202,11 @@ export class BattleHud implements DirectorHud {
     this.pointer = { x: e.clientX - rect.left, y: e.clientY - rect.top };
   };
 
+  /** 点到任何界面按钮都响一声 */
+  private readonly onClickSound = (e: MouseEvent): void => {
+    if ((e.target as Element | null)?.closest?.('button')) this.deps.sound?.play('click');
+  };
+
   private readonly onPointerLeave = (): void => {
     this.pointer = null;
   };
@@ -194,6 +215,7 @@ export class BattleHud implements DirectorHud {
     const { scheduler } = this.deps;
     if (e.key === '1' || e.key === '2') scheduler.setTimeScale(Number(e.key));
     else if (e.key === 's' || e.key === 'S') scheduler.setSkip(!scheduler.skip);
+    else if ((e.key === 'm' || e.key === 'M') && this.deps.sound) this.deps.sound.setMuted(!this.deps.sound.muted);
     else return;
     this.renderControls();
   };
@@ -217,6 +239,33 @@ export class BattleHud implements DirectorHud {
       button(`${speed}×`, scheduler.timeScale === speed, `战斗速度 ${speed} 倍（按键 ${speed}）`, () => scheduler.setTimeScale(speed));
     }
     button('跳过动画', scheduler.skip, '跳过动画（按键 S）', () => scheduler.setSkip(!scheduler.skip));
+    const { quality } = this.deps;
+    if (quality) {
+      const low = quality.isLow();
+      button(
+        low ? '画质 低' : '画质 高',
+        low,
+        '低画质：关闭辉光、降低阴影、减少粒子（卡顿时打开）',
+        () => quality.setLow(!low),
+      );
+    }
+    const { sound } = this.deps;
+    if (sound?.supported) {
+      button(sound.muted ? '音效 关' : '音效 开', !sound.muted, '音效开关（按键 M）', () => sound.setMuted(!sound.muted));
+      const slider = document.createElement('input');
+      slider.type = 'range';
+      slider.className = 'hud-volume';
+      slider.min = '0';
+      slider.max = '100';
+      slider.value = String(Math.round(sound.volume * 100));
+      slider.title = `音量 ${slider.value}%`;
+      slider.disabled = sound.muted;
+      slider.oninput = () => {
+        sound.setVolume(Number(slider.value) / 100);
+        slider.title = `音量 ${slider.value}%`;
+      };
+      this.controlsEl.append(slider);
+    }
   }
 
   // ------------------------------------------------------------------

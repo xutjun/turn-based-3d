@@ -8,12 +8,15 @@ import type { PlaceholderParams } from '../../assets/models/placeholder';
 import { ASSET_KEYS } from '../../assets/registerDefaults';
 import type { UnitId, UnitTemplate } from '../../core/types';
 import { facingYawOf, slotPosition } from '../../data/formation';
-import { PLACEHOLDER_CONFIG } from '../../data/renderConfig';
+import { getRig } from '../../assets/models/characters/rig';
+import { mergeStaticMeshes } from '../../assets/optimize';
+import { animatedJointsOf } from '../units/animatedJoints';
+import { PLACEHOLDER_CONFIG, RENDER_OPTIMIZE } from '../../data/renderConfig';
 import { UNIT_MODELS, WEAPON_MODELS } from '../../data/unitModels';
 
 export interface FormationView {
   group: Group;
-  /** 单位 id → 场上的模型，步骤 5 用它驱动动画 */
+  /** 单位 id → 场上的模型，UnitView 用它驱动动画 */
   units: Map<UnitId, Object3D>;
 }
 
@@ -49,6 +52,23 @@ function createUnitModel(registry: AssetRegistry, t: UnitTemplate): Object3D {
   return registry.create(ASSET_KEYS.placeholderUnit, params);
 }
 
+/** 模型里关节节点的名字前缀（characters/rig.ts 与 creatures/common.ts 的约定） */
+const JOINT_PREFIX = 'joint:';
+
+/**
+ * 合并一个单位模型里不会单独运动的网格。
+ * 人形：只有演出会转动的关节（肩、肘、腰、胸、头）作为边界，腿、手、颈等静止关节下的部件并进上一级；
+ * 宝宝和没有骨架的模型：目前只做整体动作，所有关节都算静止。
+ */
+function mergeUnitMeshes(model: Object3D): void {
+  const rig = getRig(model);
+  const moving = new Set<Object3D>(rig ? Object.values(animatedJointsOf(rig)) : []);
+  mergeStaticMeshes(model, {
+    isStatic: (node) => node.name.startsWith(JOINT_PREFIX) && !moving.has(node),
+    shadowLayer: RENDER_OPTIMIZE.shadowLayer,
+  });
+}
+
 export function createFormationView(registry: AssetRegistry, templates: readonly UnitTemplate[]): FormationView {
   const group = new Group();
   group.name = 'formation';
@@ -56,6 +76,8 @@ export function createFormationView(registry: AssetRegistry, templates: readonly
 
   for (const t of templates) {
     const obj = createUnitModel(registry, t);
+    // 合并不会单独运动的小网格，减少绘制调用（外观和动画不变）
+    if (RENDER_OPTIMIZE.mergeStaticMeshes) mergeUnitMeshes(obj);
     const pos = slotPosition(t.side, t.slot);
     obj.position.set(pos.x, 0, pos.z);
     obj.rotation.y = facingYawOf(t.side);

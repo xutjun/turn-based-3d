@@ -100,13 +100,13 @@ const CSS = `
 .dk-toast.show { opacity:1; transition:none; }
 
 /* ---------- 设置条（宝宝自动 / 手动） ---------- */
-.dk-settings { right:12px; top:48px; padding:6px 9px; display:flex; align-items:center; gap:6px; font-size:13px; }
+.dk-settings { right:12px; top:80px; padding:6px 9px; display:flex; align-items:center; gap:6px; font-size:13px; }
 .dk-settings .dk-btn { font-size:13px; padding:3px 9px; letter-spacing:1px; }
 .dk-settings-note { position:absolute; right:0; top:100%; margin-top:6px; font-size:11px; color:#9c8f6c; white-space:nowrap;
   text-shadow:0 1px 2px #000; }
 
 /* ---------- 战斗日志 ---------- */
-.dk-log { right:12px; top:96px; width:252px; padding:8px 4px 8px 10px; }
+.dk-log { right:12px; top:128px; width:252px; padding:8px 4px 8px 10px; }
 .dk-log .dk-title { margin-bottom:5px; padding-bottom:4px; font-size:13px; cursor:pointer; }
 .dk-log-body { height:150px; overflow-y:auto; padding-right:6px; font-size:12px; line-height:1.45; user-select:text; }
 .dk-log.is-collapsed .dk-log-body { display:none; }

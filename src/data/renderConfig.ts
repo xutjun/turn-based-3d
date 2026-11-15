@@ -81,7 +81,7 @@ export const BATTLEFIELD_CONFIG = {
   ],
 };
 
-/** 占位体（步骤 4 换成正式模型前使用）的外观 */
+/** 占位体（没有登记正式模型的单位使用）的外观 */
 export const PLACEHOLDER_CONFIG = {
   classColor: {
     physical: 0x9a3324, // 物理：暗红
@@ -105,6 +105,29 @@ export const RIM_CONFIG = {
   ally: { color: 0x8fb8ff, strength: 0.85, power: 2.2 }, // 友方：冷蓝白
   enemy: { color: 0xff5a3a, strength: 0.6, power: 2.4 }, // 敌方：暗红
 } satisfies Record<Side, { color: number; strength: number; power: number }>;
+
+/**
+ * 低画质模式（右上角“画质”按钮，或地址加 ?quality=low）：给没有独立显卡的机器用。
+ * 关闭辉光、降低阴影贴图分辨率、减少粒子和雾片、不按高分屏放大渲染分辨率。
+ */
+export const QUALITY_CONFIG = {
+  storageKey: 'dk-battle-quality', // 记住玩家选择用的本地存储键
+  maxPixelRatio: 2, // 高画质下渲染分辨率倍率的上限（高分屏）
+  low: {
+    bloom: false, // 关闭辉光
+    shadowMapSize: 1024, // 阴影贴图分辨率（高画质见 LIGHT_CONFIG.moon.shadowMapSize）
+    particleScale: 0.4, // 技能粒子数量的比例
+    groundFogRatio: 0.5, // 保留多少比例的贴地雾片
+    maxPixelRatio: 1,
+  },
+};
+
+/** 绘制调用优化（步骤 8）。关掉后回到“每个小几何体画一次”，用来对比外观是否有变化（地址加 ?merge=0） */
+export const RENDER_OPTIMIZE = {
+  mergeStaticMeshes: true,
+  // 阴影专用图层：主光源的阴影只画这个图层上的物体（阴影代理 + 没有代理的投影物体）
+  shadowLayer: 1,
+};
 
 export const DEBUG_CONFIG = {
   showGrid: false, // 显示网格坐标（按 G 切换，或地址加 ?grid=1）

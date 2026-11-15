@@ -14,7 +14,8 @@ import type {
 import { ASSET_KEYS } from '../../assets/registerDefaults';
 import { groundTextures } from '../../assets/textures/surfaces';
 import { FORMATION } from '../../data/formation';
-import { BATTLEFIELD_CONFIG, LIGHT_CONFIG } from '../../data/renderConfig';
+import { BATTLEFIELD_CONFIG, LIGHT_CONFIG, RENDER_OPTIMIZE } from '../../data/renderConfig';
+import { mergeStaticMeshes } from '../../assets/optimize';
 
 function createGround(): Mesh {
   const tex = groundTextures();
@@ -159,5 +160,7 @@ export function createBattlefield(registry: AssetRegistry): Group {
     placed += 1;
   }
 
+  // 场景物件都是静止的：按材质合并成少数几个网格（火焰、旗面等会动的部分由优化器自动保留）
+  if (RENDER_OPTIMIZE.mergeStaticMeshes) mergeStaticMeshes(group, { isStatic: () => true, shadowLayer: RENDER_OPTIMIZE.shadowLayer });
   return group;
 }

@@ -1,7 +1,7 @@
 // 武器发光控制器：把一把武器上的全部发光部件（自发光材质、光晕精灵、点光源、粒子、流光贴图）
 // 收在一起统一驱动。强度 = 配置的基础强度 × 整体倍率 × 呼吸 × 出手闪光。
 //
-// 对外接口（步骤 5、7 使用）：
+// 对外接口（单位动画与技能演出使用）：
 //   getWeaponGlow(weapon)?.flare()            出手瞬间短暂增强
 //   getWeaponGlow(weapon)?.setColor(c, a)     换发光颜色（法杖按施法元素变色）
 //   getWeaponGlow(weapon)?.setScale(k)        整体倍率

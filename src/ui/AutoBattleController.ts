@@ -1,6 +1,6 @@
 // 自动战斗控制器：双方都由 AI 下指令，按 DESIGN.md §3.1 的主循环驱动引擎，
 // 每结算一次出手就等演出播完再结算下一次，所以画面上任意时刻只有一个单位在行动。
-// 玩家指令界面在步骤 6 接入后，把“代替玩家下指令”那一段换成等待界面输入即可。
+// 玩家亲自下指令的版本见 PlayerBattleController。
 
 import type { BattleEngine } from '../core/battle';
 import type { BattleDirector } from '../render/director/BattleDirector';

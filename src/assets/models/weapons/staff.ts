@@ -129,7 +129,7 @@ export function buildStaffWithGlow(params: Partial<StaffParams> = {}): Group {
   return finishWeapon(root, 'staff', glow, { hand: 'right', rotation: [-0.5, 0, 0] });
 }
 
-/** 换法杖的施法元素（步骤 7 施法时调用） */
+/** 换法杖的施法元素（施法时调用） */
 export function setStaffElement(staff: Group, element: StaffElement): void {
   const e = STAFF_ELEMENT_COLORS[element];
   getWeaponGlow(staff)?.setColor(e.color, e.accentColor);

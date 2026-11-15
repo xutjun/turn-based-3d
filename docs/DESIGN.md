@@ -26,9 +26,10 @@
 ├─ package.json / tsconfig.json / vite.config.ts / vitest.config.ts
 ├─ README.md
 ├─ docs/  SPEC.md  DESIGN.md
+├─ scripts/  sim.ts（命令行跑一场战斗）  balance.ts（批量统计胜率、回合数、技能使用）
 ├─ src/
-│  ├─ main.ts                 入口：?preview=1 进入模型预览页，否则进入战斗
-│  ├─ core/                   规则逻辑层：纯 TS，禁止 import three / DOM / src/render / src/ui / src/assets
+│  ├─ main.ts                 入口：按地址参数进入玩家战斗 / 自动战斗 / 技能演示 / 演出样例 / 模型预览
+│  ├─ core/                   规则逻辑层：纯 TS，禁止 import three / DOM / src/data / src/render / src/ui / src/assets
 │  │  ├─ types.ts             §2 的全部接口
 │  │  ├─ rng.ts               可注入种子的随机数（mulberry32）
 │  │  ├─ events.ts            事件类型定义 + EventBus
@@ -36,11 +37,11 @@
 │  │  ├─ turnOrder.ts         出手排序
 │  │  ├─ targeting.ts         目标校验、补足、重选、执行顺序
 │  │  ├─ status.ts            封印施加/递减/解除
-│  │  ├─ commands.ts          指令校验、可用指令查询、回退
+│  │  ├─ commands.ts          指令校验、可用指令查询
 │  │  ├─ skillExecutor.ts     按 pattern 执行技能，产出事件
 │  │  ├─ ai.ts                敌方与自动宝宝的指令决策
 │  │  ├─ battle.ts            BattleEngine：状态机与对外 API
-│  │  └─ setup.ts             由配置表构建 BattleState
+│  │  └─ setup.ts             由单位模板生成参战单位
 │  ├─ data/                   配置表：纯数据 + 只依赖 core/types.ts
 │  │  ├─ battleConfig.ts      全局数值（暴击、浮动、防御系数等）
 │  │  ├─ skills.ts            技能表（§4）
@@ -49,19 +50,35 @@
 │  │  ├─ heroes.ts            友方 5 人物 + 5 宝宝
 │  │  ├─ enemies.ts           敌方 10 单位
 │  │  ├─ formation.ts         阵型格子与世界坐标（§7）
-│  │  └─ aiConfig.ts          AI 阈值
-│  ├─ assets/                 AssetFactory / AssetRegistry、程序化贴图、模型 builder、音效合成
+│  │  ├─ aiConfig.ts          AI 阈值
+│  │  ├─ defaultSetup.ts      用默认配置表组装一场 10v10
+│  │  ├─ assetKeys.ts / unitModels.ts   资源键；单位、武器用哪个模型及外观参数
+│  │  ├─ renderConfig.ts      相机、灯光、雾、后处理、低画质、绘制优化
+│  │  ├─ presentationConfig.ts 演出时长、镜头、飘字、粒子、冲锋转身
+│  │  ├─ uiConfig.ts          目标光圈、日志、头顶名字
+│  │  └─ audioConfig.ts       音量、各音效响度、环境音
+│  ├─ assets/                 AssetRegistry、程序化贴图、模型 builder、绘制优化、音效合成
 │  │  ├─ AssetRegistry.ts     资源键 → 工厂；之后可替换为 glb 加载器
-│  │  ├─ textures/            Canvas/DataTexture 噪声、划痕、铆钉、布料、法线、粒子贴图
-│  │  ├─ models/              buildKnight()、buildSwordWithGlow() 等 builder
-│  │  └─ audio/               Web Audio 合成器
+│  │  ├─ registerDefaults.ts  注册全部程序化模型
+│  │  ├─ optimize.ts          合并静态网格、阴影代理（步骤 8，见 §9.3）
+│  │  ├─ materials.ts / noise.ts / environment.ts
+│  │  ├─ textures/            Canvas 生成的表面贴图、粒子贴图
+│  │  ├─ models/              characters/ creatures/ weapons/ props.ts placeholder.ts
+│  │  └─ audio/SoundEngine.ts Web Audio 合成器
 │  ├─ render/                 场景、相机、灯光、后处理、动画、特效、BattleDirector
-│  │  ├─ scene/  camera/  postfx/  animation/  fx/
-│  │  └─ director/            把逻辑事件变成按顺序播放的时间线
-│  ├─ ui/                     DOM 界面：指令面板、目标选择、出手顺序条、日志、头顶条、飘字、结算、设置
+│  │  ├─ BattleScene.ts       渲染器、渲染循环、窗口自适应、画质、性能快照
+│  │  ├─ scene/  camera/  postfx/  fx/  debug/
+│  │  ├─ units/               UnitView（单位动画）、BattleStage、冲锋转身、动作 → 音效
+│  │  └─ director/            把逻辑事件变成按顺序播放的演出（BattleDirector、Choreographer、Scheduler）
+│  ├─ ui/                     DOM 界面
+│  │  ├─ PlayerBattleApp / PlayerBattleController   玩家战斗
+│  │  ├─ BattleApp / AutoBattleController           自动战斗
+│  │  ├─ command/ input/ panels/ hud/ log/ stats/   指令会话、鼠标输入、面板、头顶条与飘字、日志、统计
+│  │  └─ showcase/            技能演示（?demo=skills）与演出样例（?demo=1）
 │  └─ preview/                模型预览页（SPEC §3.4）
 └─ tests/
-   └─ core/                   Vitest 单元测试，文件名 *.test.ts
+   ├─ core/ data/ render/ ui/ Vitest 单元测试，文件名 *.test.ts
+   └─ regression/             整场战斗回归 + 数值平衡守护
 ```
 
 依赖方向（单向，不允许反向）：
@@ -644,38 +661,43 @@ position(side, row, col) = frontCenter(side)
 2. 清除所有 `defending`。
 3. 发出 `TurnEnd`；再次执行胜负判定（防御性，默认规则下不会在此触发）；进入下一回合的 TurnStart → command。
 
-### 8.3 初始阵容（`heroes.ts` / `enemies.ts`，数值为初始值，步骤 8 可调平衡）
+### 8.3 初始阵容（`heroes.ts` / `enemies.ts`，下表为步骤 8 平衡后的数值）
+
+> 步骤 8 的平衡：友方物伤 / 法伤约 ×1.3；敌方气血约 ×0.7、物伤 / 法伤约 ×1.9；Boss 气血 4000 → 3200、物伤 220 → 340。
+> 双方输出都提高、敌方变脆，战斗从平均 27 回合缩短到 11 回合。防御、速度、魔法、技能表、公式、规则都没有改。
+> 1000 个种子的自动战斗：友方胜率 61.3%，回合数中位 11（10% 分位 8，90% 分位 15），83.7% 的战斗在 8~14 回合内。
+> 调数值后用 `npm run balance` 核对，`tests/regression` 里有一条测试守着“胜率 50%~70%”。
 **友方人物（后排）**
 | id | 格子 | 名称 | 职业 | 武器 | attackMode | 普攻 | HP | MP | 物伤 | 法伤 | 防御 | 速度 |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
-| A0 | 1,0 | 夜隼 | physical（自由职业） | 弓 bow | ranged | basic_physical | 950 | 300 | 150 | 40 | 45 | 110 |
-| A1 | 1,1 | 烬刃 | physical | 刀 blade | melee | basic_physical | 1200 | 300 | 160 | 40 | 60 | 90 |
-| A2 | 1,2 | 雷咒 | magic | 法杖 staff | cast | basic_magic | 850 | 600 | 40 | 170 | 35 | 95 |
-| A3 | 1,3 | 缚魂 | seal | 剑 sword | melee | basic_physical | 1000 | 500 | 110 | 120 | 50 | 120 |
-| A4 | 1,4 | 守誓 | heal | 枪 spear | melee | basic_physical | 1000 | 600 | 100 | 140 | 50 | 85 |
+| A0 | 1,0 | 夜隼 | physical（自由职业） | 弓 bow | ranged | basic_physical | 950 | 300 | 195 | 50 | 45 | 110 |
+| A1 | 1,1 | 烬刃 | physical | 刀 blade | melee | basic_physical | 1200 | 300 | 210 | 50 | 60 | 90 |
+| A2 | 1,2 | 雷咒 | magic | 法杖 staff | cast | basic_magic | 850 | 600 | 50 | 220 | 35 | 95 |
+| A3 | 1,3 | 缚魂 | seal | 剑 sword | melee | basic_physical | 1000 | 500 | 145 | 155 | 50 | 120 |
+| A4 | 1,4 | 守誓 | heal | 枪 spear | melee | basic_physical | 1000 | 600 | 130 | 180 | 50 | 85 |
 
 **友方宝宝（前排，位于主人身前）**
 | id | 格子 | 名称/形象 | 主人 | 职业 | attackMode | 普攻 | 技能 | HP | MP | 物伤 | 法伤 | 防御 | 速度 |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|
-| A5 | 0,0 | 影狼·灰 | A0 | physical | melee | basic_physical | combo_slash | 650 | 150 | 110 | 20 | 40 | 105 |
-| A6 | 0,1 | 影狼·赤 | A1 | physical | melee | basic_physical | combo_slash | 700 | 150 | 115 | 20 | 40 | 100 |
-| A7 | 0,2 | 骨龙幼崽 | A2 | magic | cast | basic_magic | group_spell_fire | 600 | 300 | 30 | 120 | 30 | 90 |
-| A8 | 0,3 | 幽灵 | A3 | seal | cast | basic_magic | seal | 600 | 250 | 30 | 90 | 30 | 115 |
-| A9 | 0,4 | 魔偶 | A4 | heal | melee | basic_physical | group_heal | 900 | 250 | 80 | 90 | 60 | 70 |
+| A5 | 0,0 | 影狼·灰 | A0 | physical | melee | basic_physical | combo_slash | 650 | 150 | 145 | 25 | 40 | 105 |
+| A6 | 0,1 | 影狼·赤 | A1 | physical | melee | basic_physical | combo_slash | 700 | 150 | 150 | 25 | 40 | 100 |
+| A7 | 0,2 | 骨龙幼崽 | A2 | magic | cast | basic_magic | group_spell_fire | 600 | 300 | 40 | 155 | 30 | 90 |
+| A8 | 0,3 | 幽灵 | A3 | seal | cast | basic_magic | seal | 600 | 250 | 40 | 115 | 30 | 115 |
+| A9 | 0,4 | 魔偶 | A4 | heal | melee | basic_physical | group_heal | 900 | 250 | 105 | 115 | 60 | 70 |
 
 **敌方**
 | id | 格子 | 名称 | 级别 | 职业 | attackMode | 普攻 | 技能 | HP | MP | 物伤 | 法伤 | 防御 | 速度 |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|
-| E0 | 0,0 | 骷髅兵 | minion | physical | melee | basic_physical | — | 600 | 0 | 120 | 0 | 40 | 80 |
-| E1 | 0,1 | 骷髅兵 | minion | physical | melee | basic_physical | — | 600 | 0 | 120 | 0 | 40 | 82 |
-| E2 | 0,2 | 堕落骑士 | elite | physical | melee | basic_physical | combo_slash | 1100 | 200 | 150 | 30 | 70 | 75 |
-| E3 | 0,3 | 骷髅兵 | minion | physical | melee | basic_physical | — | 600 | 0 | 120 | 0 | 40 | 84 |
-| E4 | 0,4 | 骷髅兵 | minion | physical | melee | basic_physical | — | 600 | 0 | 120 | 0 | 40 | 86 |
-| E5 | 1,0 | 恶魔祭司·缚 | elite | seal | cast | basic_magic | seal | 800 | 400 | 60 | 130 | 40 | 105 |
-| E6 | 1,1 | 亡灵法师 | elite | magic | cast | basic_magic | group_spell, single_spell | 750 | 500 | 40 | 160 | 35 | 92 |
-| E7 | 1,2 | 深渊魔将 | boss | physical | melee | basic_physical | combo_slash, whirlwind | 4000 | 600 | 220 | 100 | 90 | 70 |
-| E8 | 1,3 | 堕落骑士 | elite | physical | melee | basic_physical | combo_slash | 1100 | 200 | 150 | 30 | 70 | 78 |
-| E9 | 1,4 | 恶魔祭司·愈 | elite | heal | cast | basic_magic | group_heal | 800 | 500 | 60 | 130 | 40 | 88 |
+| E0 | 0,0 | 骷髅兵 | minion | physical | melee | basic_physical | — | 420 | 0 | 230 | 0 | 40 | 80 |
+| E1 | 0,1 | 骷髅兵 | minion | physical | melee | basic_physical | — | 420 | 0 | 230 | 0 | 40 | 82 |
+| E2 | 0,2 | 堕落骑士 | elite | physical | melee | basic_physical | combo_slash | 770 | 200 | 285 | 55 | 70 | 75 |
+| E3 | 0,3 | 骷髅兵 | minion | physical | melee | basic_physical | — | 420 | 0 | 230 | 0 | 40 | 84 |
+| E4 | 0,4 | 骷髅兵 | minion | physical | melee | basic_physical | — | 420 | 0 | 230 | 0 | 40 | 86 |
+| E5 | 1,0 | 恶魔祭司·缚 | elite | seal | cast | basic_magic | seal | 560 | 400 | 115 | 245 | 40 | 105 |
+| E6 | 1,1 | 亡灵法师 | elite | magic | cast | basic_magic | group_spell, single_spell | 525 | 500 | 75 | 300 | 35 | 92 |
+| E7 | 1,2 | 深渊魔将 | boss | physical | melee | basic_physical | combo_slash, whirlwind | 3200 | 600 | 340 | 190 | 90 | 70 |
+| E8 | 1,3 | 堕落骑士 | elite | physical | melee | basic_physical | combo_slash | 770 | 200 | 285 | 55 | 70 | 78 |
+| E9 | 1,4 | 恶魔祭司·愈 | elite | heal | cast | basic_magic | group_heal | 560 | 500 | 115 | 245 | 40 | 88 |
 
 ### 8.4 AI 规则（`ai.ts`，敌方与自动宝宝共用，阵营相对）
 AI 在 `beginExecution()` 时、基于当时的状态决定指令；出手时目标若失效，按 §6.5 处理。只考虑当前可用（MP 足够且未被封印）的技能。“残血”统一按 `hp / maxHp` 最低判断，相同时取 id 字典序更小的。
@@ -719,8 +741,18 @@ AI 在 `beginExecution()` 时、基于当时的状态决定指令；出手时目
 - **A7 指令顺序与宝宝自动**：人物、宝宝交替下指令；`petAutoCommand` 默认 false（手动）。
 - **A8 随机数**：所有随机通过可注入种子的 RNG，保证测试可复现；正式游戏用时间戳作为种子。
 - **A9 无回合上限**：最低伤害为 1 且 MP 有限，战斗一定会结束，不设平局。
-- **A10 初始数值**：§8.3 的数值是初始值，步骤 8 调平衡时可以改数值，但不改规则。
+- **A10 数值**：§8.3 的数值已在步骤 8 调过平衡，只改了配置表里的数，没有改规则和公式。
 - **A11 AI 细节**：阈值见 `aiConfig.ts`；AI 不使用防御。
+
+### 9.3 步骤 8 的调整与偏差
+- **S1 阵型与相机**：格子间距 1.9 / 2.0 → 2.2 / 2.3，双方前排中心 ±3.4 → ±2.7（两军拉近，整体占地不变），相机距离 35 → 32.5，`fitAspect` 1.6 → 1.75。见 §7.2。
+- **S2 头顶名字**：平时只显示血条；Boss 的名字始终显示，正在出手、被选中 / 会被命中、鼠标指着的单位才显示名字（SPEC §4 原文是“每个单位头顶有血条和名字”）。同时显示的名字如果互相重叠或压到别的血条，自动往上抬（`ui/hud/nameLayout.ts`，参数在 `uiConfig.ts` 的 `headName`）。
+- **S3 雾**：指数雾密度 0.012 → 0.019，贴地雾片 26 片 / 不透明度 0.2 → 40 片 / 0.3。
+- **S4 冲锋转身**：近战冲锋途中平滑转向跑动方向，到位时正对目标；返回时面朝对手退回原位，途中平滑转回原朝向（不做 180° 急转身）。`StageUnit.moveTo()` 多了一个可选参数 `face`（要正对的位置），由 Choreographer 传入目标的站位。
+- **S5 绘制调用**：`assets/optimize.ts` 在模型创建后合并“不会单独运动”的网格（同一关节、同一材质合成一个；场景物件整体合并，实例化碎石烘进同一个网格），并给每个部件建一个只在阴影图层上的“阴影代理”，主光源的阴影相机只画阴影图层。20 个单位的战场每帧绘制调用 2458 → 729。哪些关节会动由 `render/units/animatedJoints.ts` 决定（肩、肘、腰、胸、头）；腿、手、颈目前没有单独的动画，它们下面的网格并进了上一级。
+- **S6 低画质**：关闭辉光、阴影贴图 2048 → 1024、技能粒子 ×0.4、贴地雾片减半、渲染分辨率倍率上限 2 → 1。参数在 `renderConfig.ts` 的 `QUALITY_CONFIG`。
+- **S7 音效**：`assets/audio/SoundEngine.ts` 用 Web Audio 合成 13 种音效和环境低频嗡鸣。第一次用户操作后才创建 AudioContext；音效由舞台在动作开始时触发（`render/units/soundCues.ts`），长度按战斗倍速缩短，跳过动画时不播放战斗音效；同一种音效 45 毫秒内只响一次，同时最多 14 个；标签页在后台时暂停。
+- **S8 调试接口**：`window.__perf()`（性能快照）、`window.__capture(time)`（固定时间点截帧）、地址参数 `merge=0`、`quality=low`。
 
 ---
 

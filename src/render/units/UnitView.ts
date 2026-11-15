@@ -10,6 +10,10 @@ import { getRig, type HumanoidRig } from '../../assets/models/characters/rig';
 import { getEquippedWeapon, getWeaponGlow, getWeaponHold, setBowArrowVisible } from '../../assets/models/weapons';
 import { GLOW_BASE_KEY } from '../../assets/materials';
 import type { UnitTemplate } from '../../core/types';
+import type { SoundPlayer } from '../../assets/audio/SoundEngine';
+import type { SoundName } from '../../data/audioConfig';
+import { animatedJointsOf } from './animatedJoints';
+import { releaseSound, windupSound } from './soundCues';
 import { chargeYaw, turnToward } from './turning';
 import { facingOf, facingYawOf, slotPosition } from '../../data/formation';
 import { ELEMENT_COLORS, FX_CONFIG, STAGING } from '../../data/presentationConfig';
@@ -95,6 +99,7 @@ export class UnitView implements StageUnit {
     readonly model: Object3D,
     private readonly scheduler: Scheduler,
     private readonly fx: FxSystem,
+    private readonly sound: SoundPlayer = { play: () => undefined },
   ) {
     this.id = template.id;
     this.side = template.side;
@@ -117,17 +122,7 @@ export class UnitView implements StageUnit {
 
     this.rig = getRig(model);
     if (this.rig) {
-      const r = this.rig;
-      const joints: Record<string, Object3D> = {
-        shoulderR: r.armR.shoulder,
-        elbowR: r.armR.elbow,
-        shoulderL: r.armL.shoulder,
-        elbowL: r.armL.elbow,
-        spine: r.spine,
-        chest: r.chest,
-        head: r.head,
-      };
-      for (const [name, joint] of Object.entries(joints)) {
+      for (const [name, joint] of Object.entries(animatedJointsOf(this.rig))) {
         this.rest[name] = { joint, x: joint.rotation.x, y: joint.rotation.y, z: joint.rotation.z };
       }
     }
@@ -193,6 +188,10 @@ export class UnitView implements StageUnit {
     this.away = false;
   }
 
+  private cue(name: SoundName | null, intensity = 1): void {
+    if (name) this.sound.play(name, intensity);
+  }
+
   private slide(to: GroundPoint, duration: number, yawAt: (t: number) => number): Promise<void> {
     const from = { ...this.ground };
     return this.scheduler.tween(duration, (t) => {
@@ -209,6 +208,7 @@ export class UnitView implements StageUnit {
     this.pose.variant = variant;
     this.pose.strike = 0;
     if ((style === 'bow' || style === 'bowUp') && this.weapon) setBowArrowVisible(this.weapon, true);
+    this.cue(windupSound(style));
     const from = this.pose.windup; // 连击时上一击还没完全收招，从当前程度接着蓄力
     return this.scheduler.tween(duration, (t) => (this.pose.windup = from + (1 - from) * t), EASE.out);
   }
@@ -221,6 +221,7 @@ export class UnitView implements StageUnit {
       getWeaponGlow(this.weapon)?.flare();
       if (style === 'bow' || style === 'bowUp') setBowArrowVisible(this.weapon, false);
     }
+    this.cue(releaseSound(style), variant === 2 ? 1.3 : 1); // 重劈的挥击声更重
     return this.scheduler.tween(duration, (t) => (this.pose.strike = t), EASE.in);
   }
 
@@ -239,6 +240,7 @@ export class UnitView implements StageUnit {
 
   hit(duration: number, heavy: boolean): Promise<void> {
     const amount = heavy ? 0.42 : 0.26;
+    this.sound.play(heavy ? 'heavyHit' : 'hit');
     return this.scheduler.tween(duration, (t) => {
       const k = EASE.arc(t);
       this.pose.lean = amount * k;
@@ -247,11 +249,13 @@ export class UnitView implements StageUnit {
   }
 
   dodge(duration: number): Promise<void> {
+    this.sound.play('dodge');
     return this.scheduler.tween(duration, (t) => (this.pose.side = EASE.arc(t) * 0.28));
   }
 
   async die(vanish: boolean, fallDuration: number, vanishDuration: number): Promise<void> {
     this.dead = true;
+    this.sound.play('fall');
     this.setSealed(false);
     this.pose.guard = 0;
     this.pose.windup = 0;
@@ -272,6 +276,7 @@ export class UnitView implements StageUnit {
 
   async revive(duration: number): Promise<void> {
     this.model.visible = true;
+    this.sound.play('revive');
     const shrink = this.pose.shrink;
     const fall = this.pose.fall;
     await this.scheduler.tween(

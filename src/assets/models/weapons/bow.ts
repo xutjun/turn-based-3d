@@ -130,7 +130,7 @@ export function buildBowWithGlow(params: Partial<BowParams> = {}): Group {
   return finishWeapon(root, 'bow', glow, { hand: 'left', rotation: [-1.05, 0, -0.28] });
 }
 
-/** 显示或隐藏搭在弦上的发光箭矢（步骤 5、7 的拉弓动画调用） */
+/** 显示或隐藏搭在弦上的发光箭矢（拉弓动画调用） */
 export function setBowArrowVisible(bow: Object3D, visible: boolean): void {
   const arrow = bow.userData[ARROW_KEY] as Object3D | undefined;
   if (arrow) arrow.visible = visible;

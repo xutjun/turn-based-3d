@@ -49,6 +49,8 @@ export class ShowcaseApp {
       scheduler,
       project: (world) => this.scene.worldToScreen(world),
       headPosition: (id, out) => stage.unit(id).headPosition(out),
+      quality: this.scene.quality,
+      sound: this.scene.sound,
     });
     this.scene.onFrame(() => this.hud.update());
 

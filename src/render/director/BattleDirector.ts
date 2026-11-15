@@ -164,7 +164,7 @@ export class BattleDirector {
         break;
 
       default:
-        // CommandPhaseStart / CommandRequested / ExecutionPhaseStart：步骤 6 的指令界面使用，这里不需要演出
+        // CommandPhaseStart / CommandRequested / ExecutionPhaseStart：由指令界面使用，这里不需要演出
         break;
     }
   }

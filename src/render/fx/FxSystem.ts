@@ -1,4 +1,4 @@
-// 技能特效系统（步骤 7）：粒子、发光精灵、光柱、地面符文阵、斩击光弧、闪电、锁链、光箭、武器拖尾。
+// 技能特效系统：粒子、发光精灵、光柱、地面符文阵、斩击光弧、闪电、锁链、光箭、武器拖尾。
 //
 // - 全部用程序化贴图和简单几何体，不使用外部素材。
 // - 对象池：精灵、网格都从池里取、用完放回（只切换 visible），粒子在定长数组里循环使用；
@@ -162,6 +162,8 @@ interface Trail {
 }
 
 export class FxSystem {
+  /** 粒子数量的比例（低画质模式下调小）：1 = 配置的数量 */
+  particleScale = 1;
   readonly group = new Group();
   readonly particles: ParticlePool;
 
@@ -1036,12 +1038,12 @@ export class FxSystem {
   /** 持续发射：按“每秒 rate 个”折算出这一帧该发射几个（跳过动画时为 0） */
   private emitCount(rate: number): number {
     if (this.scheduler.skip) return 0;
-    return Math.floor(rate * this.scheduler.delta + Math.random());
+    return Math.floor(rate * this.particleScale * this.scheduler.delta + Math.random());
   }
 
   /** 一次性爆发的粒子数（跳过动画时为 0） */
   private burstCount(n: number): number {
-    return this.scheduler.skip ? 0 : n;
+    return this.scheduler.skip ? 0 : Math.ceil(n * this.particleScale);
   }
 
   /** 向四周迸溅的火花 */

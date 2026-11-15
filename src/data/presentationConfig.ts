@@ -30,7 +30,7 @@ export const TIMING = {
   floater: 1.05, // 飘字寿命
   battleEndBanner: 1.2,
 
-  // ---- 步骤 7：技能演出 ----
+  // ---- 技能演出 ----
   slash: 0.22, // 斩击光弧停留
   comboWindup: 0.15, // 连斩前两击的举刀
   comboRecover: 0.1, // 连斩两击之间的收招
@@ -63,7 +63,7 @@ export const TIMING = {
   cameraFollow: 0.26, // 旋风斩时镜头追上出手者
 };
 
-/** 镜头语言与顿帧（步骤 7）。时长单位为秒 */
+/** 镜头语言与顿帧。时长单位为秒 */
 export const CAMERA_FX = {
   focusZoom: 1.07, // 出手时的推近倍率（1 = 不推近）
   focusPan: 0.3, // 推近时镜头朝关注点平移的比例（0 = 不动，1 = 关注点到画面中心）
@@ -88,7 +88,7 @@ export const GLOW_FX = {
   cast: 1.6, // 其他施法
 };
 
-/** 特效用量与尺寸（步骤 7）。性能不够时先调小 maxParticles 和各 count */
+/** 特效用量与尺寸。性能不够时先调小 maxParticles 和各 count */
 export const FX_CONFIG = {
   maxParticles: 1600, // 粒子池容量（场上同时存在的粒子上限）
   skyHeight: 9, // 箭雨、落雷从多高落下
