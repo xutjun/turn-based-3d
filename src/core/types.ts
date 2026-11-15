@@ -4,6 +4,7 @@
 // ---------- 基础枚举 ----------
 export type UnitId = string; // 例：'A0'..'A9'（友方）, 'E0'..'E9'（敌方）
 export type SkillId = string;
+export type PassiveId = string;
 export type Side = 'ally' | 'enemy';
 export type UnitKind = 'hero' | 'pet' | 'enemy';
 export type ClassId = 'physical' | 'magic' | 'seal' | 'heal';
@@ -30,6 +31,7 @@ export type AnimType =
   | 'whirlwind'
   | 'arrowRain' // 旋风斩 / 箭雨
   | 'groupSpell'
+  | 'groupSpellSmall' // 法术型宝宝的三目标法术：群体法术的缩小版
   | 'singleSpell' // 群体法术 / 单体法术
   | 'sealChain'
   | 'groupHeal'
@@ -76,7 +78,8 @@ export interface Unit {
   weaponId?: WeaponId; // 友方人物有；宝宝/敌人无
   attackMode: AttackMode;
   basicAttackSkillId: SkillId;
-  skillIds: SkillId[]; // 不含普攻
+  skillIds: SkillId[]; // 主动技能，不含普攻；物理型宝宝为空
+  passiveIds: PassiveId[]; // 被动技能；没有则为空数组
   stats: Stats;
   hp: number; // 当前气血，0 ≤ hp ≤ maxHp
   mp: number; // 当前魔法，0 ≤ mp ≤ maxMp
@@ -104,6 +107,7 @@ export interface UnitTemplate {
   attackMode: AttackMode;
   basicAttackSkillId: SkillId;
   skillIds: SkillId[];
+  passiveIds?: PassiveId[]; // 不写表示没有被动技能
   stats: Stats;
 }
 
@@ -129,6 +133,20 @@ export interface SkillDef {
   sequenceOrder?: SequenceOrder; // 仅 sequential
   status?: { type: StatusType; duration: number }; // 仅 seal
   reviveHpRatio?: number; // 仅 revive
+}
+
+// ---------- 被动技能（配置表行，passives.ts） ----------
+/** 触发条件。目前只有“用普攻出手时”（包括技能被改成普攻的情况） */
+export type PassiveTrigger = 'basicAttack';
+/** 效果。extraHit = 对同一目标追加 hits 次攻击 */
+export type PassiveEffect = { kind: 'extraHit'; hits: number };
+export interface PassiveDef {
+  id: PassiveId;
+  name: string; // 触发时的飘字，也用于指令面板说明
+  description: string;
+  trigger: PassiveTrigger;
+  chance: number; // 触发概率 0~1
+  effect: PassiveEffect;
 }
 
 // ---------- 指令 ----------
@@ -168,6 +186,10 @@ export interface BattleState {
   unitIds: UnitId[]; // 固定顺序：A0..A9, E0..E9
   turnOrder: UnitId[]; // 本回合出手顺序（回合开始时生成，包含倒地的友方）
   actionCursor: number; // 下一个出手者在 turnOrder 中的下标
+  lateQueue: UnitId[]; // 队尾补出手队列：复活时速度位置已过的单位，按复活先后排列；出手或倒地后移出
+  actedThisTurn: UnitId[]; // 本回合已经出过手的单位（每回合最多出手一次）
+  /** 本回合各方 AI 已把某单位选为主目标的次数，回合开始清零（分散火力用） */
+  aiTargetCounts: Record<Side, Record<AiTargetKind, Record<UnitId, number>>>;
   commands: Partial<Record<UnitId, Command>>; // 本回合已提交的指令
   awaitingCommandFor: UnitId | null; // 执行阶段中等待玩家现场下指令的复活单位
   winner: Side | null;
@@ -189,15 +211,28 @@ export interface BattleConfig {
   defendDamageMult: number; // 防御指令受伤倍率
 }
 
+/** AI 选目标的种类：攻击 / 封印 / 治疗（含复活）分别计数 */
+export type AiTargetKind = 'attack' | 'seal' | 'heal';
+/** focus = 固定选“最优”目标；spread = 带权重的随机 + 同回合分散 */
+export type AiTargetMode = 'focus' | 'spread';
+
 export interface AiConfig {
   healHpThreshold: number; // 友军 hp 比例低于该值时治疗
   aoeMinTargets: number; // 存活对方单位 ≥ 该值时优先用群体技能
+  targetMode: Record<Side, AiTargetMode>; // 各阵营的 AI 怎么选目标
+  spread: {
+    baseWeight: number; // 每个候选目标的基础权重
+    repeatDecay: number; // 同一回合内每被己方 AI 选中一次，权重 × 该值
+    lowHpBonus: number; // 残血加权：权重 × (1 + lowHpBonus × 已损失气血比例)
+    sealCasterBonus: number; // 封印时，法术 / 恢复职业的权重 × 该值
+  };
 }
 
 // ---------- 引擎输入 ----------
 export interface BattleSetup {
   config: BattleConfig;
   skills: Record<SkillId, SkillDef>;
+  passives?: Record<PassiveId, PassiveDef>; // 不传表示没有被动技能
   units: Unit[]; // 由 setup.ts 根据模板生成
   settings: BattleSettings;
   ai: AiConfig;

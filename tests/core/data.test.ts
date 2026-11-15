@@ -3,6 +3,8 @@ import { BATTLE_CONFIG } from '../../src/data/battleConfig';
 import { createDefaultSetup } from '../../src/data/defaultSetup';
 import { isValidSlot, slotKey } from '../../src/data/formation';
 import { CLASS_SKILLS, RANGED_VARIANTS } from '../../src/data/classes';
+import { PASSIVES } from '../../src/data/passives';
+import { PET_ASSIGNMENT, PET_TYPES } from '../../src/data/pets';
 import { SKILLS } from '../../src/data/skills';
 
 describe('默认配置表', () => {
@@ -81,7 +83,7 @@ describe('技能表合法性（DESIGN §4.1）', () => {
   const all = Object.values(SKILLS);
 
   it('SPEC 要求的技能都在表里，id 与名称不重复', () => {
-    for (const id of ['combo_slash', 'triple_shot', 'whirlwind', 'arrow_rain', 'group_spell', 'group_spell_fire', 'single_spell', 'seal', 'group_heal', 'revive']) {
+    for (const id of ['combo_slash', 'triple_shot', 'whirlwind', 'arrow_rain', 'group_spell', 'triple_spell', 'single_spell', 'seal', 'group_heal', 'revive']) {
       expect(SKILLS[id], id).toBeDefined();
       expect(SKILLS[id]!.id).toBe(id);
     }
@@ -127,15 +129,41 @@ describe('技能表合法性（DESIGN §4.1）', () => {
     }
   });
 
-  it('弓箭手版本和火系版本与原技能数值完全相同，只是名称、说明、元素不同', () => {
+  it('弓箭手版本与原技能数值完全相同，只是名称、说明不同；群体法术·烈焰已删除', () => {
     const numbers = (id: string) => {
       const { id: _id, name: _name, description: _d, element: _e, ...rest } = SKILLS[id]!;
       return rest;
     };
     expect(numbers('triple_shot')).toEqual(numbers('combo_slash'));
     expect(numbers('arrow_rain')).toEqual(numbers('whirlwind'));
-    expect(numbers('group_spell_fire')).toEqual(numbers('group_spell'));
-    expect(SKILLS['group_spell_fire']!.element).toBe('fire');
+    expect(SKILLS['group_spell_fire']).toBeUndefined();
+  });
+
+  it('三重魂火：法术型宝宝的主动技能，同时攻击 3 个单位，演出是群体法术的缩小版', () => {
+    expect(SKILLS['triple_spell']).toMatchObject({
+      classId: 'magic',
+      effect: 'damage',
+      damageType: 'magic',
+      targetSide: 'enemy',
+      targetCount: 3,
+      pattern: 'simultaneous',
+      hits: 1,
+      animation: { cast: 'groupSpellSmall' },
+    });
+  });
+
+  it('被动技能表：连击 = 普攻时 50% 追加 1 次攻击，字段齐全', () => {
+    expect(PASSIVES['double_strike']).toMatchObject({
+      name: '连击',
+      trigger: 'basicAttack',
+      chance: 0.5,
+      effect: { kind: 'extraHit', hits: 1 },
+    });
+    for (const p of Object.values(PASSIVES)) {
+      expect(p.chance).toBeGreaterThan(0);
+      expect(p.chance).toBeLessThanOrEqual(1);
+      expect(p.description.length).toBeGreaterThan(0);
+    }
   });
 });
 
@@ -169,8 +197,29 @@ describe('单位的技能配置（DESIGN §4.3、§8.3）', () => {
     expect(byId['A4']!.skillIds).toEqual(['group_heal', 'revive']);
   });
 
-  it('每只宝宝 1 个本职业技能；敌人没有复活，骷髅兵没有技能', () => {
-    for (const u of setup.units.filter((x) => x.kind === 'pet')) expect(u.skillIds, u.id).toHaveLength(1);
+  it('宝宝只分物理型 / 法术型：没有封印、治疗、复活；物理型无主动技能 + 被动连击，法术型只有三重魂火', () => {
+    const pets = setup.units.filter((x) => x.kind === 'pet');
+    expect(pets).toHaveLength(5);
+    for (const u of pets) {
+      const type = PET_TYPES[PET_ASSIGNMENT[u.id]!];
+      expect(['physical', 'magic'], u.id).toContain(u.classId);
+      expect(u.classId, u.id).toBe(type.classId);
+      expect(u.skillIds, u.id).toEqual(type.skillIds);
+      expect(u.passiveIds, u.id).toEqual(type.passiveIds);
+      for (const id of u.skillIds) expect(['damage'], `${u.id} ${id}`).toContain(SKILLS[id]!.effect);
+      for (const id of u.passiveIds) expect(PASSIVES[id], `${u.id} ${id}`).toBeDefined();
+    }
+    const physical = pets.filter((u) => u.classId === 'physical');
+    const magic = pets.filter((u) => u.classId === 'magic');
+    expect(physical.map((u) => u.id)).toEqual(['A5', 'A6', 'A9']);
+    expect(magic.map((u) => u.id)).toEqual(['A7', 'A8']);
+    for (const u of physical) expect([u.skillIds, u.passiveIds]).toEqual([[], ['double_strike']]);
+    for (const u of magic) expect([u.skillIds, u.passiveIds]).toEqual([['triple_spell'], []]);
+    // 人物和敌人没有被动技能
+    for (const u of setup.units.filter((x) => x.kind !== 'pet')) expect(u.passiveIds, u.id).toEqual([]);
+  });
+
+  it('敌人没有复活，骷髅兵没有技能', () => {
     const enemies = setup.units.filter((x) => x.side === 'enemy');
     for (const u of enemies) expect(u.skillIds, u.id).not.toContain('revive');
     for (const u of enemies.filter((x) => x.rank === 'minion')) expect(u.skillIds).toEqual([]);

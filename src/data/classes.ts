@@ -5,7 +5,7 @@ import type { AttackMode, ClassId, SkillId } from '../core/types';
 /** 每个职业可以拥有的全部技能（不含普攻）。宝宝和敌人的技能必须是所属职业技能库的子集 */
 export const CLASS_SKILLS: Record<ClassId, SkillId[]> = {
   physical: ['combo_slash', 'whirlwind', 'triple_shot', 'arrow_rain'],
-  magic: ['group_spell', 'group_spell_fire', 'single_spell'],
+  magic: ['group_spell', 'single_spell', 'triple_spell'], // triple_spell 只有法术型宝宝使用
   seal: ['seal'],
   heal: ['group_heal', 'revive'],
 };

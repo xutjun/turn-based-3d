@@ -3,6 +3,8 @@ import type { BattleEngine } from '../../src/core/battle';
 import type { BattleEvent, BattleEventInput } from '../../src/core/events';
 import { executeSkill } from '../../src/core/skillExecutor';
 import type { BattleState, Command, SkillDef, Unit } from '../../src/core/types';
+import { createRng } from '../../src/core/rng';
+import { PASSIVES } from '../../src/data/passives';
 import { SKILLS } from '../../src/data/skills';
 import { constRng, makeEngine, makeUnit, ofType, runExecution, seqRng, TEST_CONFIG } from '../helpers';
 
@@ -60,9 +62,9 @@ describe('连斩 / 三连射（单体三连击）', () => {
       animation: 'comboSlash',
       meleeCharge: true,
       targets: ['E0'],
-      mpCost: 40,
+      mpCost: 30,
       mpBefore: 200,
-      mpAfter: 160,
+      mpAfter: 170,
     });
     const hits = ofType(events, 'HitResolved');
     expect(hits.map((h) => [h.targetId, h.stepIndex, h.hitIndex, h.stepCount, h.hitCount, h.damage])).toEqual([
@@ -71,7 +73,7 @@ describe('连斩 / 三连射（单体三连击）', () => {
       ['E0', 2, 2, 3, 3, 20],
     ]);
     expect(hits.map((h) => h.hpAfter)).toEqual([80, 60, 40]);
-    expect(engine.getState().units['A0']!.mp).toBe(160);
+    expect(engine.getState().units['A0']!.mp).toBe(170);
   });
 
   it('每一段独立判定暴击和浮动', () => {
@@ -96,7 +98,7 @@ describe('连斩 / 三连射（单体三连击）', () => {
     expect(hits).toHaveLength(2); // 第 3 段没有发生
     expect(hits[1]).toMatchObject({ hitIndex: 1, hitCount: 3, hpAfter: 0, killed: true });
     expect(engine.getState().units['E1']!.hp).toBe(100); // 剩余段数不会转给别的目标
-    expect(engine.getState().units['A0']!.mp).toBe(160); // 魔法照常扣一次
+    expect(engine.getState().units['A0']!.mp).toBe(170); // 魔法照常扣一次
   });
 
   it('第一段就打死目标时只有一段', () => {
@@ -133,7 +135,7 @@ describe('旋风斩 / 箭雨（依次攻击最多 7 个）', () => {
     const events = actFirst(engine, { A0: skill('whirlwind', 'E3') });
     const cast = ofType(events, 'SkillCast')[0]!;
     expect(cast.targets).toEqual(['E3', 'E9', 'E8', 'E7', 'E6', 'E5', 'E4']);
-    expect(cast).toMatchObject({ animation: 'whirlwind', meleeCharge: true, mpCost: 80, mpAfter: 120 });
+    expect(cast).toMatchObject({ animation: 'whirlwind', meleeCharge: true, mpCost: 60, mpAfter: 140 });
     const hits = ofType(events, 'HitResolved');
     expect(hits.map((h) => h.targetId)).toEqual(cast.targets);
     expect(hits.map((h) => h.stepIndex)).toEqual([0, 1, 2, 3, 4, 5, 6]);
@@ -141,7 +143,7 @@ describe('旋风斩 / 箭雨（依次攻击最多 7 个）', () => {
     // 没被选中的 3 个敌人不受伤害；魔法只扣一次
     for (const id of ['E0', 'E1', 'E2']) expect(engine.getState().units[id]!.hp).toBe(100);
     expect(ofType(events, 'SkillCast')).toHaveLength(1);
-    expect(engine.getState().units['A0']!.mp).toBe(120);
+    expect(engine.getState().units['A0']!.mp).toBe(140);
   });
 
   it('存活敌人不足 7 个时全部打一遍', () => {
@@ -151,7 +153,7 @@ describe('旋风斩 / 箭雨（依次攻击最多 7 个）', () => {
     const hits = ofType(events, 'HitResolved');
     expect(hits.map((h) => h.targetId)).toEqual(['E1', 'E3', 'E2', 'E0']);
     expect(hits.every((h) => h.stepCount === 4)).toBe(true);
-    expect(engine.getState().units['A0']!.mp).toBe(120);
+    expect(engine.getState().units['A0']!.mp).toBe(140);
   });
 
   it('只剩 1 个敌人时只打 1 次；已被击败的敌人不会被选中', () => {
@@ -236,11 +238,11 @@ describe('群体法术（同时攻击最多 6 个）', () => {
     const events = actFirst(engine, { A0: skill('group_spell', 'E0') });
     const cast = ofType(events, 'SkillCast')[0]!;
     expect(cast.targets).toEqual(['E0', 'E9', 'E8', 'E7', 'E6', 'E5']);
-    expect(cast).toMatchObject({ delivery: 'cast', animation: 'groupSpell', element: 'thunder', meleeCharge: false, mpAfter: 120 });
+    expect(cast).toMatchObject({ delivery: 'cast', animation: 'groupSpell', element: 'thunder', meleeCharge: false, mpAfter: 140 });
     const hits = ofType(events, 'HitResolved');
     expect(hits.map((h) => h.targetId)).toEqual(cast.targets);
     expect(hits.every((h) => h.stepIndex === 0 && h.stepCount === 1 && h.damageType === 'magic' && h.damage === 35)).toBe(true);
-    expect(engine.getState().units['A0']!.mp).toBe(120);
+    expect(engine.getState().units['A0']!.mp).toBe(140);
   });
 
   it('存活敌人不足 6 个时全部命中', () => {
@@ -248,7 +250,7 @@ describe('群体法术（同时攻击最多 6 个）', () => {
     expect(engine.previewTargets('A0', 'group_spell', 'E2')).toEqual(['E2', 'E3', 'E1', 'E0']);
     const hits = ofType(actFirst(engine, { A0: skill('group_spell', 'E2') }), 'HitResolved');
     expect(hits.map((h) => h.targetId)).toEqual(['E2', 'E3', 'E1', 'E0']);
-    expect(engine.getState().units['A0']!.mp).toBe(120);
+    expect(engine.getState().units['A0']!.mp).toBe(140);
   });
 
   it('同帧结算：所有命中都发出之后才统一发出死亡事件', () => {
@@ -289,11 +291,46 @@ describe('群体法术（同时攻击最多 6 个）', () => {
     expect(events.at(-1)).toMatchObject({ type: 'BattleEnd', winner: 'ally' });
   });
 
-  it('群体法术·烈焰是同一种技能的火系版本', () => {
-    const { engine } = start([ally('A0', 90, { skillIds: ['group_spell_fire'] }), ...foes(8)]);
-    const events = actFirst(engine, { A0: skill('group_spell_fire', 'E0') });
-    expect(ofType(events, 'SkillCast')[0]).toMatchObject({ animation: 'groupSpell', element: 'fire', mpCost: 80 });
-    expect(ofType(events, 'HitResolved')).toHaveLength(6);
+  it('三重魂火（法术型宝宝）：同时攻击 3 个单位，主目标优先、其余按速度补足，同一步结算，魔法只扣一次', () => {
+    const cost = SKILLS['triple_spell']!.mpCost;
+    const { engine } = start([ally('A0', 90, { skillIds: ['triple_spell'] }), ...foes(8)]);
+    const preview = engine.previewTargets('A0', 'triple_spell', 'E5');
+    expect(preview).toHaveLength(3);
+    expect(preview[0]).toBe('E5');
+    const events = actFirst(engine, { A0: skill('triple_spell', 'E5') });
+    expect(ofType(events, 'SkillCast')).toHaveLength(1);
+    expect(ofType(events, 'SkillCast')[0]).toMatchObject({
+      animation: 'groupSpellSmall',
+      delivery: 'cast',
+      meleeCharge: false,
+      element: 'fire',
+      targets: preview,
+      mpCost: cost,
+      mpAfter: 200 - cost,
+    });
+    const hits = ofType(events, 'HitResolved');
+    expect(hits.map((h) => h.targetId)).toEqual(preview);
+    // 同帧结算：全部是第 0 步；法术伤害 50×0.8−5 = 35
+    expect(hits.map((h) => [h.stepIndex, h.stepCount, h.damageType, h.damage])).toEqual(Array(3).fill([0, 1, 'magic', 35]));
+  });
+
+  it('三重魂火：存活敌人不足 3 个时全部命中', () => {
+    const { engine } = start([ally('A0', 90, { skillIds: ['triple_spell'] }), ...foes(2)]);
+    const events = actFirst(engine, { A0: skill('triple_spell', 'E1') });
+    expect(ofType(events, 'SkillCast')[0]!.targets).toEqual(['E1', 'E0']);
+    expect(ofType(events, 'HitResolved')).toHaveLength(2);
+  });
+
+  it('三重魂火：每个目标独立判定暴击，死亡事件在这一步全部结算后统一发出', () => {
+    // 每个目标依次消耗：命中、浮动、暴击；第 2 个目标暴击
+    const rng = seqRng([0.5, 0.5, 0.5, 0.5, 0.5, 0.05, 0.5, 0.5, 0.5]);
+    const units = foes(3).map((u, i) => (i === 0 ? { ...u, hp: 5 } : u));
+    const { engine } = start([ally('A0', 90, { skillIds: ['triple_spell'] }), ...units], rng);
+    const events = actFirst(engine, { A0: skill('triple_spell', 'E0') });
+    const hits = ofType(events, 'HitResolved');
+    expect(hits.map((h) => h.isCrit)).toEqual([false, true, false]);
+    expect(hits[1]!.damage).toBe(70);
+    expect(types(events).slice(2, 6)).toEqual(['HitResolved', 'HitResolved', 'HitResolved', 'UnitDied']);
   });
 });
 
@@ -311,7 +348,7 @@ describe('群体治疗（同时治疗最多 3 个）', () => {
     ]);
     expect(engine.previewTargets('A0', 'group_heal', 'A3')).toEqual(['A3', 'A0', 'A1']);
     const events = actFirst(engine, { A0: skill('group_heal', 'A3') });
-    expect(ofType(events, 'SkillCast')[0]).toMatchObject({ animation: 'groupHeal', element: 'heal', targets: ['A3', 'A0', 'A1'], mpAfter: 120 });
+    expect(ofType(events, 'SkillCast')[0]).toMatchObject({ animation: 'groupHeal', element: 'heal', targets: ['A3', 'A0', 'A1'], mpAfter: 140 });
     const heals = ofType(events, 'HealResolved');
     expect(heals.map((h) => [h.targetId, h.amount, h.hpBefore, h.hpAfter])).toEqual([
       ['A3', 10, 90, 100], // 治疗量 50，只缺 10
@@ -320,7 +357,7 @@ describe('群体治疗（同时治疗最多 3 个）', () => {
     ]);
     expect(heals.every((h) => h.stepIndex === 0 && h.stepCount === 1)).toBe(true);
     expect(engine.getState().units['A2']!.hp).toBe(40); // 没被选中
-    expect(engine.getState().units['A0']!.mp).toBe(120); // 只扣一次
+    expect(engine.getState().units['A0']!.mp).toBe(140); // 只扣一次
   });
 
   it('存活友军少于 3 个时只治疗存活的；倒地的友军不会被治疗', () => {
@@ -391,7 +428,7 @@ describe('复活', () => {
     ]);
     const events = actFirst(engine, { A0: skill('revive', 'A1') });
     expect(types(events)).toEqual(['UnitActStart', 'SkillCast', 'UnitRevived', 'UnitActEnd']);
-    expect(ofType(events, 'SkillCast')[0]).toMatchObject({ animation: 'revive', targets: ['A1'], mpCost: 120, mpAfter: 80 });
+    expect(ofType(events, 'SkillCast')[0]).toMatchObject({ animation: 'revive', targets: ['A1'], mpCost: 100, mpAfter: 100 });
     expect(ofType(events, 'UnitRevived')[0]).toMatchObject({ unitId: 'A1', actorId: 'A0', hpAfter: 300, maxHp: 1000 });
     expect(engine.getState().units['A1']).toMatchObject({ hp: 300, mp: 33, alive: true, statuses: [], defending: false });
     expect(engine.getState().units['A2']!.alive).toBe(false); // 只复活选中的那一个
@@ -419,13 +456,116 @@ describe('复活', () => {
     expect(ofType(acted, 'HitResolved')[0]).toMatchObject({ actorId: 'A1', targetId: 'E1' });
   });
 
-  it('被复活者排在施法者之前：本回合不出手，下一回合正常下指令并出手', () => {
-    const { engine } = start([healer(50), ally('A1', 90, fallen), foe('E0', 10, { stats: { maxHp: 9999 } })]);
+  it('被复活者比施法者慢：不排队尾，在自己的速度位置出手', () => {
+    const { engine } = start([healer(90), ally('A1', 50, fallen), foe('E0', 70), foe('E1', 10, { stats: { maxHp: 9999 } })]);
     command(engine, { A0: skill('revive', 'A1') });
     const events = runExecution(engine);
-    expect(ofType(events, 'UnitRevived')[0]!.actsThisTurn).toBe(false);
-    expect(ofType(events, 'CommandRequested')).toHaveLength(0);
-    expect(ofType(events, 'UnitActStart').map((e) => e.actorId)).toEqual(['A0', 'E0']);
+    expect(ofType(events, 'UnitRevived')[0]).toMatchObject({ actsThisTurn: true, queuedAtEnd: false });
+    expect(engine.getState().lateQueue).toEqual([]);
+    expect(ofType(events, 'UnitActStart').map((e) => e.actorId)).toEqual(['A0', 'E0', 'A1', 'E1']);
+  });
+
+  it('被复活者比施法者快（速度位置已过）：排到本回合队尾，轮到时暂停让玩家现场下指令', () => {
+    const { engine } = start([healer(50), ally('A1', 90, fallen), foe('E0', 10, { stats: { maxHp: 9999 } })]);
+    command(engine, { A0: skill('revive', 'A1') });
+    const first = engine.stepAction()!; // A1 倒地被跳过，A0 复活 A1
+    expect(ofType(first, 'UnitRevived')[0]).toMatchObject({ unitId: 'A1', actsThisTurn: true, queuedAtEnd: true });
+    expect(engine.getState().lateQueue).toEqual(['A1']);
+    expect(engine.getState().turnOrder).toEqual(['A1', 'A0', 'E0']); // 出手顺序本身不变
+    expect(engine.stepAction()![0]).toMatchObject({ type: 'UnitActStart', actorId: 'E0' });
+    // 出手顺序走完，轮到队尾的 A1：没有指令，暂停
+    expect(engine.getState().phase).toBe('execution');
+    expect(types(engine.stepAction()!)).toEqual(['CommandRequested']);
+    expect(engine.getState().awaitingCommandFor).toBe('A1');
+    expect(() => engine.stepAction()).toThrow();
+    expect(engine.submitCommand('A1', { kind: 'attack', targetId: 'E0' })).toEqual({ ok: true });
+    const acted = engine.stepAction()!;
+    expect(acted[0]).toMatchObject({ type: 'UnitActStart', actorId: 'A1' });
+    expect(ofType(acted, 'HitResolved')[0]).toMatchObject({ actorId: 'A1', targetId: 'E0' });
+    // A1 出手后本回合才结束
+    expect(types(acted)).toContain('TurnEnd');
+    expect(engine.getState().turn).toBe(2);
+    expect(engine.getState().lateQueue).toEqual([]);
+  });
+
+  it('与施法者同速：按回合开始时的随机排序，排在后面就在自己的位置出手，排在前面就排到队尾；两种情况本回合都能出手', () => {
+    const seen = new Set<string>();
+    for (let seed = 1; seed <= 40; seed++) {
+      const { engine } = start(
+        [healer(60), ally('A1', 60, fallen), foe('E0', 10, { stats: { maxHp: 9999 } })],
+        createRng(seed),
+      );
+      const order = engine.getState().turnOrder;
+      const after = order.indexOf('A1') > order.indexOf('A0');
+      command(engine, { A0: skill('revive', 'A1') });
+      const events = runExecution(engine);
+      expect(ofType(events, 'UnitRevived')[0]).toMatchObject({ actsThisTurn: true, queuedAtEnd: !after });
+      expect(ofType(events, 'UnitActStart').map((e) => e.actorId)).toEqual(after ? ['A0', 'A1', 'E0'] : ['A0', 'E0', 'A1']);
+      seen.add(after ? 'after' : 'before');
+    }
+    expect([...seen].sort()).toEqual(['after', 'before']); // 两种排序都覆盖到
+  });
+
+  it('同一回合有多个单位排到队尾：按复活的先后顺序出手', () => {
+    const h2 = ally('A3', 40, { classId: 'heal', skillIds: ['group_heal', 'revive'] });
+    const { engine } = start([
+      healer(50),
+      h2,
+      ally('A1', 80, fallen),
+      ally('A2', 90, fallen),
+      foe('E0', 10, { stats: { maxHp: 9999 } }),
+    ]);
+    command(engine, { A0: skill('revive', 'A1'), A3: skill('revive', 'A2') });
+    const events = runExecution(engine);
+    expect(ofType(events, 'UnitRevived').map((e) => [e.unitId, e.queuedAtEnd])).toEqual([['A1', true], ['A2', true]]);
+    // 速度更快的 A2 后被复活，所以排在 A1 后面
+    expect(ofType(events, 'UnitActStart').map((e) => e.actorId)).toEqual(['A0', 'A3', 'E0', 'A1', 'A2']);
+  });
+
+  it('排在队尾的单位轮到之前又被击倒：直接跳过，不暂停', () => {
+    const { engine } = start([
+      healer(50, { stats: { maxHp: 9999 } }),
+      ally('A1', 90, { ...fallen, stats: { maxHp: 50 } }),
+      foe('E0', 10, { skillIds: ['whirlwind'], stats: { maxHp: 9999, maxMp: 200 } }),
+    ]);
+    command(engine, { A0: skill('revive', 'A1'), E0: skill('whirlwind', 'A0') });
+    engine.stepAction(); // A0 复活 A1（气血 15）
+    expect(engine.getState().lateQueue).toEqual(['A1']);
+    const hit = engine.stepAction()!; // E0 的旋风斩补足到刚复活的 A1（伤害 25），A1 再次倒地；之后没有可出手的单位
+    expect(ofType(hit, 'UnitDied')[0]).toMatchObject({ unitId: 'A1' });
+    expect(ofType(hit, 'CommandRequested')).toHaveLength(0);
+    expect(types(hit)).toContain('TurnEnd');
+    expect(engine.getState().turn).toBe(2);
+  });
+
+  it('每回合最多出手一次：已经出过手、被击倒后又被复活的单位，本回合不再出手', () => {
+    // 出手顺序：A1(95) → E0(80) 打倒 A1 → A0(70) 复活 A2 → A2(50) 现场下指令，复活 A1
+    const h2 = ally('A2', 50, { ...fallen, classId: 'heal', skillIds: ['group_heal', 'revive'], mp: 200 });
+    const { engine } = start([
+      healer(70),
+      ally('A1', 95, { hp: 1 }),
+      h2,
+      foe('E0', 80, { stats: { maxHp: 9999 } }),
+    ]);
+    command(engine, { A0: skill('revive', 'A2'), A1: { kind: 'attack', targetId: 'E0' }, E0: { kind: 'attack', targetId: 'A1' } });
+    const log: BattleEvent[] = [];
+    log.push(...engine.stepAction()!); // A1 出手
+    log.push(...engine.stepAction()!); // E0 打倒 A1
+    log.push(...engine.stepAction()!); // A0 复活 A2
+    expect(types(engine.stepAction()!)).toEqual(['CommandRequested']); // 轮到 A2
+    expect(engine.submitCommand('A2', skill('revive', 'A1'))).toEqual({ ok: true });
+    const events = engine.stepAction()!;
+    expect(ofType(events, 'UnitRevived')[0]).toMatchObject({ unitId: 'A1', actsThisTurn: false, queuedAtEnd: false });
+    expect(engine.getState().units['A1']!.alive).toBe(true);
+    // A1 没有第二次出手，回合直接结束
+    expect(types(events)).toContain('TurnEnd');
+    expect(ofType([...log, ...events], 'UnitActStart').map((e) => e.actorId)).toEqual(['A1', 'E0', 'A0', 'A2']);
+  });
+
+  it('被复活者排在施法者之前：下一回合正常下指令并按速度出手', () => {
+    const { engine } = start([healer(50), ally('A1', 90, fallen), foe('E0', 10, { stats: { maxHp: 9999 } })]);
+    command(engine, { A0: skill('revive', 'A1') });
+    runExecution(engine);
     // 下一回合：重新参与排序和下指令
     expect(engine.getState().turn).toBe(2);
     expect(engine.getPendingCommandUnits()).toContain('A1');
@@ -445,6 +585,34 @@ describe('复活', () => {
     const events = runExecution(engine);
     expect(ofType(events, 'CommandRequested')).toHaveLength(0);
     expect(ofType(events, 'UnitActStart').map((e) => e.actorId)).toEqual(['A0', 'A1', 'E0']);
+  });
+
+  it('自动出手的单位（自动宝宝 / 敌方）被复活且位置已过：排到队尾，由 AI 现场决定，不暂停', () => {
+    const { engine } = start([
+      healer(50),
+      ally('A1', 90, { ...fallen, kind: 'pet', autoCommand: true }),
+      foe('E0', 10, { stats: { maxHp: 9999 } }),
+    ]);
+    command(engine, { A0: skill('revive', 'A1') });
+    const events = runExecution(engine);
+    expect(ofType(events, 'UnitRevived')[0]).toMatchObject({ actsThisTurn: true, queuedAtEnd: true });
+    expect(ofType(events, 'CommandRequested')).toHaveLength(0);
+    expect(ofType(events, 'UnitActStart').map((e) => e.actorId)).toEqual(['A0', 'E0', 'A1']);
+    expect(ofType(events, 'HitResolved').at(-1)).toMatchObject({ actorId: 'A1', targetId: 'E0' });
+  });
+
+  it('默认规则下不存在敌方复活：敌人被击败即消失，不进入之后回合的出手顺序，复活技能也选不中', () => {
+    const { engine } = start([
+      ally('A0', 90, { stats: { physAtk: 999 } }),
+      foe('E0', 50, { hp: 1 }),
+      foe('E1', 40, { classId: 'heal', skillIds: ['revive'], stats: { maxHp: 9999, maxMp: 200 } }),
+    ]);
+    command(engine, { A0: { kind: 'attack', targetId: 'E0' } });
+    const events = runExecution(engine);
+    expect(ofType(events, 'UnitDied')[0]).toMatchObject({ unitId: 'E0', vanish: true });
+    expect(engine.getState().turnOrder).not.toContain('E0');
+    // 敌方被击败的单位虽然满足“倒地的同阵营单位”，但不在出手顺序里：即使被复活也按“位置已过”排队尾，规则是通用的
+    expect(engine.getCommandOptions('E0').canAttack).toBe(false);
   });
 
   it('本回合内先倒地、再被复活：原来的指令作废，轮到时重新下指令', () => {
@@ -506,7 +674,7 @@ describe('封印', () => {
     const { engine } = start([sealer(), caster('E0', 10)]);
     const events = actFirst(engine, { A0: skill('seal', 'E0') });
     expect(types(events)).toEqual(['UnitActStart', 'SkillCast', 'StatusApplied', 'UnitActEnd']);
-    expect(ofType(events, 'SkillCast')[0]).toMatchObject({ animation: 'sealChain', element: 'seal', targets: ['E0'], mpAfter: 140 });
+    expect(ofType(events, 'SkillCast')[0]).toMatchObject({ animation: 'sealChain', element: 'seal', targets: ['E0'], mpAfter: 160 });
     expect(ofType(events, 'StatusApplied')[0]).toMatchObject({ unitId: 'E0', sourceId: 'A0', status: 'seal', remainingTurns: 3 });
     runExecution(engine);
     // 下一回合：E0 仍被封印
@@ -525,7 +693,7 @@ describe('封印', () => {
     const events = actFirst(engine, { A0: skill('seal', 'E0') });
     expect(types(events)).toEqual(['UnitActStart', 'SkillCast', 'StatusResisted', 'UnitActEnd']);
     expect(engine.getState().units['E0']!.statuses).toEqual([]);
-    expect(engine.getState().units['A0']!.mp).toBe(140);
+    expect(engine.getState().units['A0']!.mp).toBe(160);
   });
 
   it('立即生效：目标本回合还没出手的技能指令改为普攻，不扣它的魔法', () => {
@@ -609,9 +777,9 @@ describe('封印', () => {
 // ----------------------------------------------------------------------
 describe('魔法：一次性扣除与不足', () => {
   it.each([
-    ['combo_slash', 40, 3],
-    ['whirlwind', 80, 7],
-    ['group_spell', 80, 6],
+    ['combo_slash', 30, 3],
+    ['whirlwind', 60, 7],
+    ['group_spell', 60, 6],
   ])('%s 只扣一次 %i 点魔法（%i 次结算）', (skillId, cost, count) => {
     const foes = Array.from({ length: 10 }, (_, i) => foe(`E${i}`, 10 + i, { stats: { maxHp: 9999 } }));
     const { engine } = start([ally('A0', 90, { skillIds: [skillId] }), ...foes]);
@@ -623,8 +791,8 @@ describe('魔法：一次性扣除与不足', () => {
 
   it('魔法不足时多目标技能置灰并被拒绝；刚好够时可以用', () => {
     const { engine } = start([
-      ally('A0', 90, { skillIds: ['combo_slash', 'whirlwind'], mp: 79 }),
-      ally('A1', 80, { skillIds: ['whirlwind'], mp: 80 }),
+      ally('A0', 90, { skillIds: ['combo_slash', 'whirlwind'], mp: 59 }),
+      ally('A1', 80, { skillIds: ['whirlwind'], mp: 60 }),
       foe('E0', 10),
     ]);
     expect(engine.getCommandOptions('A0').skills).toEqual([
@@ -669,5 +837,93 @@ describe('预览与执行一致', () => {
     expect(engine.previewTargets('X', 'whirlwind', 'E0')).toEqual([]);
     expect(engine.previewTargets('A0', 'nope', 'E0')).toEqual([]);
     expect(engine.previewTargets('A0', 'whirlwind', 'A0')).toEqual([]);
+  });
+});
+
+// ----------------------------------------------------------------------
+describe('被动技能：连击（物理型宝宝）', () => {
+  const PASSIVES_TABLE = PASSIVES;
+  const pet = (extra: Extra = {}): Unit =>
+    ally('A0', 90, { kind: 'pet', passiveIds: ['double_strike'], ...extra });
+  const begin = (units: Unit[], rng = constRng(0.5)) => {
+    const made = makeEngine(units, { rng, setup: { skills: SKILLS, passives: PASSIVES_TABLE } });
+    made.engine.start();
+    return made;
+  };
+  const attack: Command = { kind: 'attack', targetId: 'E0' };
+
+  it('触发：对同一目标攻击两次，两次伤害和暴击各自独立，中间发出 PassiveTriggered，不重复扣消耗', () => {
+    // 随机数顺序：连击判定 → 第一击（命中、浮动、暴击）→ 第二击（命中、浮动、暴击）
+    const rng = seqRng([0.49, 0.5, 0.5, 0.05, 0.5, 0, 0.5]);
+    const { engine } = begin([pet({ mp: 77 }), foe('E0', 10, { stats: { maxHp: 1000 } })], rng);
+    const events = actFirst(engine, { A0: attack });
+    expect(types(events)).toEqual(['UnitActStart', 'SkillCast', 'HitResolved', 'PassiveTriggered', 'HitResolved', 'UnitActEnd']);
+    expect(ofType(events, 'SkillCast')).toHaveLength(1); // 只冲锋一次、只施放一次
+    expect(ofType(events, 'SkillCast')[0]).toMatchObject({ skillId: 'basic_physical', targets: ['E0'], mpCost: 0, meleeCharge: true });
+    expect(ofType(events, 'PassiveTriggered')[0]).toMatchObject({ unitId: 'A0', passiveId: 'double_strike', name: '连击', targetId: 'E0' });
+    const hits = ofType(events, 'HitResolved');
+    expect(hits.map((h) => [h.targetId, h.stepIndex, h.hitIndex, h.stepCount, h.hitCount])).toEqual([
+      ['E0', 0, 0, 2, 2],
+      ['E0', 1, 1, 2, 2],
+    ]);
+    // 第一击暴击 40×1.5 = 60；第二击浮动 0.9 不暴击 = 36
+    expect(hits.map((h) => [h.isCrit, h.damage])).toEqual([[true, 60], [false, 36]]);
+    expect(hits.map((h) => h.hpAfter)).toEqual([940, 904]);
+    expect(engine.getState().units['A0']!.mp).toBe(77);
+    expect(rng.used()).toBe(7);
+  });
+
+  it('未触发：只攻击一次', () => {
+    const rng = seqRng([0.5, 0.5, 0.5, 0.5]);
+    const { engine } = begin([pet(), foe('E0', 10)], rng);
+    const events = actFirst(engine, { A0: attack });
+    expect(types(events)).toEqual(['UnitActStart', 'SkillCast', 'HitResolved', 'UnitActEnd']);
+    expect(ofType(events, 'HitResolved')[0]).toMatchObject({ hitIndex: 0, hitCount: 1, stepCount: 1 });
+  });
+
+  it('第一击未命中不影响第二击', () => {
+    const rng = seqRng([0.1, 0.99, 0.5, 0.5, 0.5]);
+    const { engine } = begin([pet(), foe('E0', 10)], rng);
+    const hits = ofType(actFirst(engine, { A0: attack }), 'HitResolved');
+    expect(hits.map((h) => [h.isMiss, h.damage])).toEqual([[true, 0], [false, 40]]);
+  });
+
+  it('第一击已经打死目标：第二击取消，不发 PassiveTriggered，不换目标', () => {
+    const rng = seqRng([0.1, 0.5, 0.5, 0.5]);
+    const { engine } = begin([pet(), foe('E0', 10, { hp: 5 }), foe('E1', 5)], rng);
+    const events = actFirst(engine, { A0: attack });
+    expect(types(events)).toEqual(['UnitActStart', 'SkillCast', 'HitResolved', 'UnitDied', 'UnitActEnd']);
+    expect(engine.getState().units['E1']!.hp).toBe(100);
+  });
+
+  it('没有被动技能的单位不消耗连击判定的随机数，也不会连击', () => {
+    const rng = seqRng([0.1, 0.5, 0.5]);
+    const { engine } = begin([ally('A0', 90), foe('E0', 10)], rng);
+    const events = actFirst(engine, { A0: attack });
+    expect(ofType(events, 'HitResolved')).toHaveLength(1);
+    expect(rng.used()).toBe(3);
+  });
+
+  it('只有普攻会触发：使用主动技能时不判定连击', () => {
+    const { engine } = begin([pet({ skillIds: ['combo_slash'] }), foe('E0', 10, { stats: { maxHp: 1000 } })], constRng(0.1));
+    const events = actFirst(engine, { A0: skill('combo_slash', 'E0') });
+    expect(ofType(events, 'PassiveTriggered')).toHaveLength(0);
+    expect(ofType(events, 'HitResolved')).toHaveLength(3);
+  });
+
+  it('触发率约 50%（2000 次普攻，带种子的随机数）', () => {
+    let procs = 0;
+    const N = 2000;
+    const { engine } = begin([pet(), foe('E0', 10, { stats: { maxHp: 10_000_000, defense: 0 } })], createRng(2026));
+    for (let i = 0; i < N; i++) {
+      command(engine, { A0: attack, E0: { kind: 'defend' } });
+      procs += ofType(runExecution(engine), 'PassiveTriggered').length;
+    }
+    expect(procs / N).toBeGreaterThan(0.46);
+    expect(procs / N).toBeLessThan(0.54);
+  });
+
+  it('引用了不存在的被动技能时创建引擎报错', () => {
+    expect(() => makeEngine([pet({ passiveIds: ['nope'] }), foe('E0', 10)], { setup: { passives: PASSIVES_TABLE } })).toThrow();
   });
 });

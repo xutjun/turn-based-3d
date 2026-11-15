@@ -445,6 +445,12 @@ export class BattleHud implements DirectorHud {
     this.chips.get(id)?.classList.add('acted');
   }
 
+  queueLate(id: UnitId): void {
+    // 把它的头像挪到出手顺序条的最后
+    const chip = this.chips.get(id);
+    if (chip) this.orderEl.append(chip);
+  }
+
   banner(text: string, sticky = false): void {
     this.bannerEl.textContent = text;
     this.bannerAge = 0;

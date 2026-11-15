@@ -208,14 +208,15 @@ describe('指令会话：非法操作给出提示且不崩溃', () => {
     expect(notices.at(-1)).toEqual({ kind: 'error', text: '现在不能下指令' });
   });
 
-  it('没有技能的单位：技能列表为空，不报错', () => {
+  it('没有技能的单位：不能打开技能列表，技能列表为空，不报错', () => {
     const { session } = setup([hero('A0', 0), enemy('E0')]);
     void session.begin();
+    expect(session.hasSkills).toBe(false);
     session.openSkills();
-    expect(session.mode).toBe('skills');
+    expect(session.mode).toBe('menu');
     expect(session.skillRows).toEqual([]);
     session.chooseSkill('不存在');
-    expect(session.mode).toBe('skills');
+    expect(session.mode).toBe('menu');
   });
 });
 
@@ -390,14 +391,26 @@ describe('指令会话：默认阵容的技能（真实引擎）', () => {
       return rows.map((r) => r.skill.name);
     };
     expect(names('A0')).toEqual(['三连射', '箭雨']);
-    expect(names('A5')).toEqual(['连斩']);
+    expect(names('A5')).toEqual([]); // 物理型宝宝没有主动技能
     expect(names('A1')).toEqual(['连斩', '旋风斩']);
     expect(names('A2')).toEqual(['群体法术·天雷', '单体法术·炎爆']);
-    expect(names('A7')).toEqual(['群体法术·烈焰']);
+    expect(names('A7')).toEqual(['三重魂火']);
     expect(names('A3')).toEqual(['封印']);
-    expect(names('A8')).toEqual(['封印']);
+    expect(names('A8')).toEqual(['三重魂火']);
     expect(names('A4')).toEqual(['群体治疗', '复活']);
-    expect(names('A9')).toEqual(['群体治疗']);
+    expect(names('A9')).toEqual([]);
+  });
+
+  it('物理型宝宝没有“技能”选项：hasSkills 为 false，openSkills 不会打开技能列表；法术型宝宝有', () => {
+    const { session, goTo } = realSession();
+    // 按下指令的顺序依次检查
+    for (const [id, has] of [['A5', false], ['A6', false], ['A7', true], ['A8', true], ['A9', false]] as const) {
+      goTo(id);
+      expect(session.hasSkills, id).toBe(has);
+      session.openSkills();
+      expect(session.mode, id).toBe(has ? 'skills' : 'menu');
+      if (has) session.back();
+    }
   });
 
   it.each([
@@ -407,7 +420,8 @@ describe('指令会话：默认阵容的技能（真实引擎）', () => {
     ['A1', 'whirlwind', 7],
     ['A2', 'group_spell', 6],
     ['A2', 'single_spell', 1],
-    ['A7', 'group_spell_fire', 6],
+    ['A7', 'triple_spell', 3],
+    ['A8', 'triple_spell', 3],
     ['A3', 'seal', 1],
   ])('%s 的 %s：可选 10 个敌人，预览命中 %i 个，提交后引擎收到技能指令', (unitId, skillId, count) => {
     const { engine, session, goTo } = realSession();
@@ -473,7 +487,7 @@ describe('指令会话：默认阵容的技能（真实引擎）', () => {
 
   it('魔法不足的技能置灰，其余仍可用；被封印时全部置灰', () => {
     const { session, notices, state, goTo } = realSession();
-    state.units['A1']!.mp = 50; // 够连斩（40），不够旋风斩（80）
+    state.units['A1']!.mp = 50; // 够连斩（30），不够旋风斩（60）
     goTo('A1');
     session.openSkills();
     expect(session.skillRows.map((r) => [r.skill.id, r.enabled, r.disabledReason])).toEqual([
@@ -482,7 +496,7 @@ describe('指令会话：默认阵容的技能（真实引擎）', () => {
     ]);
     session.chooseSkill('whirlwind');
     expect(session.mode).toBe('skills');
-    expect(notices.at(-1)?.text).toBe('魔法不足：「旋风斩」需要 80 点魔法，当前只有 50 点');
+    expect(notices.at(-1)?.text).toBe('魔法不足：「旋风斩」需要 60 点魔法，当前只有 50 点');
 
     state.units['A1']!.statuses.push({ type: 'seal', remainingTurns: 2, sourceId: 'E5', appliedTurn: 1 });
     expect(session.sealed).toBe(true);

@@ -70,8 +70,8 @@ export function createFakes(scheduler: Scheduler) {
       log.push(`projectile-${kind}`);
       return scheduler.wait(d);
     },
-    burst: (kind, _a, _c, d) => {
-      log.push(`burst-${kind}`);
+    burst: (kind, _a, _c, d, scale = 1) => {
+      log.push(scale === 1 ? `burst-${kind}` : `burst-${kind}@${scale}`);
       return scheduler.wait(d);
     },
     slash: (_a, variant, _c, d) => {
@@ -123,6 +123,7 @@ export function createFakes(scheduler: Scheduler) {
       active = id;
     },
     setActed: () => undefined,
+    queueLate: (id) => void log.push(`late:${id}`),
     banner: (text) => void log.push(`banner:${text}`),
   };
   return { log, hp, mp, dead, away, stage, hud, violations, maxAway: () => maxAway };

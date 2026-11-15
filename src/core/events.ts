@@ -10,6 +10,7 @@ import type {
   Delivery,
   Element,
   EnemyRank,
+  PassiveId,
   Side,
   SkillId,
   Slot,
@@ -146,7 +147,16 @@ export interface UnitRevivedEvent extends EventBase {
   actorId: UnitId;
   hpAfter: number;
   maxHp: number;
-  actsThisTurn: boolean;
+  actsThisTurn: boolean; // 本回合是否还会出手（已经出过手的单位为 false）
+  queuedAtEnd: boolean; // 速度位置已过，排到本回合队尾出手
+}
+/** 被动技能生效的那一刻（连击：第二击之前） */
+export interface PassiveTriggeredEvent extends EventBase {
+  type: 'PassiveTriggered';
+  unitId: UnitId;
+  passiveId: PassiveId;
+  name: string; // 飘字
+  targetId: UnitId;
 }
 export interface StatusAppliedEvent extends EventBase {
   type: 'StatusApplied';
@@ -202,6 +212,7 @@ export type BattleEvent =
   | HealResolvedEvent
   | UnitDiedEvent
   | UnitRevivedEvent
+  | PassiveTriggeredEvent
   | StatusAppliedEvent
   | StatusResistedEvent
   | StatusTickedEvent

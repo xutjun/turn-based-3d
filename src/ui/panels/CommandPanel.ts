@@ -1,8 +1,10 @@
 // 指令面板（左下角）：显示当前待下令的单位，提供 攻击 / 技能 / 防御，
 // 技能列表显示魔法消耗与说明（魔法不足或被封印时置灰），选目标时显示会命中的目标预览。
+// 面板只显示该单位真正拥有的选项：没有主动技能的单位（物理型宝宝）不显示“技能”；被动技能只作为说明显示。
 // 面板只读取指令会话的状态并把点击转给会话，不包含任何规则判断。
 
 import type { ClassId, Unit, UnitId } from '../../core/types';
+import { PASSIVES } from '../../data/passives';
 import { UI_CONFIG } from '../../data/uiConfig';
 import { disabledLabel, type CommandSession, type Notice } from '../command/CommandSession';
 import type { UiPhase } from '../PlayerBattleController';
@@ -82,7 +84,7 @@ export class CommandPanel {
     if (key === 'escape') session.back();
     else if (session.mode !== 'menu') return;
     else if (key === 'a') session.chooseAttack();
-    else if (key === 'w') session.openSkills();
+    else if (key === 'w' && session.hasSkills) session.openSkills();
     else if (key === 'd') session.chooseDefend();
   };
 
@@ -125,25 +127,34 @@ export class CommandPanel {
     const { index, total } = session.progress;
     head.append(
       el('span', 'dk-unit-name', unit.name),
-      el('span', 'dk-unit-class', `${CLASS_LABEL[unit.classId]}${unit.kind === 'pet' ? ' · 宝宝' : ''}`),
+      // 宝宝只分物理型 / 法术型
+      el('span', 'dk-unit-class', unit.kind === 'pet' ? `${unit.classId === 'magic' ? '法术型' : '物理型'}宝宝` : CLASS_LABEL[unit.classId]),
       el('span', 'dk-unit-step', `指令 ${index} / ${total}`),
     );
     wrap.append(head, gauge('hp', '气血', unit.hp, unit.stats.maxHp), gauge('mp', '魔法', unit.mp, unit.stats.maxMp));
-    if (session.sealed) wrap.append(el('div', 'dk-sealed', '被封印：不能使用技能，仍可攻击或防御'));
+    if (session.sealed && session.hasSkills) wrap.append(el('div', 'dk-sealed', '被封印：不能使用技能，仍可攻击或防御'));
+    // 被动技能：只是说明，不能点击
+    for (const id of unit.passiveIds) {
+      const passive = PASSIVES[id];
+      if (passive) wrap.append(el('div', 'dk-passive', `被动 · ${passive.name}：${passive.description}`));
+    }
     return wrap;
   }
 
   private renderActions(): HTMLElement {
     const { session } = this.deps;
     const row = el('div', 'dk-actions');
-    row.append(
-      button('攻击', 'A', () => session.chooseAttack()),
-      button('技能', 'W', () => (session.mode === 'skills' ? session.back() : session.openSkills()), {
-        on: session.mode === 'skills',
-        disabled: session.sealed,
-      }),
-      button('防御', 'D', () => session.chooseDefend()),
-    );
+    row.append(button('攻击', 'A', () => session.chooseAttack()));
+    // 没有主动技能的单位不显示“技能”
+    if (session.hasSkills) {
+      row.append(
+        button('技能', 'W', () => (session.mode === 'skills' ? session.back() : session.openSkills()), {
+          on: session.mode === 'skills',
+          disabled: session.sealed,
+        }),
+      );
+    }
+    row.append(button('防御', 'D', () => session.chooseDefend()));
     return row;
   }
 

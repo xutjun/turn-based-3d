@@ -11,6 +11,7 @@ import type {
   BattleEvent,
   HealResolvedEvent,
   HitResolvedEvent,
+  PassiveTriggeredEvent,
   SkillCastEvent,
   StatusAppliedEvent,
   StatusRemovedEvent,
@@ -19,7 +20,7 @@ import type {
   UnitRevivedEvent,
 } from '../../core/events';
 import type { UnitId } from '../../core/types';
-import { CAMERA_FX, ELEMENT_COLORS, FX_COLORS, FX_CONFIG, GLOW_FX, STAGING, TIMING } from '../../data/presentationConfig';
+import { CAMERA_FX, ELEMENT_COLORS, FX_COLORS, FX_CONFIG, GLOW_FX, SMALL_SPELL, STAGING, TIMING } from '../../data/presentationConfig';
 import type { Scheduler } from './Scheduler';
 import type { DirectorHud, GroundPoint, Point3, Stage, StageUnit } from './types';
 
@@ -29,6 +30,8 @@ export interface Step {
   heals: HealResolvedEvent[];
   effects: (StatusAppliedEvent | StatusResistedEvent | UnitRevivedEvent)[];
   followups: (UnitDiedEvent | StatusRemovedEvent)[];
+  /** 这一步是被动技能追加出来的（连击的第二击）：演出前先飘出被动技能的名字 */
+  passive: PassiveTriggeredEvent | null;
 }
 
 /** 这一击的分量：heavy = 连斩第 3 击、旋风斩最后一击、爆炸这类重击 */
@@ -114,7 +117,14 @@ export class Choreographer {
       let weight: Weight = 'normal';
       let windup = TIMING.meleeWindup;
       let recover = TIMING.recover;
-      if (combo && hit) {
+      const chained = this.announcePassive(step);
+      if (chained) {
+        // 连击的第二击：不返回、不重新冲锋，换一个挥砍轨迹紧接着再打一次，出手更快、光芒更亮
+        variant = 1;
+        windup = TIMING.comboWindup;
+        actor.setWeaponGlow(GLOW_FX.chain, windup);
+        actor.setTrail(true);
+      } else if (combo && hit) {
         variant = hit.hitIndex % 3;
         const finisher = hit.hitCount > 1 && hit.hitIndex === hit.hitCount - 1;
         weight = finisher ? 'heavy' : 'normal';
@@ -138,8 +148,10 @@ export class Choreographer {
       // 斩击光弧在挥下的同时划过目标
       void stage.slash(target.anchor('chest'), variant, actor.fxColor, TIMING.slash, (weight === 'heavy' ? 1.35 : 1) * (landed ? 1 : 0.7));
       await actor.release('melee', TIMING.meleeStrike, variant);
+      // 后面紧跟着连击的第二击时，收招缩短
+      if (steps[i + 1]?.passive) recover = TIMING.comboRecover;
       await Promise.all([this.applyStep(cast, step, weight), actor.recover(recover)]);
-      if (combo) actor.setTrail(false);
+      if (combo || chained) actor.setTrail(false);
     }
 
     actor.setTrail(false);
@@ -160,6 +172,7 @@ export class Choreographer {
     for (let i = 0; i < steps.length; i++) {
       const step = steps[i]!;
       const targets = stepTargets(step);
+      this.announcePassive(step);
       await actor.windup('bow', i === 0 ? TIMING.bowDraw : TIMING.tripleDraw);
       await actor.release('bow', TIMING.bowRelease);
       const from = actor.anchor('weapon');
@@ -223,6 +236,9 @@ export class Choreographer {
     const first = steps[0];
     const kind = first ? castKind(cast, first) : 'bolt';
     const feet = actor.anchor('ground');
+    // 法术型宝宝的三目标法术：群体法术的缩小版
+    const small = cast.animation === 'groupSpellSmall';
+    const size = small ? SMALL_SPELL.scale : 1;
     // 法杖按施法元素变色
     actor.setWeaponColor(color);
 
@@ -231,12 +247,13 @@ export class Choreographer {
       // 群体法术：宝珠光芒暴涨，敌阵脚下展开巨大的符文阵
       const grounds = stepTargets(first!).map((id) => stage.unit(id).home);
       const center = centroid(grounds)!;
-      const radius = Math.max(1.6, ...grounds.map((g) => Math.hypot(g.x - center.x, g.z - center.z))) + 1.1;
-      actor.setWeaponGlow(GLOW_FX.spellCharge, TIMING.spellCharge);
-      void stage.aura('charge', feet, color, TIMING.spellCharge + TIMING.castRelease, 1.3);
-      void stage.aura('runeCircle', { x: center.x, y: 0, z: center.z }, color, TIMING.spellCharge + TIMING.strike + 0.35, radius);
-      void stage.camera.focus(center, CAMERA_FX.groupZoom, CAMERA_FX.groupPan, TIMING.spellCharge);
-      await actor.windup('cast', TIMING.spellCharge);
+      const radius = (Math.max(1.6, ...grounds.map((g) => Math.hypot(g.x - center.x, g.z - center.z))) + 1.1) * size;
+      const charge = TIMING.spellCharge * (small ? SMALL_SPELL.charge : 1);
+      actor.setWeaponGlow(GLOW_FX.spellCharge * (small ? SMALL_SPELL.glow : 1), charge);
+      void stage.aura('charge', feet, color, charge + TIMING.castRelease, 1.3 * size);
+      void stage.aura('runeCircle', { x: center.x, y: 0, z: center.z }, color, charge + TIMING.strike + 0.35, radius);
+      void stage.camera.focus(center, CAMERA_FX.groupZoom, CAMERA_FX.groupPan, charge);
+      await actor.windup('cast', charge);
     } else if (kind === 'fireball') {
       actor.setWeaponGlow(GLOW_FX.singleCharge, TIMING.singleCharge);
       void stage.aura('charge', feet, color, TIMING.singleCharge + TIMING.castRelease, 1.1);
@@ -252,6 +269,7 @@ export class Choreographer {
     for (const step of steps) {
       const targets = stepTargets(step);
       const stepKind = castKind(cast, step);
+      this.announcePassive(step);
       const lingering: Promise<void>[] = [];
       switch (stepKind) {
         case 'bolt':
@@ -276,10 +294,10 @@ export class Choreographer {
         case 'group':
           // 群体法术：所有目标同一帧遭受落雷 / 火柱，同一帧结算、同时飘字
           for (const id of targets) {
-            lingering.push(stage.burst(cast.element === 'thunder' ? 'thunder' : 'pillarDown', stage.unit(id).anchor('ground'), color, TIMING.strike));
+            lingering.push(stage.burst(cast.element === 'thunder' ? 'thunder' : 'pillarDown', stage.unit(id).anchor('ground'), color, TIMING.strike, size));
           }
           await scheduler.wait(TIMING.strikeDelay);
-          stage.camera.shake(CAMERA_FX.shake.spell);
+          stage.camera.shake(CAMERA_FX.shake.spell * (small ? SMALL_SPELL.shake : 1));
           await this.applyStep(cast, step, 'normal');
           break;
 
@@ -372,6 +390,7 @@ export class Choreographer {
         hud.setDead(x.unitId, false, false);
         hud.setHp(x.unitId, x.hpAfter);
         hud.floater(x.unitId, '复活', 'revive');
+        if (x.queuedAtEnd) hud.queueLate(x.unitId);
         waits.push(stage.unit(x.unitId).revive(TIMING.revive));
       }
     }
@@ -393,6 +412,13 @@ export class Choreographer {
     await Promise.all(waits);
   }
 
+  /** 这一步如果是被动技能追加出来的（连击），在出手者头顶飘出被动技能的名字；返回是否是追加的一步 */
+  private announcePassive(step: Step): boolean {
+    if (!step.passive) return false;
+    this.hud.floater(step.passive.unitId, step.passive.name, 'passive');
+    return true;
+  }
+
   /** 镜头推近时看向哪里：出手者和主目标之间、偏向出手者 */
   private focusPoint(actor: StageUnit, cast: SkillCastEvent): GroundPoint {
     const first = cast.targets[0];
@@ -408,7 +434,7 @@ function castKind(cast: SkillCastEvent, step: Step): CastKind {
   if (step.effects.some((x) => x.type === 'UnitRevived')) return 'revive';
   if (step.heals.length > 0) return 'heal';
   if (step.effects.length > 0) return 'seal';
-  if (stepTargets(step).length > 1 || cast.animation === 'groupSpell') return 'group';
+  if (stepTargets(step).length > 1 || cast.animation === 'groupSpell' || cast.animation === 'groupSpellSmall') return 'group';
   return cast.animation === 'singleSpell' ? 'fireball' : 'bolt';
 }
 
@@ -416,8 +442,10 @@ function castKind(cast: SkillCastEvent, step: Step): CastKind {
 export function groupSteps(events: readonly BattleEvent[]): Step[] {
   const steps: Step[] = [];
   let currentIndex = -1; // 当前这一步的 stepIndex；-1 表示下一条结算要另起一步
+  let pendingPassive: PassiveTriggeredEvent | null = null; // 刚触发的被动，记在它追加出来的那一步上
   const open = (): Step => {
-    const step: Step = { hits: [], heals: [], effects: [], followups: [] };
+    const step: Step = { hits: [], heals: [], effects: [], followups: [], passive: pendingPassive };
+    pendingPassive = null;
     steps.push(step);
     return step;
   };
@@ -443,6 +471,11 @@ export function groupSteps(events: readonly BattleEvent[]): Step[] {
       case 'UnitDied':
       case 'StatusRemoved':
         (last() ?? open()).followups.push(e);
+        break;
+      case 'PassiveTriggered':
+        // 追加的攻击另起一步
+        pendingPassive = e;
+        currentIndex = -1;
         break;
       default:
         break;

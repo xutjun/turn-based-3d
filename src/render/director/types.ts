@@ -104,8 +104,8 @@ export interface Stage {
   unit(id: UnitId): StageUnit;
   /** 一个光效从 from 飞到 to */
   projectile(kind: ProjectileKind, from: Point3, to: Point3, color: number, duration: number): Promise<void>;
-  /** 在某点爆开 / 落下 / 升起的光效 */
-  burst(kind: BurstKind, at: Point3, color: number, duration: number): Promise<void>;
+  /** 在某点爆开 / 落下 / 升起的光效；scale 为规模倍率（目前只有火柱支持，默认 1） */
+  burst(kind: BurstKind, at: Point3, color: number, duration: number, scale?: number): Promise<void>;
   /** 斩击光弧；variant 决定光弧的角度（与挥砍轨迹对应），scale 为大小倍率 */
   slash(at: Point3, variant: number, color: number, duration: number, scale: number): Promise<void>;
   /** 锁链光束：travel 秒后到达 to，再停留 linger 秒；Promise 在整段结束时完成 */
@@ -129,5 +129,7 @@ export interface DirectorHud {
   setActive(id: UnitId | null): void;
   /** 标记某单位本回合已出手 */
   setActed(id: UnitId): void;
+  /** 本回合被复活、速度位置已过的单位：在出手顺序条里排到队尾 */
+  queueLate(id: UnitId): void;
   banner(text: string, sticky?: boolean): void;
 }

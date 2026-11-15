@@ -110,6 +110,7 @@ export function makeUnit(
     attackMode: 'melee',
     basicAttackSkillId: 'basic_physical',
     skillIds: [],
+    passiveIds: [],
     stats,
     hp: stats.maxHp,
     mp: stats.maxMp,
@@ -127,7 +128,13 @@ export function makeSetup(units: Unit[], overrides: Partial<BattleSetup> = {}): 
     skills: TEST_SKILLS,
     units,
     settings: { petAutoCommand: false },
-    ai: { healHpThreshold: 0.6, aoeMinTargets: 3 },
+    // 测试默认双方都用 focus（固定选目标），便于精确断言；spread 的测试自己覆盖
+    ai: {
+      healHpThreshold: 0.6,
+      aoeMinTargets: 3,
+      targetMode: { ally: 'focus', enemy: 'focus' },
+      spread: { baseWeight: 1, repeatDecay: 0.5, lowHpBonus: 0.3, sealCasterBonus: 2 },
+    },
     seed: 1,
     ...overrides,
   };

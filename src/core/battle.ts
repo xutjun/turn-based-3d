@@ -3,9 +3,10 @@
 // 引擎是同步、按步推进的：stepAction() 一次只结算一个单位的一次出手，
 // 所以任意时刻只有一个单位在行动。所有结果通过事件发出，引擎不操作任何画面。
 
-import { decideCommand } from './ai';
+import { decideCommand, pickAiTarget, type AiContext } from './ai';
 import { getCommandOptions, validateCommand, type SkillTable } from './commands';
 import { EventBus, type BattleEvent, type BattleEventInput, type UnitSnapshot } from './events';
+import { rollExtraHits, type PassiveTable } from './passives';
 import { createRng, type Rng } from './rng';
 import {
   executeSkill,
@@ -34,6 +35,8 @@ import type {
 export interface BattleEngineOptions {
   /** 注入自定义随机数发生器（测试用）；不传则用 setup.seed 创建 */
   rng?: Rng;
+  /** 注入 AI 选目标用的随机数发生器（测试用）；不传则由 setup.seed 派生 */
+  aiRng?: Rng;
 }
 
 /** 深拷贝一个单位，避免引擎修改调用方传入的对象 */
@@ -43,7 +46,15 @@ function cloneUnit(u: Unit): Unit {
     slot: { ...u.slot },
     stats: { ...u.stats },
     skillIds: [...u.skillIds],
+    passiveIds: [...(u.passiveIds ?? [])],
     statuses: u.statuses.map((s) => ({ ...s })),
+  };
+}
+
+function emptyTargetCounts(): BattleState['aiTargetCounts'] {
+  return {
+    ally: { attack: {}, seal: {}, heal: {} },
+    enemy: { attack: {}, seal: {}, heal: {} },
   };
 }
 
@@ -72,7 +83,10 @@ export class BattleEngine {
   private readonly config: BattleConfig;
   private readonly skills: SkillTable;
   private readonly ai: AiConfig;
+  private readonly passives: PassiveTable;
   private readonly rng: Rng;
+  /** AI 选目标专用的随机序列：与伤害 / 命中 / 暴击 / 同速排序分开，AI 抽多少次都不影响战斗结算 */
+  private readonly aiRng: Rng;
   /** stepAction() 执行期间收集本次发出的事件 */
   private buffer: BattleEvent[] | null = null;
 
@@ -80,7 +94,9 @@ export class BattleEngine {
     this.config = setup.config;
     this.skills = setup.skills;
     this.ai = setup.ai;
+    this.passives = setup.passives ?? {};
     this.rng = options.rng ?? createRng(setup.seed);
+    this.aiRng = options.aiRng ?? createRng((setup.seed ^ 0x9e3779b9) >>> 0);
 
     const units: Record<UnitId, Unit> = {};
     const unitIds: UnitId[] = [];
@@ -90,6 +106,9 @@ export class BattleEngine {
         if (!this.skills[skillId]) throw new Error(`单位 ${src.id} 引用了不存在的技能：${skillId}`);
       }
       units[src.id] = cloneUnit(src);
+      for (const pid of units[src.id]!.passiveIds) {
+        if (!this.passives[pid]) throw new Error(`单位 ${src.id} 引用了不存在的被动技能：${pid}`);
+      }
       unitIds.push(src.id);
     }
 
@@ -100,6 +119,9 @@ export class BattleEngine {
       unitIds,
       turnOrder: [],
       actionCursor: 0,
+      lateQueue: [],
+      actedThisTurn: [],
+      aiTargetCounts: emptyTargetCounts(),
       commands: {},
       awaitingCommandFor: null,
       winner: null,
@@ -142,7 +164,7 @@ export class BattleEngine {
   /** 按 AI 规则给出该单位的建议指令（自动战斗、命令行模拟用） */
   suggestCommand(unitId: UnitId): Command {
     if (!this.state.units[unitId]) throw new Error(`单位不存在：${unitId}`);
-    return decideCommand(this.state, this.skills, this.ai, unitId);
+    return decideCommand(this.aiContext(), unitId);
   }
 
   // ------------------------------------------------------------------
@@ -191,10 +213,11 @@ export class BattleEngine {
     if (pending.length > 0) throw new Error(`还有单位没有下指令：${pending.join(', ')}`);
 
     // 自动单位（敌方、自动宝宝）由 AI 决定指令
-    for (const id of state.unitIds) {
+    // 按本回合出手顺序逐个决定：顺序固定，带随机的选目标才可复现
+    for (const id of state.turnOrder) {
       const u = state.units[id]!;
       if (u.alive && u.autoCommand) {
-        state.commands[id] = decideCommand(state, this.skills, this.ai, id);
+        state.commands[id] = decideCommand(this.aiContext(), id);
       }
     }
 
@@ -232,22 +255,25 @@ export class BattleEngine {
     const collected: BattleEvent[] = [];
     this.buffer = collected;
     try {
-      const index = this.findNextActorIndex(state.actionCursor);
-      if (index === -1) {
+      const next = this.peekNextActor();
+      if (!next) {
         this.settleTurn();
       } else {
-        const actor = state.units[state.turnOrder[index]!]!;
+        const { actor } = next;
         if (state.commands[actor.id] === undefined && !actor.autoCommand) {
           // 本回合被复活的手动单位：倒地时没有指令（或指令已作废），暂停等玩家现场下指令
-          state.actionCursor = index;
+          if (next.index !== -1) state.actionCursor = next.index;
           state.awaitingCommandFor = actor.id;
           this.emit({ type: 'CommandRequested', unitId: actor.id });
           return collected;
         }
-        state.actionCursor = index + 1;
+        // 出手顺序里的单位推进游标；队尾补出手的单位从队列里取出
+        if (next.index !== -1) state.actionCursor = next.index + 1;
+        else state.lateQueue.shift();
+        state.actedThisTurn.push(actor.id);
         this.performAction(actor);
         // 每次出手后做胜负判定；没有剩余出手者时进入结算
-        if (!this.checkBattleEnd() && this.findNextActorIndex(state.actionCursor) === -1) {
+        if (!this.checkBattleEnd() && !this.peekNextActor()) {
           this.settleTurn();
         }
       }
@@ -280,6 +306,10 @@ export class BattleEngine {
     const event = { ...input, seq: this.state.eventSeq, turn: this.state.turn } as BattleEvent;
     this.buffer?.push(event);
     this.events.emit(event);
+  }
+
+  private aiContext(): AiContext {
+    return { state: this.state, skills: this.skills, ai: this.ai, rng: this.aiRng };
   }
 
   private execContext(): ExecContext {
@@ -324,6 +354,9 @@ export class BattleEngine {
       this.rng,
     );
     state.actionCursor = 0;
+    state.lateQueue = [];
+    state.actedThisTurn = [];
+    state.aiTargetCounts = emptyTargetCounts();
     state.commands = {};
     state.awaitingCommandFor = null;
     state.phase = 'command';
@@ -331,20 +364,43 @@ export class BattleEngine {
     this.emit({ type: 'CommandPhaseStart', pending: this.listCommandableUnits() });
   }
 
-  /** 从 from 起找下一个仍然存活的出手者在 turnOrder 中的下标；没有则返回 -1 */
-  private findNextActorIndex(from: number): number {
+  /**
+   * 下一个出手者（不改变游标）：先找 turnOrder 里游标之后仍然存活的单位；
+   * 出手顺序走完后，再取队尾补出手队列（本回合被复活、速度位置已过的单位）。
+   * index 是它在 turnOrder 中的下标，来自队尾队列时为 -1。没有则返回 null。
+   */
+  private peekNextActor(): { actor: Unit; index: number } | null {
     const { state } = this;
-    for (let i = from; i < state.turnOrder.length; i++) {
-      if (state.units[state.turnOrder[i]!]!.alive) return i;
+    for (let i = state.actionCursor; i < state.turnOrder.length; i++) {
+      const u = state.units[state.turnOrder[i]!]!;
+      if (u.alive) return { actor: u, index: i };
     }
-    return -1;
+    // 队列里又倒地的单位直接移出（再次被复活时会重新入队）
+    while (state.lateQueue.length > 0) {
+      const u = state.units[state.lateQueue[0]!]!;
+      if (u.alive) return { actor: u, index: -1 };
+      state.lateQueue.shift();
+    }
+    return null;
+  }
+
+  /**
+   * 主目标失效时重选（DESIGN §6.5）：
+   * 玩家的指令和 focus 一方的 AI 按速度顺序取第一个合法目标；
+   * spread 一方的 AI 按权重随机并计入被选次数，否则失效的攻击会全部落到同一个单位身上。
+   */
+  private retarget(actor: Unit, skill: SkillDef): UnitId | null {
+    if (actor.autoCommand && this.ai.targetMode[actor.side] === 'spread') {
+      return pickAiTarget(this.aiContext(), actor, skill);
+    }
+    return pickRetarget(this.state, actor, skill);
   }
 
   /** 一个单位的一次出手 */
   private performAction(actor: Unit): void {
     const { state } = this;
     // 正常情况下每个存活单位都有指令；本回合被复活的自动单位没有，由 AI 现场决定
-    const cmd = state.commands[actor.id] ?? decideCommand(state, this.skills, this.ai, actor.id);
+    const cmd = state.commands[actor.id] ?? decideCommand(this.aiContext(), actor.id);
     this.emit({ type: 'UnitActStart', actorId: actor.id, command: { ...cmd } });
 
     if (cmd.kind === 'defend') {
@@ -371,10 +427,10 @@ export class BattleEngine {
       }
     }
 
-    // 目标在出手开始时重新校验：失效则按速度顺序重选，复活不重选
+    // 目标在出手开始时重新校验：失效则重选，复活不重选
     let primary = state.units[cmd.targetId];
     if (!primary || !isValidTarget(actor, skill, primary)) {
-      const nextId = skill.effect === 'revive' ? null : pickRetarget(state, actor, skill);
+      const nextId = skill.effect === 'revive' ? null : this.retarget(actor, skill);
       if (nextId === null) {
         // 没有任何合法目标：本次出手作废，不扣魔法
         this.emit({
@@ -414,7 +470,12 @@ export class BattleEngine {
       mpAfter: actor.mp,
     });
 
-    executeSkill(this.execContext(), actor, skill, targets);
+    // 被动技能：用普攻出手时（包括技能被改成普攻）判定连击，追加的攻击紧接着打同一目标
+    const extra =
+      skill.id === actor.basicAttackSkillId
+        ? rollExtraHits(this.passives, actor, 'basicAttack', this.rng)
+        : null;
+    executeSkill(this.execContext(), actor, skill, targets, extra);
     this.emit({ type: 'UnitActEnd', actorId: actor.id });
   }
 

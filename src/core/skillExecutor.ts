@@ -9,6 +9,7 @@
 
 import { resolveDamage, resolveHeal, rollHit } from './damage';
 import type { BattleEventInput } from './events';
+import type { ExtraHits } from './passives';
 import type { Rng } from './rng';
 import { applyStatus } from './status';
 import type { AnimType, BattleConfig, BattleState, Delivery, SkillDef, Unit, UnitId } from './types';
@@ -150,7 +151,8 @@ function resolveSeal(ctx: ExecContext, actor: Unit, target: Unit, skill: SkillDe
 
 /**
  * 复活（DESIGN §5.5）：恢复部分气血，魔法保持倒地时的值，不带任何状态。
- * 被复活者在本回合出手顺序里排在施法者之后，本回合还能出手；排在之前则位置已过，本回合不出手。
+ * 被复活者本回合可以行动：速度位置还没到，就在自己的位置出手；位置已经过去，排到本回合队尾。
+ * 每个单位每回合最多出手一次：本回合已经出过手的单位不再出手。
  */
 function resolveRevive(ctx: ExecContext, actor: Unit, target: Unit, skill: SkillDef): void {
   if (target.alive) return;
@@ -160,16 +162,21 @@ function resolveRevive(ctx: ExecContext, actor: Unit, target: Unit, skill: Skill
   target.alive = true;
   target.statuses = [];
   target.defending = false;
-  const order = ctx.state.turnOrder;
-  const actorIndex = order.indexOf(actor.id);
-  const targetIndex = order.indexOf(target.id);
+  const { state } = ctx;
+  const acted = state.actedThisTurn.includes(target.id);
+  const index = state.turnOrder.indexOf(target.id);
+  // actionCursor 指向下一个出手者；下标在它之前说明位置已过（不在出手顺序里的单位同样处理）
+  const passed = index === -1 || index < state.actionCursor;
+  const queuedAtEnd = !acted && passed;
+  if (queuedAtEnd && !state.lateQueue.includes(target.id)) state.lateQueue.push(target.id);
   ctx.emit({
     type: 'UnitRevived',
     unitId: target.id,
     actorId: actor.id,
     hpAfter: target.hp,
     maxHp: target.stats.maxHp,
-    actsThisTurn: actorIndex !== -1 && targetIndex > actorIndex,
+    actsThisTurn: !acted,
+    queuedAtEnd,
   });
 }
 
@@ -189,12 +196,14 @@ function applyEffect(
 /**
  * 执行技能。调用前引擎已经完成：指令回退、目标重选与补足、扣除魔法、发出 SkillCast。
  * @param targets 已确定的目标列表（执行顺序，即 SkillCast.targets）
+ * @param extra 被动技能追加的攻击（连击）：只对单目标伤害技能生效，紧接着打同一目标
  */
 export function executeSkill(
   ctx: ExecContext,
   actor: Unit,
   skill: SkillDef,
   targets: readonly UnitId[],
+  extra: ExtraHits | null = null,
 ): void {
   const units = targets.map((id) => ctx.state.units[id]!);
   const hits = Math.max(1, skill.hits);
@@ -225,12 +234,23 @@ export function executeSkill(
       applyEffect(ctx, actor, target, skill, { stepIndex: 0, stepCount: 1 });
       return;
     }
-    for (let i = 0; i < hits && target.alive; i++) {
+    // 追加攻击计入计划段数；目标已被打死时取消，不发 PassiveTriggered
+    const total = hits + (extra?.hits ?? 0);
+    for (let i = 0; i < total && target.alive; i++) {
+      if (extra && i === hits) {
+        ctx.emit({
+          type: 'PassiveTriggered',
+          unitId: actor.id,
+          passiveId: extra.passive.id,
+          name: extra.passive.name,
+          targetId: target.id,
+        });
+      }
       const killed = resolveHit(ctx, actor, target, skill, {
         stepIndex: i,
-        stepCount: hits,
+        stepCount: total,
         hitIndex: i,
-        hitCount: hits,
+        hitCount: total,
       });
       if (killed) killUnit(ctx, target, actor.id);
     }

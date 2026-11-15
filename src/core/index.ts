@@ -10,4 +10,5 @@ export * from './commands';
 export * from './ai';
 export * from './setup';
 export * from './skillExecutor';
+export * from './passives';
 export * from './battle';

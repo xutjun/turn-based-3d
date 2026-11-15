@@ -10,6 +10,7 @@ export function createUnits(templates: readonly UnitTemplate[], settings: Battle
     slot: { ...t.slot },
     stats: { ...t.stats },
     skillIds: [...t.skillIds],
+    passiveIds: [...(t.passiveIds ?? [])],
     hp: t.stats.maxHp,
     mp: t.stats.maxMp,
     alive: true,

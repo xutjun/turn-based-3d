@@ -222,7 +222,7 @@ export function buildShowcaseScript(units: readonly UnitSnapshot[]): ShowcaseEve
     const maxHp = unit('A1').stats.maxHp;
     const after = Math.round(maxHp * 0.3);
     hp.set('A1', after);
-    push({ type: 'UnitRevived', unitId: 'A1', actorId: 'A4', hpAfter: after, maxHp, actsThisTurn: false });
+    push({ type: 'UnitRevived', unitId: 'A1', actorId: 'A4', hpAfter: after, maxHp, actsThisTurn: false, queuedAtEnd: false });
   }
   end();
 

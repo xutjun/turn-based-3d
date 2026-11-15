@@ -6,6 +6,7 @@ import { AI_CONFIG } from './aiConfig';
 import { BATTLE_CONFIG, DEFAULT_SETTINGS } from './battleConfig';
 import { ENEMY_TEMPLATES } from './enemies';
 import { ALLY_TEMPLATES } from './heroes';
+import { PASSIVES } from './passives';
 import { SKILLS } from './skills';
 
 /**
@@ -17,6 +18,7 @@ export function createDefaultSetup(seed: number, settings: Partial<BattleSetting
   return {
     config: BATTLE_CONFIG,
     skills: SKILLS,
+    passives: PASSIVES,
     units: createUnits([...ALLY_TEMPLATES, ...ENEMY_TEMPLATES], merged),
     settings: merged,
     ai: AI_CONFIG,

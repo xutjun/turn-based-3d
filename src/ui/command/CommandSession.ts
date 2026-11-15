@@ -250,9 +250,14 @@ export class CommandSession {
     this.enterTargeting(unit, { kind: 'attack' });
   }
 
+  /** 当前单位有没有主动技能（物理型宝宝没有，界面不显示“技能”） */
+  get hasSkills(): boolean {
+    return (this.unit?.skillIds.length ?? 0) > 0;
+  }
+
   /** 选“技能”：打开技能列表 */
   openSkills(): void {
-    if (this.currentMode === 'idle') return;
+    if (this.currentMode === 'idle' || !this.hasSkills) return;
     this.action = null;
     this.hovered = null;
     this.currentMode = 'skills';

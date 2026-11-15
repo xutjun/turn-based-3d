@@ -44,9 +44,9 @@ export class BattleStage implements Stage {
     return this.fx.projectile(kind, from, to, color, duration);
   }
 
-  burst(kind: BurstKind, at: Point3, color: number, duration: number): Promise<void> {
+  burst(kind: BurstKind, at: Point3, color: number, duration: number, scale = 1): Promise<void> {
     this.cue(BURST_SOUND[kind]);
-    return this.fx.burst(kind, at, color, duration);
+    return this.fx.burst(kind, at, color, duration, scale);
   }
 
   slash(at: Point3, variant: number, color: number, duration: number, scale: number): Promise<void> {

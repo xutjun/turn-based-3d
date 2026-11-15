@@ -404,7 +404,7 @@ export class FxSystem {
   // ------------------------------------------------------------------
 
   /** 在某点爆开 / 落下 / 升起的光效 */
-  burst(kind: BurstKind, at: Point3, color: number, duration: number): Promise<void> {
+  burst(kind: BurstKind, at: Point3, color: number, duration: number, scale = 1): Promise<void> {
     switch (kind) {
       case 'impact':
         return this.impact(at, color, duration, false);
@@ -413,7 +413,7 @@ export class FxSystem {
       case 'thunder':
         return this.thunder(at, color, duration);
       case 'pillarDown':
-        return this.firePillar(at, color, duration);
+        return this.firePillar(at, color, duration, scale);
       case 'pillarUp':
         return this.healPillar(at, color, duration);
       case 'reviveLight':
@@ -505,8 +505,8 @@ export class FxSystem {
       });
   }
 
-  /** 火柱 / 通用的法术光柱：从地面喷起，伴随上升的火星 */
-  private firePillar(at: Point3, color: number, duration: number): Promise<void> {
+  /** 火柱 / 通用的法术光柱：从地面喷起，伴随上升的火星。scale 为规模倍率（法术型宝宝的小型火柱 < 1） */
+  private firePillar(at: Point3, color: number, duration: number, scale = 1): Promise<void> {
     const outer = this.pillar(color, 1.15);
     const inner = this.pillar(0xffffff, 0.45);
     const ring = this.decal(ringTexture(), color, 2.2, at.x, at.z);
@@ -514,29 +514,29 @@ export class FxSystem {
     outer.position.set(at.x, 0, at.z);
     inner.position.set(at.x, 0, at.z);
     glow.position.set(at.x, 0.4, at.z);
-    this.flashLight(at.x, 1.2, at.z, color, 26);
-    const h = FX_CONFIG.pillarHeight;
+    this.flashLight(at.x, 1.2, at.z, color, 26 * scale);
+    const h = FX_CONFIG.pillarHeight * scale;
     return this.scheduler
       .tween(duration, (t) => {
         const rise = EASE.out(Math.min(1, t * 5));
         const fade = t < 0.35 ? 1 : 1 - (t - 0.35) / 0.65;
-        const r = 0.3 + 0.4 * Math.sin(Math.PI * Math.min(1, t * 1.4));
+        const r = (0.3 + 0.4 * Math.sin(Math.PI * Math.min(1, t * 1.4))) * scale;
         outer.scale.set(r, h * rise, r);
         outer.rotation.y = t * 5;
         outer.material.opacity = fade;
         inner.scale.set(r * 0.45, h * 0.8 * rise, r * 0.45);
         inner.rotation.y = -t * 7;
         inner.material.opacity = fade * 0.8;
-        ring.scale.setScalar(0.4 + 1.3 * EASE.out(t));
+        ring.scale.setScalar((0.4 + 1.3 * EASE.out(t)) * scale);
         ring.material.opacity = fade;
-        glow.scale.setScalar(1.4 + 1.6 * EASE.out(t));
+        glow.scale.setScalar((1.4 + 1.6 * EASE.out(t)) * scale);
         glow.material.opacity = fade;
         if (t < 0.6) {
-          const n = this.emitCount(70);
+          const n = this.emitCount(70 * scale);
           this.c.setHex(color);
           for (let i = 0; i < n; i++) {
             const a = Math.random() * TAU;
-            const d = Math.random() * 0.45;
+            const d = Math.random() * 0.45 * scale;
             this.spawn(at.x + Math.cos(a) * d, rnd(0.1, 1.2), at.z + Math.sin(a) * d, rnd(-0.4, 0.4), rnd(2, 4.5), rnd(-0.4, 0.4), rnd(0.35, 0.7), rnd(0.08, 0.18), this.c, 1.8, PARTICLE_CELL.ember, 0, 0.8, -0.4);
           }
         }

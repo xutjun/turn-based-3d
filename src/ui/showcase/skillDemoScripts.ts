@@ -146,7 +146,7 @@ class Script {
     const maxHp = this.units.get(targetId)!.stats.maxHp;
     const after = Math.max(1, Math.floor(maxHp * ratio));
     this.hp.set(targetId, after);
-    return this.push({ type: 'UnitRevived', unitId: targetId, actorId: this.actor, hpAfter: after, maxHp, actsThisTurn: false });
+    return this.push({ type: 'UnitRevived', unitId: targetId, actorId: this.actor, hpAfter: after, maxHp, actsThisTurn: false, queuedAtEnd: false });
   }
 
   end(): this {
@@ -196,11 +196,11 @@ export function buildSkillDemos(units: readonly UnitSnapshot[]): SkillDemo[] {
     s.strike('E0', 1, 9999, {}, 1);
     s.end();
   });
-  add('combo_pet', '物理系', '连斩·影狼', '没有武器的宝宝：同样 3 种扑击轨迹', (s) => {
-    s.cast('A5', 'combo_slash', 'melee', 'comboSlash', ['E1'], { stepCount: 3, hitCount: 3 });
-    s.strike('E1', 0, 71, {}, 0);
-    s.strike('E1', 1, 66, {}, 1);
-    s.strike('E1', 2, 108, { crit: true }, 2);
+  add('double_strike', '宝宝', '连击·影狼', '物理型宝宝的被动：普攻后不返回，头顶飘出“连击”，紧接着对同一目标再打一次', (s) => {
+    s.cast('A5', 'basic_physical', 'melee', 'meleeStrike', ['E1'], { stepCount: 2, hitCount: 2 });
+    s.strike('E1', 0, 104, {}, 0);
+    s.push({ type: 'PassiveTriggered', unitId: 'A5', passiveId: 'double_strike', name: '连击', targetId: 'E1' });
+    s.strike('E1', 1, 152, { crit: true }, 1);
     s.end();
   });
   add('whirlwind', '物理系', '旋风斩 ×7', '连环突进切入 7 个目标，拖尾光轨，镜头跟随，最后一击慢镜头', (s) => {
@@ -252,10 +252,11 @@ export function buildSkillDemos(units: readonly UnitSnapshot[]): SkillDemo[] {
     for (const id of dead) s.die(id);
     s.end();
   });
-  add('group_spell_fire', '法术系', '群体法术·烈焰', '骨龙幼崽施放的火系版本：6 道火柱同帧爆发', (s) => {
-    s.cast('A7', 'group_spell_fire', 'cast', 'groupSpell', SIX, { element: 'fire' });
-    const dmg = [52, 78, 81, 77, 86, 84];
-    SIX.forEach((id, i) => s.hit(id, 0, dmg[i]!, { magic: true }));
+  add('triple_spell', '宝宝', '三重魂火 ×3', '法术型宝宝的主动技能：群体法术的缩小版，3 道小火柱同帧爆发', (s) => {
+    const three = ['E6', 'E5', 'E9'];
+    s.cast('A7', 'triple_spell', 'cast', 'groupSpellSmall', three, { element: 'fire' });
+    const dmg = [92, 88, 131];
+    three.forEach((id, i) => s.hit(id, 0, dmg[i]!, { magic: true, crit: i === 2 }));
     s.end();
   });
   add('single_spell', '法术系', '单体法术·炎爆', '蓄力后火球飞向目标并爆炸', (s) => {

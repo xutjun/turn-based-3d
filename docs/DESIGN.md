@@ -240,7 +240,7 @@ export interface BattleState {
   unitIds: UnitId[];                    // 固定顺序：A0..A9, E0..E9
   turnOrder: UnitId[];                  // 本回合出手顺序（回合开始时生成，包含倒地的友方，见 §8.2）；回合内不变
   actionCursor: number;                 // 下一个出手者在 turnOrder 中的下标
-  lateQueue: UnitId[];                  // 队尾补出手队列：复活时速度位置已过的单位，按复活先后排列（§5.5）
+  lateQueue: UnitId[];                  // 队尾补出手队列：复活时速度位置已过的单位，按复活先后排列；出手或再次倒地后移出（§5.5）
   actedThisTurn: UnitId[];              // 本回合已经出过手的单位（每回合最多出手一次）
   aiTargetCounts: Record<Side, Record<AiTargetKind, Record<UnitId, number>>>;
                                         // 本回合各方 AI 已把某单位选为目标的次数，回合开始清零（§8.4）
@@ -276,7 +276,7 @@ export type AiTargetKind = 'attack' | 'seal' | 'heal';
 export type AiTargetMode = 'focus' | 'spread';   // focus = 固定选“最优”目标；spread = 带权重的随机 + 分散
 
 export interface AiConfig {
-  healHpThreshold: number;      // 友军 hp 比例低于该值时治疗，默认 0.6
+  healHpThreshold: number;      // 友军 hp 比例低于该值时治疗，默认 0.4（步骤 9 由 0.6 下调，§9.4 V5）
   aoeMinTargets: number;        // 存活对方单位 ≥ 该值时优先用群体技能，默认 3
   targetMode: Record<Side, AiTargetMode>;  // 默认 { enemy: 'spread', ally: 'focus' }，见 §8.4
   spread: {
@@ -454,20 +454,20 @@ UnitActEnd
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
 | `basic_physical` | 普攻 | common | 0 | damage | physical | 敌·存活 | 1 | single | 1 | 1.0 | 0.95 | 是 | meleeStrike / bowShot / — | none | — |
 | `basic_magic` | 法术普攻 | common | 0 | damage | magic | 敌·存活 | 1 | single | 1 | 1.0 | 0.95 | 否 | — / — / castBolt | fire | — |
-| `combo_slash` | 连斩 | physical | 40 | damage | physical | 敌·存活 | 1 | multiHit | 3 | 0.6 | 1.0 | 是 | comboSlash / tripleShot / — | none | 近战单位使用 |
-| `triple_shot` | 三连射 | physical | 40 | damage | physical | 敌·存活 | 1 | multiHit | 3 | 0.6 | 1.0 | 是 | comboSlash / tripleShot / — | none | 连斩的弓箭手版本：数值相同，远程单位使用 |
-| `whirlwind` | 旋风斩 | physical | 80 | damage | physical | 敌·存活 | 7 | sequential | 1 | 0.7 | 1.0 | 是 | whirlwind / arrowRain / — | none | `sequenceOrder: 'speedDesc'`；近战单位使用 |
-| `arrow_rain` | 箭雨 | physical | 80 | damage | physical | 敌·存活 | 7 | sequential | 1 | 0.7 | 1.0 | 是 | whirlwind / arrowRain / — | none | 旋风斩的弓箭手版本：数值相同，远程单位使用 |
-| `group_spell` | 群体法术·天雷 | magic | 80 | damage | magic | 敌·存活 | 6 | simultaneous | 1 | 0.8 | 1.0 | 否 | — / — / groupSpell | thunder | — |
-| `triple_spell` | 三重魂火 | magic | 待定 | damage | magic | 敌·存活 | 3 | simultaneous | 1 | 0.8 | 1.0 | 否 | — / — / groupSpellSmall | fire | 法术型宝宝的主动技能（步骤 9 新增） |
-| `single_spell` | 单体法术·炎爆 | magic | 50 | damage | magic | 敌·存活 | 1 | single | 1 | 1.6 | 1.0 | 否 | — / — / singleSpell | fire | SPEC §7.1 中的“可选补充” |
-| `seal` | 封印 | seal | 60 | seal | magic | 敌·存活且未被封印 | 1 | single | 1 | 0 | 0.75 | 否 | — / — / sealChain | seal | `status: { type: 'seal', duration: 3 }` |
-| `group_heal` | 群体治疗 | heal | 80 | heal | magic | 友·存活 | 3 | simultaneous | 1 | 1.0 | 1.0 | 否 | — / — / groupHeal | heal | — |
-| `revive` | 复活 | heal | 120 | revive | magic | 友·死亡 | 1 | single | 1 | 0 | 1.0 | 否 | — / — / revive | heal | `reviveHpRatio: 0.3` |
+| `combo_slash` | 连斩 | physical | 30 | damage | physical | 敌·存活 | 1 | multiHit | 3 | 0.6 | 1.0 | 是 | comboSlash / tripleShot / — | none | 近战单位使用 |
+| `triple_shot` | 三连射 | physical | 30 | damage | physical | 敌·存活 | 1 | multiHit | 3 | 0.6 | 1.0 | 是 | comboSlash / tripleShot / — | none | 连斩的弓箭手版本：数值相同，远程单位使用 |
+| `whirlwind` | 旋风斩 | physical | 60 | damage | physical | 敌·存活 | 7 | sequential | 1 | 0.7 | 1.0 | 是 | whirlwind / arrowRain / — | none | `sequenceOrder: 'speedDesc'`；近战单位使用 |
+| `arrow_rain` | 箭雨 | physical | 60 | damage | physical | 敌·存活 | 7 | sequential | 1 | 0.7 | 1.0 | 是 | whirlwind / arrowRain / — | none | 旋风斩的弓箭手版本：数值相同，远程单位使用 |
+| `group_spell` | 群体法术·天雷 | magic | 60 | damage | magic | 敌·存活 | 6 | simultaneous | 1 | 0.8 | 1.0 | 否 | — / — / groupSpell | thunder | — |
+| `triple_spell` | 三重魂火 | magic | 30 | damage | magic | 敌·存活 | 3 | simultaneous | 1 | 0.8 | 1.0 | 否 | — / — / groupSpellSmall | fire | 法术型宝宝的主动技能（步骤 9 新增） |
+| `single_spell` | 单体法术·炎爆 | magic | 40 | damage | magic | 敌·存活 | 1 | single | 1 | 1.6 | 1.0 | 否 | — / — / singleSpell | fire | SPEC §7.1 中的“可选补充” |
+| `seal` | 封印 | seal | 40 | seal | magic | 敌·存活且未被封印 | 1 | single | 1 | 0 | 0.75 | 否 | — / — / sealChain | seal | `status: { type: 'seal', duration: 3 }` |
+| `group_heal` | 群体治疗 | heal | 60 | heal | magic | 友·存活 | 3 | simultaneous | 1 | 1.0 | 1.0 | 否 | — / — / groupHeal | heal | — |
+| `revive` | 复活 | heal | 100 | revive | magic | 友·死亡 | 1 | single | 1 | 0 | 1.0 | 否 | — / — / revive | heal | `reviveHpRatio: 0.3` |
 
 > 步骤 2 补充：`triple_shot`、`arrow_rain` 不是新技能，而是 SPEC §7.1 里连斩 / 旋风斩的“弓箭手版本”。它们在技能表里各占一行（用原技能改名称、说明得到，数值由测试保证相同），这样指令面板、日志、飘字和技能演示模式显示的名称完全一致。
 >
-> 步骤 9：删除 `group_spell_fire`（原来只有骨龙幼崽使用，宝宝改型后没有使用者）；新增 `triple_spell`。上表的 MP 列为步骤 8 的数值，步骤 9 调整魔法量后以 `skills.ts` 为准并回填本表（§9.4 V4）。
+> 步骤 9：删除 `group_spell_fire`（原来只有骨龙幼崽使用，宝宝改型后没有使用者）；新增 `triple_spell`。上表的 MP 列是步骤 9 下调后的数值（原值：连斩 / 三连射 40，旋风斩 / 箭雨 / 群体法术 / 群体治疗 80，单体法术 50，封印 60，复活 120；见 §9.4 V4）。
 
 单体治疗（SPEC §7.1 中的“可选补充”）本期不做，表结构已能支持（`effect: heal, pattern: single`）。
 
@@ -580,7 +580,7 @@ amount = round(A.magAtk × S.multiplier × v × crit)
   - 位置在复活施法者**之后**（速度更慢；同速时由回合开始时的随机排序决定）：本回合轮到它的位置时出手。`actsThisTurn = true`，`queuedAtEnd = false`。
   - 位置在施法者**之前**（速度更快，那个位置已经过去）：加入 `lateQueue`，在 `turnOrder` 全部走完之后出手；同一回合有多个这样的单位时，按复活的先后顺序。`actsThisTurn = true`，`queuedAtEnd = true`。
   - **每回合最多出手一次**：本回合已经出过手（在 `actedThisTurn` 里）、之后被击倒又被复活的单位，本回合不再出手。`actsThisTurn = false`，`queuedAtEnd = false`。
-  - 排在队尾的单位如果在轮到它之前又被击倒，轮到时直接跳过；如果再次被复活，仍然保留原来的队尾位置（不重复入队）。
+  - 排在队尾的单位如果在轮到它之前又被击倒，轮到时直接跳过并移出队列；还在队列里时再次被复活，保留原来的位置（不重复入队），已经移出后再被复活则重新排到队尾。
   - `turnOrder` 本身在回合内不改变，所以目标补足、重选用的“速度顺序”（§6.2）不受影响。
   - 本回合出手用的指令：见 §8.2 的“复活单位的指令”。
 - 下一回合起正常下指令、参与排序。
@@ -748,9 +748,11 @@ position(side, row, col) = frontCenter(side)
 2. 清除所有 `defending`。
 3. 发出 `TurnEnd`；再次执行胜负判定（防御性，默认规则下不会在此触发）；进入下一回合的 TurnStart → command。
 
-### 8.3 初始阵容（`heroes.ts` / `enemies.ts`，下表为步骤 8 平衡后的数值）
+### 8.3 初始阵容（`heroes.ts` / `enemies.ts`，下表为步骤 9 再平衡后的数值）
 
-> 步骤 9：宝宝的职业 / 技能两列已按 §4.6 更新。魔法值、技能消耗和敌方数值要等步骤 9 的代码完成、跑过批量模拟后才能定，届时回填下面三张表和 §4.2 的 MP 列（§9.4 V4、V5）；在那之前表里的数字仍是步骤 8 的。
+> 步骤 9 的再平衡（§9.4 V4、V5）：友方人物魔法 300/300/600/500/600 → 600/600/800/500/800，法术型宝宝 300/250 → 400/400；技能消耗下调（§4.2）；
+> 敌方气血约 ×1.18、物伤 / 法伤约 ×1.05；治疗阈值 0.6 → 0.4。友方的气血、伤害、防御、速度没有改。
+> 1000 个种子的自动战斗：友方胜率 60.3%，回合数中位 10（10% 分位 7，90% 分位 16），72.7% 的战斗在 8~14 回合内。
 
 > 步骤 8 的平衡：友方物伤 / 法伤约 ×1.3；敌方气血约 ×0.7、物伤 / 法伤约 ×1.9；Boss 气血 4000 → 3200、物伤 220 → 340。
 > 双方输出都提高、敌方变脆，战斗从平均 27 回合缩短到 11 回合。防御、速度、魔法、技能表、公式、规则都没有改。
@@ -759,41 +761,41 @@ position(side, row, col) = frontCenter(side)
 **友方人物（后排）**
 | id | 格子 | 名称 | 职业 | 武器 | attackMode | 普攻 | HP | MP | 物伤 | 法伤 | 防御 | 速度 |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
-| A0 | 1,0 | 夜隼 | physical（自由职业） | 弓 bow | ranged | basic_physical | 950 | 300 | 195 | 50 | 45 | 110 |
-| A1 | 1,1 | 烬刃 | physical | 刀 blade | melee | basic_physical | 1200 | 300 | 210 | 50 | 60 | 90 |
-| A2 | 1,2 | 雷咒 | magic | 法杖 staff | cast | basic_magic | 850 | 600 | 50 | 220 | 35 | 95 |
+| A0 | 1,0 | 夜隼 | physical（自由职业） | 弓 bow | ranged | basic_physical | 950 | 600 | 195 | 50 | 45 | 110 |
+| A1 | 1,1 | 烬刃 | physical | 刀 blade | melee | basic_physical | 1200 | 600 | 210 | 50 | 60 | 90 |
+| A2 | 1,2 | 雷咒 | magic | 法杖 staff | cast | basic_magic | 850 | 800 | 50 | 220 | 35 | 95 |
 | A3 | 1,3 | 缚魂 | seal | 剑 sword | melee | basic_physical | 1000 | 500 | 145 | 155 | 50 | 120 |
-| A4 | 1,4 | 守誓 | heal | 枪 spear | melee | basic_physical | 1000 | 600 | 130 | 180 | 50 | 85 |
+| A4 | 1,4 | 守誓 | heal | 枪 spear | melee | basic_physical | 1000 | 800 | 130 | 180 | 50 | 85 |
 
 **友方宝宝（前排，位于主人身前）**
 | id | 格子 | 名称/形象 | 主人 | 类型（职业） | attackMode | 普攻 | 主动技能 | 被动技能 | HP | MP | 物伤 | 法伤 | 防御 | 速度 |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
 | A5 | 0,0 | 影狼·灰 | A0 | 物理型 physical | melee | basic_physical | — | double_strike | 650 | 150 | 145 | 25 | 40 | 105 |
 | A6 | 0,1 | 影狼·赤 | A1 | 物理型 physical | melee | basic_physical | — | double_strike | 700 | 150 | 150 | 25 | 40 | 100 |
-| A7 | 0,2 | 骨龙幼崽 | A2 | 法术型 magic | cast | basic_magic | triple_spell | — | 600 | 300 | 40 | 155 | 30 | 90 |
-| A8 | 0,3 | 幽灵 | A3 | 法术型 magic | cast | basic_magic | triple_spell | — | 600 | 250 | 40 | 115 | 30 | 115 |
+| A7 | 0,2 | 骨龙幼崽 | A2 | 法术型 magic | cast | basic_magic | triple_spell | — | 600 | 400 | 40 | 155 | 30 | 90 |
+| A8 | 0,3 | 幽灵 | A3 | 法术型 magic | cast | basic_magic | triple_spell | — | 600 | 400 | 40 | 115 | 30 | 115 |
 | A9 | 0,4 | 魔偶 | A4 | 物理型 physical | melee | basic_physical | — | double_strike | 900 | 250 | 105 | 115 | 60 | 70 |
 
 **敌方**
 | id | 格子 | 名称 | 级别 | 职业 | attackMode | 普攻 | 技能 | HP | MP | 物伤 | 法伤 | 防御 | 速度 |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|
-| E0 | 0,0 | 骷髅兵 | minion | physical | melee | basic_physical | — | 420 | 0 | 230 | 0 | 40 | 80 |
-| E1 | 0,1 | 骷髅兵 | minion | physical | melee | basic_physical | — | 420 | 0 | 230 | 0 | 40 | 82 |
-| E2 | 0,2 | 堕落骑士 | elite | physical | melee | basic_physical | combo_slash | 770 | 200 | 285 | 55 | 70 | 75 |
-| E3 | 0,3 | 骷髅兵 | minion | physical | melee | basic_physical | — | 420 | 0 | 230 | 0 | 40 | 84 |
-| E4 | 0,4 | 骷髅兵 | minion | physical | melee | basic_physical | — | 420 | 0 | 230 | 0 | 40 | 86 |
-| E5 | 1,0 | 恶魔祭司·缚 | elite | seal | cast | basic_magic | seal | 560 | 400 | 115 | 245 | 40 | 105 |
-| E6 | 1,1 | 亡灵法师 | elite | magic | cast | basic_magic | group_spell, single_spell | 525 | 500 | 75 | 300 | 35 | 92 |
-| E7 | 1,2 | 深渊魔将 | boss | physical | melee | basic_physical | combo_slash, whirlwind | 3200 | 600 | 340 | 190 | 90 | 70 |
-| E8 | 1,3 | 堕落骑士 | elite | physical | melee | basic_physical | combo_slash | 770 | 200 | 285 | 55 | 70 | 78 |
-| E9 | 1,4 | 恶魔祭司·愈 | elite | heal | cast | basic_magic | group_heal | 560 | 500 | 115 | 245 | 40 | 88 |
+| E0 | 0,0 | 骷髅兵 | minion | physical | melee | basic_physical | — | 495 | 0 | 240 | 0 | 40 | 80 |
+| E1 | 0,1 | 骷髅兵 | minion | physical | melee | basic_physical | — | 495 | 0 | 240 | 0 | 40 | 82 |
+| E2 | 0,2 | 堕落骑士 | elite | physical | melee | basic_physical | combo_slash | 910 | 200 | 300 | 55 | 70 | 75 |
+| E3 | 0,3 | 骷髅兵 | minion | physical | melee | basic_physical | — | 495 | 0 | 240 | 0 | 40 | 84 |
+| E4 | 0,4 | 骷髅兵 | minion | physical | melee | basic_physical | — | 495 | 0 | 240 | 0 | 40 | 86 |
+| E5 | 1,0 | 恶魔祭司·缚 | elite | seal | cast | basic_magic | seal | 660 | 400 | 120 | 255 | 40 | 105 |
+| E6 | 1,1 | 亡灵法师 | elite | magic | cast | basic_magic | group_spell, single_spell | 620 | 500 | 80 | 315 | 35 | 92 |
+| E7 | 1,2 | 深渊魔将 | boss | physical | melee | basic_physical | combo_slash, whirlwind | 3780 | 600 | 355 | 200 | 90 | 70 |
+| E8 | 1,3 | 堕落骑士 | elite | physical | melee | basic_physical | combo_slash | 910 | 200 | 300 | 55 | 70 | 78 |
+| E9 | 1,4 | 恶魔祭司·愈 | elite | heal | cast | basic_magic | group_heal | 660 | 500 | 120 | 255 | 40 | 88 |
 
 ### 8.4 AI 规则（`ai.ts`，敌方与自动宝宝共用，阵营相对）
 AI 在 `beginExecution()` 时、基于当时的状态，**按本回合出手顺序逐个**为 `autoCommand` 单位决定指令（顺序固定，结果才可复现）；出手时目标若失效，按 §6.5 处理。只考虑当前可用（MP 足够且未被封印）的技能。
 
-**选什么技能**（步骤 9 未改）
+**选什么技能**（规则步骤 9 未改；只把治疗阈值 `healHpThreshold` 由 0.6 调到 0.4，§9.4 V5）
 - **恢复系**：
-  1. 存在存活友军 `hp/maxHp < healHpThreshold (0.6)` 且有群体治疗 → 群体治疗。
+  1. 存在存活友军 `hp/maxHp < healHpThreshold (0.4)` 且有群体治疗 → 群体治疗。
   2. 否则存在倒地友军且有复活（敌人没有复活）→ 复活。
   3. 否则普攻。
 - **封印系**：存在存活、未被封印、拥有主动技能的对方单位，且有封印 → 封印；否则普攻。
@@ -858,7 +860,7 @@ weight(T) = baseWeight × repeatDecay ^ n(T) × 加权(T)
 - **A7 指令顺序与宝宝自动**：人物、宝宝交替下指令；`petAutoCommand` 默认 false（手动）。
 - **A8 随机数**：所有随机通过可注入种子的 RNG，保证测试可复现；正式游戏用时间戳作为种子。
 - **A9 无回合上限**：最低伤害为 1 且 MP 有限，战斗一定会结束，不设平局。
-- **A10 数值**：§8.3 的数值已在步骤 8 调过平衡，只改了配置表里的数，没有改规则和公式。
+- **A10 数值**：§8.3 的数值在步骤 8、步骤 9 调过平衡，只改了配置表里的数，没有改公式。
 - **A11 AI 细节**：阈值和选目标的权重见 `aiConfig.ts`；AI 不使用防御。
 
 ### 9.3 步骤 8 的调整与偏差
@@ -871,19 +873,25 @@ weight(T) = baseWeight × repeatDecay ^ n(T) × 加权(T)
 - **S7 音效**：`assets/audio/SoundEngine.ts` 用 Web Audio 合成 13 种音效和环境低频嗡鸣。第一次用户操作后才创建 AudioContext；音效由舞台在动作开始时触发（`render/units/soundCues.ts`），长度按战斗倍速缩短，跳过动画时不播放战斗音效；同一种音效 45 毫秒内只响一次，同时最多 14 个；标签页在后台时暂停。
 - **S8 调试接口**：`window.__perf()`（性能快照）、`window.__capture(time)`（固定时间点截帧）、地址参数 `merge=0`、`quality=low`。
 
-### 9.4 步骤 9（v0.2）的规则调整与待确认的取舍
+### 9.4 步骤 9（v0.2）的规则调整与取舍（取舍 a~d 已于 2026-11-15 确认）
 - **V1 敌方不集火**：敌方 AI 选目标改为带权重的随机 + 同回合衰减（§8.4），出手时的目标重选也一样（§6.5）。SPEC §8 原来的“优先攻击残血 / 优先封印法术恢复职业 / 优先治疗低血量”改成了小幅加权。
   - 取舍 a：**只有敌方改成 `spread`，友方的自动出手（自动宝宝、自动战斗里的人物）仍然是 `focus`**。理由：需求针对的是敌方；友方自动出手是代替玩家操作，集火残血是合理打法；也符合“优先调敌方”。两边都是配置项（`targetMode`），可以改。
   - 取舍 b：只统计主目标，攻击 / 封印 / 治疗分别计数。
   - 取舍 c：AI 用独立的随机序列。
-  - 统计口径（`npm run balance`）：**被集火率** = 所有“敌方至少有一次单体出手的回合”里，存在某个友方单位在该回合被敌方单体出手（普攻、连斩、单体法术，一次出手算一次，不按段数）选中 ≥ 3 次的回合占比；同时给出“每回合单个友方被单体出手的最大次数”的平均值和分布。改 AI 之前先用同一口径跑一遍旧规则，作为对比。
+  - 统计口径（`npm run balance`）：**被集火率** = 所有“敌方至少有一次单体出手的回合”里，存在某个友方单位在该回合被敌方单体出手（普攻、连斩、单体法术，一次出手算一次，不按段数）选中 ≥ 3 次的回合占比；同时给出“每回合单个友方被单体出手的最大次数”的平均值和分布。
+  - 结果（1000 个种子，同一口径）：被集火率 12.8% → 0.6%；只看敌方单体出手 ≥ 3 次的回合，68.7% → 3.6%；每回合最大次数平均 1.58 → 1.12。敌方封印目标由“A2 79.5% / A4 20.5%”变为 7 个单位各 8%~20%。
 - **V2 复活当回合可行动**：原规则（U8）是有意设计成“位置已过就不出手”，不是代码缺陷；默认阵容里治疗师速度 85，比她快的单位有 8 个，所以绝大多数被复活的单位当回合都被跳过。现在改为排到队尾。
   - 取舍 d：**每个单位每回合最多出手一次**。已经出过手、被击倒后又被复活的单位不排到队尾，否则它一回合能出手两次。
   - 敌方复活：敌人被击败即消失、没有复活技能（U7、U10 不变），所以默认规则下不存在敌方复活。引擎的分支是通用的（`autoCommand` 单位由 AI 决定），测试用自动宝宝被复活的情况覆盖“AI 现场决定指令”。
-- **V3 宝宝改型**：见 §4.5、§4.6。删除 `group_spell_fire`，新增 `triple_spell`、被动技能表、`PassiveTriggered` 事件、`groupSpellSmall` 动画类型。连击的判定时机、第一击打死目标时取消第二击，见 §4.5。
-- **V4 友方魔法量**：提高友方人物和宝宝的 `maxMp`，并适当下调技能消耗；具体数值跑批量模拟后确定并回填 §4.2、§8.3。敌方魔法如有同样问题一并调整。
+- **V3 宝宝改型**：见 §4.5、§4.6。删除 `group_spell_fire` 的技能条目（火柱特效代码保留，`triple_spell` 正在复用），新增 `triple_spell`、被动技能表、`PassiveTriggered` 事件、`groupSpellSmall` 动画类型。连击的判定时机、第一击打死目标时取消第二击，见 §4.5。
+- **V4 友方魔法量**：提高友方人物和法术型宝宝的 `maxMp`，并下调技能消耗（数值见 §4.2、§8.3）。物理型宝宝没有主动技能，魔法值保留原值、没有用处。敌方魔法值没有改（消耗下调后敌方的魔法不足占比 6.8% → 1.0%）。
   - 统计口径：**魔法不足占比** = 友方“拥有主动技能、未被封印、但 MP 不够用任何一个主动技能，因而只能普攻”的出手次数 ÷ 友方拥有主动技能的单位的全部出手次数。物理型宝宝没有主动技能，不计入分子和分母（计入会把比例冲淡）；汇报时同时给出按“友方全部出手”做分母的数字。目标是前一个口径 < 10%。
-- **V5 再平衡**：优先调敌方数值，使友方自动战斗胜率 50%~70%、回合数 8~14 占多数，封印 / 治疗 / 复活仍有使用；至少 500 个种子。不改伤害公式、出手排序、胜负判定。
+  - 结果（1000 个种子）：39.6% → 0.9%（有主动技能的单位的出手）；39.6% → 0.6%（友方全部出手）。
+- **V5 再平衡**：敌方不集火、友方魔法够用之后，不调数值时友方胜率到了 93%。调整只动敌方数值和一个 AI 阈值：
+  - 敌方气血约 ×1.18、物伤 / 法伤约 ×1.05（§8.3）。
+  - `healHpThreshold` 0.6 → 0.4：敌方火力分散后，友方总有人气血低于 60%，治疗师每回合都在治疗、几乎从不复活（复活 0.05 次 / 场）。阈值下调后复活回到 0.47 次 / 场。这个阈值敌我共用。
+  - 结果（1000 个种子）：友方胜率 60.3%，回合数中位 10、平均 11.1，8~14 回合占 72.7%（步骤 8 是 83.7%，分布变宽了）；每场封印命中 5.1 次、治疗 6.4 次、复活 0.47 次。
+  - 不改伤害公式、出手排序、胜负判定。
 
 ---
 

@@ -32,15 +32,25 @@ describe('完整 10v10 战斗', () => {
       let active: string | null = null;
       let order: string[] = [];
       let cursor = -1;
+      let late: string[] = []; // 本回合被复活、排到队尾的单位（按复活先后）
+      let acted = new Set<string>();
       for (const e of events) {
         if (e.type === 'TurnStart') {
           expect(active).toBeNull();
           order = e.turnOrder;
           cursor = -1;
+          late = [];
+          acted = new Set();
+        } else if (e.type === 'UnitRevived') {
+          if (e.queuedAtEnd && !late.includes(e.unitId)) late.push(e.unitId);
         } else if (e.type === 'UnitActStart') {
           expect(active).toBeNull(); // 上一个单位必须已经结束
           active = e.actorId;
-          const index = order.indexOf(e.actorId);
+          expect(acted.has(e.actorId)).toBe(false); // 每回合最多出手一次
+          acted.add(e.actorId);
+          // 队尾补出手的单位排在整个出手顺序之后，彼此按复活先后
+          const lateIndex = late.indexOf(e.actorId);
+          const index = lateIndex === -1 ? order.indexOf(e.actorId) : order.length + lateIndex;
           expect(index).toBeGreaterThan(cursor); // 顺序只能往后走，不能重复
           cursor = index;
         } else if (e.type === 'UnitActEnd') {
@@ -103,24 +113,29 @@ describe('完整 10v10 战斗', () => {
     }
   });
 
-  const ALL_SKILLS = ['combo_slash', 'triple_shot', 'whirlwind', 'arrow_rain', 'group_spell', 'group_spell_fire', 'single_spell', 'seal', 'group_heal', 'revive'];
+  const ALL_SKILLS = ['combo_slash', 'triple_shot', 'whirlwind', 'arrow_rain', 'group_spell', 'triple_spell', 'single_spell', 'seal', 'group_heal', 'revive'];
 
-  it('整场自动战斗里每个技能都会出现（种子 64、66 的单场内十个技能全部出现）', () => {
-    for (const seed of [64, 66]) {
+  it('整场自动战斗里每个技能都会出现（种子 6、15 的单场内十个技能全部出现）', () => {
+    for (const seed of [6, 15]) {
       const used = new Set(ofType(playDefault(seed), 'SkillCast').map((c) => c.skillId));
       for (const id of ALL_SKILLS) expect(used.has(id), `种子 ${seed}：${id}`).toBe(true);
     }
   });
 
-  it('封印会递减到期，倒地的友方会被复活并重新出手', () => {
-    const events = playDefault(64);
+  it('封印会递减到期，倒地的友方会被复活，并在复活的当回合出手', () => {
+    const events = playDefault(6);
     expect(ofType(events, 'StatusApplied').length).toBeGreaterThan(0);
     expect(ofType(events, 'StatusTicked').length).toBeGreaterThan(0);
     expect(ofType(events, 'StatusRemoved').some((e) => e.reason === 'expired')).toBe(true);
     const revived = ofType(events, 'UnitRevived');
     expect(revived.length).toBeGreaterThan(0);
     const first = revived[0]!;
-    expect(events.some((e) => e.type === 'UnitActStart' && e.actorId === first.unitId && e.seq > first.seq)).toBe(true);
+    expect(first.actsThisTurn).toBe(true);
+    // 复活之后、本回合结束之前，它出手了
+    const turnEnd = events.find((e) => e.type === 'TurnEnd' && e.seq > first.seq)!;
+    expect(
+      events.some((e) => e.type === 'UnitActStart' && e.actorId === first.unitId && e.seq > first.seq && e.seq < turnEnd.seq),
+    ).toBe(true);
   });
 
   it('技能结算符合规则：魔法只扣一次且不为负，目标数不超上限，段数与步数正确，被封印者不放技能', () => {
@@ -129,6 +144,7 @@ describe('完整 10v10 战斗', () => {
       const mp = new Map(ofType(events, 'BattleStart')[0]!.units.map((u) => [u.id, u.mp]));
       const side = new Map(ofType(events, 'BattleStart')[0]!.units.map((u) => [u.id, u.side]));
       const sealed = new Set<string>();
+      const passive = new Set(createDefaultSetup(seed).units.filter((u) => u.passiveIds.length > 0).map((u) => u.id));
       let cast: Extract<BattleEvent, { type: 'SkillCast' }> | null = null;
       let castsThisAction = 0;
       for (const e of events) {
@@ -160,6 +176,14 @@ describe('完整 10v10 战斗', () => {
           case 'HitResolved': {
             const skill = SKILLS[e.skillId]!;
             expect(cast!.targets).toContain(e.targetId);
+            if (skill.classId === 'common') {
+              // 普攻：1 段；触发连击时 2 段，打同一个目标
+              expect([1, 2]).toContain(e.hitCount);
+              expect([e.stepIndex, e.stepCount]).toEqual([e.hitIndex, e.hitCount]);
+              expect(e.targetId).toBe(cast!.targets[0]);
+              if (e.hitCount === 2) expect(passive.has(e.actorId)).toBe(true);
+              break;
+            }
             expect(e.hitCount).toBe(skill.hits);
             if (skill.pattern === 'sequential') {
               expect(e.stepCount).toBe(cast!.targets.length);

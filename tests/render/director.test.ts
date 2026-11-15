@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { EventBus, type BattleEvent, type BattleEventInput, type UnitSnapshot } from '../../src/core/events';
 import type { Side, UnitId } from '../../src/core/types';
-import { CAMERA_FX, GLOW_FX } from '../../src/data/presentationConfig';
+import { SMALL_SPELL, CAMERA_FX, GLOW_FX } from '../../src/data/presentationConfig';
 import { BattleDirector, groupSteps } from '../../src/render/director/BattleDirector';
 import { Scheduler } from '../../src/render/director/Scheduler';
 
@@ -225,7 +225,7 @@ describe('BattleDirector：多段与多目标技能的演出编排', () => {
       // 复活 A1
       { type: 'UnitActStart', actorId: 'A0', command: { kind: 'skill', skillId: 'revive', targetId: 'A1' } },
       cast({ skillId: 'revive', delivery: 'cast', meleeCharge: false, element: 'heal', targets: ['A1'], mpBefore: 30, mpAfter: 0 }),
-      { type: 'UnitRevived', unitId: 'A1', actorId: 'A0', hpAfter: 30, maxHp: 100, actsThisTurn: true },
+      { type: 'UnitRevived', unitId: 'A1', actorId: 'A0', hpAfter: 30, maxHp: 100, actsThisTurn: true, queuedAtEnd: false },
       { type: 'UnitActEnd', actorId: 'A0' },
       // 复活后的 A1 被治疗，然后自己出手
       { type: 'UnitActStart', actorId: 'A0', command: { kind: 'skill', skillId: 'heal', targetId: 'A1' } },
@@ -460,7 +460,7 @@ describe('步骤 7：技能演出', () => {
       ]),
       ...act('A0', [
         cast({ animation: 'revive', delivery: 'cast', meleeCharge: false, element: 'heal', targets: ['A1'] }),
-        { type: 'UnitRevived', unitId: 'A1', actorId: 'A0', hpAfter: 30, maxHp: 100, actsThisTurn: false },
+        { type: 'UnitRevived', unitId: 'A1', actorId: 'A0', hpAfter: 30, maxHp: 100, actsThisTurn: false, queuedAtEnd: false },
       ]),
       ...act('A0', [
         cast({ animation: 'groupHeal', delivery: 'cast', meleeCharge: false, element: 'heal', targets: ['A0', 'A1', 'A2'], mpBefore: 40, mpAfter: 30 }),
@@ -518,5 +518,74 @@ describe('步骤 7：技能演出', () => {
     expect(log.lastIndexOf('trail:A0:false')).toBeGreaterThan(log.lastIndexOf('trail:A0:true'));
     expect(log.filter((l) => l.startsWith('glow:A0:')).pop()).toBe('glow:A0:1');
     expect(log.filter((l) => l.startsWith('cam-')).pop()).toBe('cam-reset');
+  });
+});
+
+// ----------------------------------------------------------------------
+describe('步骤 9：连击、三目标法术、复活排队尾的演出', () => {
+  it('连击：只冲锋一次，第一击后不返回，头顶飘出“连击”，换轨迹再打同一目标一次，两次各自飘字，最后才跑回', async () => {
+    const { fakes } = await playScript(
+      act('A0', [
+        cast({ skillId: 'basic', mpCost: 0, mpBefore: 50, mpAfter: 50 }),
+        hit('E0', 0, { stepCount: 2, hitIndex: 0, hitCount: 2 }),
+        { type: 'PassiveTriggered', unitId: 'A0', passiveId: 'double_strike', name: '连击', targetId: 'E0' },
+        hit('E0', 1, { stepCount: 2, hitIndex: 1, hitCount: 2, damage: 45, hpBefore: 70, hpAfter: 25, isCrit: true }),
+      ]),
+    );
+    const { log } = fakes;
+    expect(log.filter((l) => l === 'moveTo:A0')).toHaveLength(1);
+    expect(log.filter((l) => l === 'returnHome:A0')).toHaveLength(1);
+    expect(log.filter((l) => l === 'release-melee:A0')).toHaveLength(2); // 第二次出手动作
+    expect(log.filter((l) => l.startsWith('variant:A0:'))).toEqual(['variant:A0:0', 'variant:A0:1']); // 两击轨迹不同
+    const first = log.indexOf('floater:E0:-30');
+    const banner = log.indexOf('floater:A0:连击');
+    const second = log.indexOf('floater:E0:暴击 -45');
+    expect(first).toBeGreaterThan(-1);
+    expect(banner).toBeGreaterThan(first);
+    expect(second).toBeGreaterThan(banner);
+    // 两击之间没有返回、没有重新冲锋
+    const between = log.slice(first, second);
+    expect(between.some((l) => l === 'returnHome:A0' || l === 'moveTo:A0')).toBe(false);
+    expect(log.indexOf('returnHome:A0')).toBeGreaterThan(second);
+    expect(log).toContain(`glow:A0:${GLOW_FX.chain}`);
+    expect(fakes.hp.get('E0')).toBe(25);
+    expect(fakes.away.size).toBe(0);
+  });
+
+  it('三目标法术：复用群体法术的演出但规模更小——符文阵 + 3 道缩小的火柱同帧爆发，镜头震动减半', async () => {
+    const three = ['E0', 'E1', 'E2'] as const;
+    const { fakes } = await playScript(
+      act('A0', [
+        cast({ animation: 'groupSpellSmall', delivery: 'cast', meleeCharge: false, element: 'fire', targets: [...three] }),
+        ...three.map((id) => hit(id, 0, { stepCount: 1, damageType: 'magic' })),
+      ]),
+    );
+    const { log } = fakes;
+    expect(log).toContain('aura-runeCircle');
+    expect(log).toContain(`glow:A0:${GLOW_FX.spellCharge * SMALL_SPELL.glow}`);
+    const pillar = `burst-pillarDown@${SMALL_SPELL.scale}`;
+    const firstPillar = log.indexOf(pillar);
+    expect(log.slice(firstPillar, firstPillar + 3)).toEqual(Array(3).fill(pillar));
+    expect(log.filter((l) => l.startsWith('burst-pillarDown'))).toHaveLength(3);
+    expect(log).toContain(`cam-shake:${shake.spell * SMALL_SPELL.shake}`);
+    expect(SMALL_SPELL.scale).toBeLessThan(1);
+    // 3 个飘字同时出现；施法者不离开站位
+    const firstFloat = log.indexOf('floater:E0:-30');
+    expect(log.slice(firstFloat, log.indexOf('floater:E2:-30') + 1).filter((l) => l.startsWith('floater:'))).toHaveLength(3);
+    expect(log.some((l) => l.startsWith('moveTo'))).toBe(false);
+  });
+
+  it('复活后排到队尾：出手顺序条把它挪到最后；在自己位置出手的不挪', async () => {
+    const { fakes } = await playScript([
+      ...act('A0', [
+        cast({ skillId: 'revive', delivery: 'cast', meleeCharge: false, element: 'heal', targets: ['A1'] }),
+        { type: 'UnitRevived', unitId: 'A1', actorId: 'A0', hpAfter: 30, maxHp: 100, actsThisTurn: true, queuedAtEnd: true },
+      ]),
+      ...act('A0', [
+        cast({ skillId: 'revive', delivery: 'cast', meleeCharge: false, element: 'heal', targets: ['A2'], mpBefore: 40, mpAfter: 30 }),
+        { type: 'UnitRevived', unitId: 'A2', actorId: 'A0', hpAfter: 30, maxHp: 100, actsThisTurn: true, queuedAtEnd: false },
+      ]),
+    ]);
+    expect(fakes.log.filter((l) => l.startsWith('late:'))).toEqual(['late:A1']);
   });
 });

@@ -58,7 +58,7 @@ describe('战斗日志', () => {
         { ...base, type: 'HitResolved', actorId: 'A0', targetId: 'E1', skillId: 'test_bolt', stepIndex: 0, stepCount: 1, hitIndex: 0, hitCount: 1, damageType: 'magic', isMiss: false, isCrit: true, defended: true, damage: 40, hpBefore: 100, hpAfter: 60, killed: false },
         { ...base, type: 'HealResolved', actorId: 'A0', targetId: 'A1', skillId: 'heal', stepIndex: 0, stepCount: 1, isCrit: false, amount: 30, hpBefore: 10, hpAfter: 40 },
         { ...base, type: 'StatusApplied', unitId: 'E0', sourceId: 'A0', status: 'seal', remainingTurns: 3 },
-        { ...base, type: 'UnitRevived', unitId: 'A1', actorId: 'A0', hpAfter: 30, maxHp: 100, actsThisTurn: false },
+        { ...base, type: 'UnitRevived', unitId: 'A1', actorId: 'A0', hpAfter: 30, maxHp: 100, actsThisTurn: false, queuedAtEnd: false },
         { ...base, type: 'CommandFallback', actorId: 'A0', fromSkillId: 'test_bolt', toSkillId: 'basic_magic', reason: 'noMp' },
         { ...base, type: 'UnitDied', unitId: 'A1', killerId: 'E0', vanish: false },
       ],
@@ -111,5 +111,24 @@ describe('战斗统计', () => {
   it('新的一场从零开始', () => {
     const stats = new BattleStats();
     expect(stats.summary()).toMatchObject({ winner: null, turns: 0, actions: 0, allies: [], allyDamage: 0, mvp: null });
+  });
+});
+
+describe('战斗日志：步骤 9 新增的事件', () => {
+  it('连击触发、复活后排到队尾都有记录', () => {
+    const base = { seq: 1, turn: 1 };
+    const lines = formatLogLines(
+      [
+        { ...base, type: 'PassiveTriggered', unitId: 'A5', passiveId: 'double_strike', name: '连击', targetId: 'E0' },
+        { ...base, type: 'UnitRevived', unitId: 'A1', actorId: 'A0', hpAfter: 30, maxHp: 100, actsThisTurn: true, queuedAtEnd: true },
+        { ...base, type: 'UnitRevived', unitId: 'A2', actorId: 'A0', hpAfter: 30, maxHp: 100, actsThisTurn: true, queuedAtEnd: false },
+      ],
+      ctx,
+    );
+    expect(lines.map((l) => l.text)).toEqual([
+      '<A5> 触发「连击」，再攻击一次',
+      '<A1> 被复活（气血 30/100），本回合排到队尾出手',
+      '<A2> 被复活（气血 30/100）',
+    ]);
   });
 });

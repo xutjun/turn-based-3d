@@ -72,7 +72,10 @@ export function formatLogLines(events: readonly BattleEvent[], ctx: LogContext):
         sub('death', e.vanish ? `${n(e.unitId)} 被击败` : `${n(e.unitId)} 倒地`);
         break;
       case 'UnitRevived':
-        sub('revive', `${n(e.unitId)} 被复活（气血 ${e.hpAfter}/${e.maxHp}）`);
+        sub('revive', `${n(e.unitId)} 被复活（气血 ${e.hpAfter}/${e.maxHp}）${e.queuedAtEnd ? '，本回合排到队尾出手' : ''}`);
+        break;
+      case 'PassiveTriggered':
+        sub('info', `${n(e.unitId)} 触发「${e.name}」，再攻击一次`);
         break;
       case 'StatusApplied':
         sub('status', `${n(e.unitId)} 被封印 ${e.remainingTurns} 回合`);

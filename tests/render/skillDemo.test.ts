@@ -103,7 +103,7 @@ describe('技能演示脚本（?demo=skills）', () => {
 
   it('技能 id、名称、消耗、动画、元素都与技能表一致', () => {
     expect(DEMO_SKILLS).toBe(SKILLS);
-    expect(SKILLS['group_spell_fire']!.name).toBe('群体法术·烈焰');
+    expect(SKILLS['triple_spell']!.name).toBe('三重魂火');
     expect(SKILLS['triple_shot']!.name).toBe('三连射');
     expect(SKILLS['arrow_rain']!.name).toBe('箭雨');
     const scripts = [...demos.map((d) => d.events), buildShowcaseScript(units)];
@@ -131,7 +131,7 @@ describe('技能演示脚本（?demo=skills）', () => {
     for (const e of demos.flatMap((d) => d.events)) demoShapes.set(e.type, fields(e));
 
     const engineEvents: BattleEvent[] = [];
-    const engine = new BattleEngine(createDefaultSetup(64));
+    const engine = new BattleEngine(createDefaultSetup(6));
     engine.events.onAny((e) => engineEvents.push(e));
     autoPlay(engine);
     const seen = new Set<string>();
@@ -141,7 +141,7 @@ describe('技能演示脚本（?demo=skills）', () => {
       expect(fields(e), e.type).toBe(expected);
       seen.add(e.type);
     }
-    for (const type of ['SkillCast', 'HitResolved', 'HealResolved', 'UnitDied', 'UnitRevived', 'StatusApplied', 'StatusResisted', 'StatusTicked', 'StatusRemoved']) {
+    for (const type of ['SkillCast', 'HitResolved', 'HealResolved', 'UnitDied', 'UnitRevived', 'PassiveTriggered', 'StatusApplied', 'StatusResisted', 'StatusTicked', 'StatusRemoved']) {
       expect(seen.has(type), type).toBe(true);
     }
     // 正式战斗里出现的 技能 + 出手方式 + 动画 组合，演示里都演过

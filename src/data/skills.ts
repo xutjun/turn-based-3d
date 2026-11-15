@@ -1,8 +1,9 @@
 // 技能配置表（对应 DESIGN.md §4）。
 // 全部技能都在这张表里：指令面板、战斗日志、演出飘字、技能演示模式用的名称和消耗都从这里取。
 //
-// “三连射”“箭雨”是连斩、旋风斩的弓箭手版本（SPEC §7.1），“群体法术·烈焰”是群体法术的火系版本：
-// 它们与原技能共用同一套数值和结算方式，只有名称、说明、元素不同，所以用“在原技能上改几个字段”的方式定义。
+// “三连射”“箭雨”是连斩、旋风斩的弓箭手版本（SPEC §7.1）：
+// 它们与原技能共用同一套数值和结算方式，只有名称、说明不同，所以用“在原技能上改几个字段”的方式定义。
+// 被动技能（如宝宝的“连击”）不在这张表里，见 passives.ts。
 
 import type { SkillDef, SkillId } from '../core/types';
 
@@ -53,7 +54,7 @@ const COMBO_SLASH: SkillDef = {
   name: '连斩',
   description: '冲到一个敌人面前连续斩击 3 次，每次独立计算伤害和暴击。目标中途倒下时，剩余的斩击取消。',
   classId: 'physical',
-  mpCost: 40,
+  mpCost: 30,
   effect: 'damage',
   damageType: 'physical',
   targetSide: 'enemy',
@@ -81,7 +82,7 @@ const WHIRLWIND: SkillDef = {
   name: '旋风斩',
   description: '依次冲向最多 7 个敌人各攻击一次，每个目标独立计算伤害。先打选中的目标，其余按速度由快到慢。',
   classId: 'physical',
-  mpCost: 80,
+  mpCost: 60,
   effect: 'damage',
   damageType: 'physical',
   targetSide: 'enemy',
@@ -112,7 +113,7 @@ const GROUP_SPELL: SkillDef = {
   name: '群体法术·天雷',
   description: '原地蓄力，落雷同时击中最多 6 个敌人，每个目标独立计算法术伤害。选中的目标一定会被击中。',
   classId: 'magic',
-  mpCost: 80,
+  mpCost: 60,
   effect: 'damage',
   damageType: 'magic',
   targetSide: 'enemy',
@@ -127,12 +128,15 @@ const GROUP_SPELL: SkillDef = {
   element: 'thunder',
 };
 
-/** 群体法术的火系版本（骨龙幼崽使用）：数值与天雷相同，光效为火柱 */
-const GROUP_SPELL_FIRE: SkillDef = {
+/** 法术型宝宝的主动技能：一次同时攻击 3 个单位，演出是群体法术的缩小版（火柱） */
+const TRIPLE_SPELL: SkillDef = {
   ...GROUP_SPELL,
-  id: 'group_spell_fire',
-  name: '群体法术·烈焰',
-  description: '原地蓄力，火柱同时击中最多 6 个敌人，每个目标独立计算法术伤害。选中的目标一定会被击中。',
+  id: 'triple_spell',
+  name: '三重魂火',
+  description: '原地施法，魂火同时击中最多 3 个敌人，每个目标独立计算法术伤害。选中的目标一定会被击中。',
+  mpCost: 30,
+  targetCount: 3,
+  animation: { cast: 'groupSpellSmall' },
   element: 'fire',
 };
 
@@ -141,7 +145,7 @@ const SINGLE_SPELL: SkillDef = {
   name: '单体法术·炎爆',
   description: '原地蓄力，一枚火球飞向一个敌人并爆炸，造成高倍率法术伤害。',
   classId: 'magic',
-  mpCost: 50,
+  mpCost: 40,
   effect: 'damage',
   damageType: 'magic',
   targetSide: 'enemy',
@@ -163,7 +167,7 @@ const SEAL: SkillDef = {
   name: '封印',
   description: '封印一个敌人 3 回合：期间不能使用技能，仍可攻击和防御。有 75% 的命中率，已被封印的单位不能再封印。',
   classId: 'seal',
-  mpCost: 60,
+  mpCost: 40,
   effect: 'seal',
   damageType: 'magic',
   targetSide: 'enemy',
@@ -186,7 +190,7 @@ const GROUP_HEAL: SkillDef = {
   name: '群体治疗',
   description: '同时治疗最多 3 个存活的我方单位（人物和宝宝都可以）。选中的目标一定会被治疗，其余按速度由快到慢补足。',
   classId: 'heal',
-  mpCost: 80,
+  mpCost: 60,
   effect: 'heal',
   damageType: 'magic',
   targetSide: 'ally',
@@ -206,7 +210,7 @@ const REVIVE: SkillDef = {
   name: '复活',
   description: '复活一个倒地的队友，恢复 30% 气血。只能选择倒地的我方单位。',
   classId: 'heal',
-  mpCost: 120,
+  mpCost: 100,
   effect: 'revive',
   damageType: 'magic',
   targetSide: 'ally',
@@ -230,7 +234,7 @@ const SKILL_LIST: SkillDef[] = [
   WHIRLWIND,
   ARROW_RAIN,
   GROUP_SPELL,
-  GROUP_SPELL_FIRE,
+  TRIPLE_SPELL,
   SINGLE_SPELL,
   SEAL,
   GROUP_HEAL,

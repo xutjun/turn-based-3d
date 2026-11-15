@@ -86,6 +86,15 @@ export const GLOW_FX = {
   spellCharge: 3.2, // 群体法术蓄力时宝珠光芒暴涨
   singleCharge: 2.4,
   cast: 1.6, // 其他施法
+  chain: 2.2, // 被动“连击”的第二击
+};
+
+/** 法术型宝宝的三目标法术：复用群体法术的演出，按这些倍率缩小 */
+export const SMALL_SPELL = {
+  scale: 0.6, // 符文阵、蓄力光环、火柱的规模
+  charge: 0.6, // 蓄力时长倍率
+  glow: 0.6, // 蓄力时武器光芒倍率
+  shake: 0.5, // 镜头震动倍率
 };
 
 /** 特效用量与尺寸。性能不够时先调小 maxParticles 和各 count */
@@ -143,6 +152,7 @@ export const FLOATER_STYLES = {
   resist: { color: '#8f86a8', size: 0.95 }, // 封印被抵抗
   revive: { color: '#ffe08a', size: 1.2 }, // 复活
   defend: { color: '#8fb4d8', size: 0.95 }, // 防御
+  passive: { color: '#ff8a3c', size: 1.25 }, // 被动技能触发（连击）
   info: { color: '#d8c690', size: 0.9 }, // 其他提示
 } as const;
 

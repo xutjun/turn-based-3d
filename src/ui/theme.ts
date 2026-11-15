@@ -63,6 +63,7 @@ const CSS = `
 .dk-gauge > span { position:absolute; inset:0; font-size:11px; line-height:13px; text-align:center; color:#f4ead0;
   text-shadow:0 0 2px #000,0 1px 1px #000; }
 .dk-sealed { margin-top:5px; font-size:12px; color:#d9a6ff; text-shadow:0 0 4px #7a2cff; }
+.dk-passive { margin-top:5px; font-size:12px; line-height:1.45; color:#e0a060; }
 .dk-actions { display:flex; gap:6px; margin-top:10px; }
 .dk-actions .dk-btn { flex:1; padding:8px 0; }
 .dk-sub { display:flex; gap:6px; margin-top:8px; align-items:center; }

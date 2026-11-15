@@ -259,7 +259,7 @@ describe('玩家战斗控制器', () => {
       for (const id of r.used) used.add(id);
       for (const l of m.log) for (const s of Object.values(SKILLS)) if (l.text.includes(`「${s.name}」`)) names.add(s.id);
     }
-    const expected = ['triple_shot', 'arrow_rain', 'combo_slash', 'whirlwind', 'group_spell', 'group_spell_fire', 'single_spell', 'seal', 'group_heal', 'revive'];
+    const expected = ['triple_shot', 'arrow_rain', 'combo_slash', 'whirlwind', 'group_spell', 'triple_spell', 'single_spell', 'seal', 'group_heal', 'revive'];
     for (const id of expected) {
       expect(used.has(id), id).toBe(true);
       expect(names.has(id), id).toBe(true);
