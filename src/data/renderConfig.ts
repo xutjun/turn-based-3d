@@ -9,10 +9,10 @@ export const CAMERA_CONFIG = {
   fov: 22, // 透视相机的垂直视角（度），越小越接近“伪等距”
   elevationDeg: 30, // 俯角（SPEC 建议 35°~45°，按验收意见压低到 30°，人物更立体）
   azimuthDeg: 0, // 水平方位角：0 = 相机在 +z 一侧（敌方在左上、友方在右下）
-  distance: 35, // 相机到注视点的距离（越近人物越大）
-  target: { x: 0, y: 2.4, z: 0.8 }, // 注视点（偏高一些，把画面顶部留给出手顺序条）
+  distance: 32.5, // 相机到注视点的距离（越近人物越大；步骤 8 由 35 拉近）
+  target: { x: 0, y: 2.3, z: 1.0 }, // 注视点（偏高一些，把画面顶部留给出手顺序条）
   orthoHeight: 13.7, // 正交相机可见的世界高度
-  fitAspect: 1.6, // 窗口宽高比小于该值时自动放大可见范围，保证双方阵型都在画面内
+  fitAspect: 1.75, // 窗口宽高比小于该值时自动放大可见范围，保证双方阵型都在画面内
   near: 1,
   far: 160,
 };
@@ -52,9 +52,9 @@ export const ENVIRONMENT_CONFIG = {
 
 export const FOG_CONFIG = {
   color: 0x0e131b,
-  density: 0.012, // 指数雾密度
-  // 贴地流动的雾片（模拟轻微体积雾）
-  ground: { count: 26, radius: 24, opacity: 0.2, color: 0x8794a8, size: 13, speed: 0.25 },
+  density: 0.019, // 指数雾密度（步骤 8 由 0.012 加浓：远处的柱子、旗帜更快隐入雾里）
+  // 贴地流动的雾片（模拟轻微体积雾；步骤 8 由 26 片 / 不透明度 0.2 加强）
+  ground: { count: 40, radius: 24, opacity: 0.3, color: 0x8794a8, size: 14, speed: 0.25 },
 };
 
 export const POSTFX_CONFIG = {

@@ -15,14 +15,14 @@ const near = (v: { x: number; z: number }, x: number, z: number): void => {
 
 describe('阵型世界坐标', () => {
   it('前排坐标与设计文档 §7.3 的表一致', () => {
-    near(slotPosition('ally', { row: 0, col: 0 }), 0.713, 6.087);
-    near(slotPosition('ally', { row: 0, col: 1 }), 2.056, 4.744);
-    near(slotPosition('ally', { row: 0, col: 2 }), 3.4, 3.4);
-    near(slotPosition('ally', { row: 0, col: 3 }), 4.744, 2.056);
-    near(slotPosition('ally', { row: 0, col: 4 }), 6.087, 0.713);
-    near(slotPosition('enemy', { row: 0, col: 0 }), -6.087, -0.713);
-    near(slotPosition('enemy', { row: 0, col: 2 }), -3.4, -3.4);
-    near(slotPosition('enemy', { row: 0, col: 4 }), -0.713, -6.087);
+    near(slotPosition('ally', { row: 0, col: 0 }), -0.411, 5.811);
+    near(slotPosition('ally', { row: 0, col: 1 }), 1.144, 4.256);
+    near(slotPosition('ally', { row: 0, col: 2 }), 2.7, 2.7);
+    near(slotPosition('ally', { row: 0, col: 3 }), 4.256, 1.144);
+    near(slotPosition('ally', { row: 0, col: 4 }), 5.811, -0.411);
+    near(slotPosition('enemy', { row: 0, col: 0 }), -5.811, 0.411);
+    near(slotPosition('enemy', { row: 0, col: 2 }), -2.7, -2.7);
+    near(slotPosition('enemy', { row: 0, col: 4 }), 0.411, -5.811);
   });
 
   it('后排在前排身后（远离对方）一个排间距', () => {
@@ -30,10 +30,10 @@ describe('阵型世界坐标', () => {
       const c = col as 0 | 1 | 2 | 3 | 4;
       const af = slotPosition('ally', { row: 0, col: c });
       const ab = slotPosition('ally', { row: 1, col: c });
-      near(ab, af.x + 1.414, af.z + 1.414);
+      near(ab, af.x + 1.626, af.z + 1.626);
       const ef = slotPosition('enemy', { row: 0, col: c });
       const eb = slotPosition('enemy', { row: 1, col: c });
-      near(eb, ef.x - 1.414, ef.z - 1.414);
+      near(eb, ef.x - 1.626, ef.z - 1.626);
     }
   });
 

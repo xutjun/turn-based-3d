@@ -111,6 +111,8 @@ export const STAGING = {
   meleeGap: 0.35, // 近战时双方身体之间留的空隙
   unitRadius: { hero: 0.45, pet: 0.5, enemy: 0.45, boss: 1.25 }, // 冲锋时用来计算停步位置
   runHopHeight: 0.12, // 冲锋时的小跳高度
+  // 冲锋时的转身：前 lead 比例的时间转向跑动方向，最后 settle 比例的时间转为正对目标
+  chargeTurn: { lead: 0.4, settle: 0.35 },
   speeds: [1, 2] as readonly number[], // 可选战斗速度
 };
 

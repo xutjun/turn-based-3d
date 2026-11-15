@@ -38,9 +38,12 @@ export interface StageUnit {
   readonly facing: GroundPoint;
 
   anchor(name: AnchorName): Point3;
-  /** 离开站位移动到某点（只有近战冲锋会调用） */
-  moveTo(point: GroundPoint, duration: number): Promise<void>;
-  /** 回到站位 */
+  /**
+   * 离开站位移动到某点（只有近战冲锋会调用）。途中平滑转向跑动方向，
+   * 到位时正对 face（要攻击的目标所在的位置）；不传 face 则保持跑动方向。
+   */
+  moveTo(point: GroundPoint, duration: number, face?: GroundPoint): Promise<void>;
+  /** 回到站位，途中平滑转回原来的朝向 */
   returnHome(duration: number): Promise<void>;
   /**
    * 出手动作三段：蓄力 → 出手 → 收招。

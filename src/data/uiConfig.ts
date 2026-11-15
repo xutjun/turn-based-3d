@@ -30,4 +30,16 @@ export const UI_CONFIG = {
     headPadding: 34, // 头顶条也算在可点范围内
     footPadding: 12,
   },
+  /**
+   * 头顶名字：平时只显示血条，名字只在 Boss、正在出手、被选中 / 会被命中、鼠标指着时出现；
+   * 同时出现的名字互相重叠或压到别的血条时自动往上抬。
+   */
+  headName: {
+    alwaysShowBoss: true, // Boss 的名字始终显示
+    lineHeight: 14, // 名字一行的高度（像素）
+    step: 14, // 每次上抬的距离
+    maxSteps: 8, // 最多上抬几次
+    gap: 1, // 名字与其他元素之间至少留的空隙
+    hover: { halfWidth: 30, above: 36, below: 84 }, // 鼠标指着的判定范围（像素；Boss 按 2 倍）
+  },
 };

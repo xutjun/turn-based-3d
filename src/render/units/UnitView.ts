@@ -10,6 +10,7 @@ import { getRig, type HumanoidRig } from '../../assets/models/characters/rig';
 import { getEquippedWeapon, getWeaponGlow, getWeaponHold, setBowArrowVisible } from '../../assets/models/weapons';
 import { GLOW_BASE_KEY } from '../../assets/materials';
 import type { UnitTemplate } from '../../core/types';
+import { chargeYaw, turnToward } from './turning';
 import { facingOf, facingYawOf, slotPosition } from '../../data/formation';
 import { ELEMENT_COLORS, FX_CONFIG, STAGING } from '../../data/presentationConfig';
 import { createChainBand, type FxSystem, type TrailHandle } from '../fx/FxSystem';
@@ -77,6 +78,9 @@ export class UnitView implements StageUnit {
   private readonly phase: number;
   private readonly tmp = new Vector3();
   private dead = false;
+  /** 原始朝向（面向对方）与当前朝向：只有近战冲锋途中两者不同 */
+  private readonly baseYaw: number;
+  private yaw: number;
   readonly fxColor: number;
   private readonly weaponColors: { color: number; accentColor: number } | undefined;
   private readonly trailSpan: readonly [number, number];
@@ -104,7 +108,9 @@ export class UnitView implements StageUnit {
 
     // 先转朝向（y），再做前后俯仰（x）：这样俯仰总是沿着单位自己的前后方向
     model.rotation.order = 'YXZ';
-    model.rotation.set(0, facingYawOf(template.side), 0);
+    this.baseYaw = facingYawOf(template.side);
+    this.yaw = this.baseYaw;
+    model.rotation.set(0, this.baseYaw, 0);
 
     this.hpAnchor = model.getObjectByName(HP_ANCHOR);
     this.height = (this.hpAnchor ? this.hpAnchor.position.y : 1.8) * this.baseScale;
@@ -168,22 +174,32 @@ export class UnitView implements StageUnit {
     return out.set(this.ground.x, this.height * (1 - 0.55 * this.pose.fall) + this.pose.hop, this.ground.z);
   }
 
-  moveTo(point: GroundPoint, duration: number): Promise<void> {
+  moveTo(point: GroundPoint, duration: number, face?: GroundPoint): Promise<void> {
     this.away = true;
-    return this.slide(point, duration);
+    const dx = point.x - this.ground.x;
+    const dz = point.z - this.ground.z;
+    const fromYaw = this.yaw;
+    // 几乎没有位移时不转向跑动方向（避免方向抖动）
+    const travel = Math.hypot(dx, dz) > 0.05 ? Math.atan2(dx, dz) : fromYaw;
+    const faceYaw = face ? Math.atan2(face.x - point.x, face.z - point.z) : travel;
+    return this.slide(point, duration, (t) => chargeYaw(t, fromYaw, travel, faceYaw, STAGING.chargeTurn));
   }
 
   async returnHome(duration: number): Promise<void> {
-    await this.slide(this.home, duration);
+    // 面朝对手退回原位，途中平滑转回原来的朝向（不做 180° 的急转身）
+    const fromYaw = this.yaw;
+    await this.slide(this.home, duration, (t) => turnToward(fromYaw, this.baseYaw, t));
+    this.yaw = this.baseYaw;
     this.away = false;
   }
 
-  private slide(to: GroundPoint, duration: number): Promise<void> {
+  private slide(to: GroundPoint, duration: number, yawAt: (t: number) => number): Promise<void> {
     const from = { ...this.ground };
     return this.scheduler.tween(duration, (t) => {
       const k = EASE.inOut(t);
       this.ground.x = from.x + (to.x - from.x) * k;
       this.ground.z = from.z + (to.z - from.z) * k;
+      this.yaw = yawAt(t);
       this.pose.hop = Math.sin(Math.PI * t) * STAGING.runHopHeight;
     });
   }
@@ -278,6 +294,7 @@ export class UnitView implements StageUnit {
     p.variant = 0;
     this.dead = false;
     this.away = false;
+    this.yaw = this.baseYaw;
     this.trail = null; // 拖尾网格已由特效系统统一收回
     this.setSealed(false);
     this.setWeaponGlow(1, 0);
@@ -410,8 +427,10 @@ export class UnitView implements StageUnit {
     forward -= 0.12 * p.lean; // 受击时略微后退
     forward -= 0.06 * p.guard;
 
-    const fx = this.facing.x;
-    const fz = this.facing.z;
+    // 当前朝向（冲锋途中会转身），出手的前冲、受击的后退都沿着它
+    const fx = Math.sin(this.yaw);
+    const fz = Math.cos(this.yaw);
+    m.rotation.y = this.yaw;
     // 侧移方向：朝向的垂直方向
     const s = this.baseScale;
     m.position.set(

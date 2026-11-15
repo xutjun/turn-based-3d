@@ -10,6 +10,8 @@ import type { StatusType, UnitId } from '../../core/types';
 import { FLOATER_STYLES, STAGING, TIMING, type FloaterStyle } from '../../data/presentationConfig';
 import type { Scheduler } from '../../render/director/Scheduler';
 import type { DirectorHud } from '../../render/director/types';
+import { UI_CONFIG } from '../../data/uiConfig';
+import { layoutNames, pointedHead, type HeadBox } from './nameLayout';
 
 /** 把世界坐标投影到容器内的像素坐标；visible 为 false 表示在镜头外 */
 export type Projector = (world: Vector3) => { x: number; y: number; visible: boolean };
@@ -36,7 +38,10 @@ const CSS = `
 .hud-head { position:absolute; left:0; top:0; width:62px; margin-left:-31px; text-align:center;
   will-change:transform; transition:opacity .25s; }
 .hud-head.boss { width:120px; margin-left:-60px; }
-.hud-name { font-size:11px; line-height:13px; white-space:nowrap; text-shadow:0 0 3px #000,0 1px 2px #000; }
+.hud-name { display:block; width:max-content; font-size:11px; line-height:14px; white-space:nowrap; text-shadow:0 0 3px #000,0 1px 2px #000;
+  opacity:0; transition:opacity .15s; will-change:transform,opacity; position:relative; left:50%; transform:translateX(-50%); }
+.hud-head.show-name .hud-name { opacity:1; }
+.hud-head.show-name { z-index:2; }
 .hud-head.ally .hud-name { color:#cfe2f5; }
 .hud-head.enemy .hud-name { color:#f1c7b8; }
 .hud-bar { position:relative; height:6px; margin-top:2px; background:rgba(8,8,10,.85);
@@ -99,6 +104,14 @@ interface HeadBar {
   shownHp: number; // 当前显示值，向目标值平滑靠拢
   shownMp: number;
   statuses: Map<StatusType, number>;
+  nameEl: HTMLDivElement;
+  nameWidth: number; // 名字的像素宽度（创建时量一次）
+  boss: boolean;
+  ally: boolean;
+  lift: number; // 名字当前上抬的像素
+  x: number; // 最近一帧头顶挂点的屏幕坐标
+  y: number;
+  onScreen: boolean;
 }
 
 interface Floater {
@@ -150,16 +163,32 @@ export class BattleHud implements DirectorHud {
     deps.container.appendChild(this.root);
     this.renderControls();
     addEventListener('keydown', this.onKey);
+    deps.container.addEventListener('pointermove', this.onPointerMove);
+    deps.container.addEventListener('pointerleave', this.onPointerLeave);
   }
 
   dispose(): void {
     removeEventListener('keydown', this.onKey);
+    this.deps.container.removeEventListener('pointermove', this.onPointerMove);
+    this.deps.container.removeEventListener('pointerleave', this.onPointerLeave);
     this.root.remove();
   }
 
   // ------------------------------------------------------------------
   // 战斗速度 / 跳过动画
   // ------------------------------------------------------------------
+
+  /** 鼠标在战场上的位置（容器内像素）：指着谁就显示谁的名字 */
+  private pointer: { x: number; y: number } | null = null;
+
+  private readonly onPointerMove = (e: PointerEvent): void => {
+    const rect = this.deps.container.getBoundingClientRect();
+    this.pointer = { x: e.clientX - rect.left, y: e.clientY - rect.top };
+  };
+
+  private readonly onPointerLeave = (): void => {
+    this.pointer = null;
+  };
 
   private readonly onKey = (e: KeyboardEvent): void => {
     const { scheduler } = this.deps;
@@ -265,6 +294,14 @@ export class BattleHud implements DirectorHud {
         shownHp: u.hp,
         shownMp: u.mp,
         statuses: new Map(),
+        nameEl: name,
+        nameWidth: name.offsetWidth + 20, // 留出标记符号（◆ ▼）和加粗的余量
+        boss: u.rank === 'boss',
+        ally: u.side === 'ally',
+        lift: -1,
+        x: 0,
+        y: 0,
+        onScreen: false,
       });
     }
   }
@@ -385,10 +422,14 @@ export class BattleHud implements DirectorHud {
         head.mpFill.style.transform = `scaleX(${Math.max(0, Math.min(1, ratio))})`;
       }
       const p = project(headPosition(id, this.tmp));
+      head.x = p.x;
+      head.y = p.y;
+      head.onScreen = p.visible && !head.el.classList.contains('gone');
       head.el.style.visibility = p.visible ? 'visible' : 'hidden';
       // 条的底边对齐头顶挂点
       head.el.style.transform = `translate(${p.x.toFixed(1)}px,${p.y.toFixed(1)}px) translateY(-100%)`;
     }
+    this.updateNames();
 
     for (let i = this.floaters.length - 1; i >= 0; i--) {
       const f = this.floaters[i]!;
@@ -412,6 +453,50 @@ export class BattleHud implements DirectorHud {
       this.bannerEl.style.opacity = String(fade);
       if (!this.bannerSticky && a >= 1) this.bannerAge = Infinity;
     }
+  }
+
+  /**
+   * 名字的显示与错开：平时只显示血条；Boss、正在出手的单位、被选中 / 会被命中的单位、
+   * 鼠标指着的单位才显示名字，并且互相不重叠、不压住别的血条。
+   */
+  private updateNames(): void {
+    const cfg = UI_CONFIG.headName;
+    const boxes: HeadBox[] = [];
+    const points: { id: UnitId; x: number; y: number; scale: number }[] = [];
+    for (const [id, head] of this.heads) {
+      if (head.onScreen) points.push({ id, x: head.x, y: head.y, scale: head.boss ? 2 : 1 });
+    }
+    const pointed = this.pointer ? pointedHead(points, this.pointer.x, this.pointer.y, cfg.hover) : null;
+    for (const [id, head] of this.heads) {
+      const list = head.el.classList;
+      const marked = list.contains('mark-commander') || list.contains('mark-hostile') || list.contains('mark-friendly');
+      const show =
+        head.onScreen && ((cfg.alwaysShowBoss && head.boss) || marked || id === this.activeId || id === pointed);
+      list.toggle('show-name', show);
+      if (!head.onScreen) continue;
+      boxes.push({
+        id,
+        x: head.x,
+        y: head.y,
+        barWidth: head.boss ? 120 : 62,
+        barHeight: (head.ally ? 13 : 8) + (head.statuses.size > 0 ? 20 : 0),
+        nameWidth: head.nameWidth,
+        showName: show,
+        priority: (list.contains('mark-primary') ? 4 : 0) + (head.boss ? 2 : 0) + (id === this.activeId ? 1 : 0),
+      });
+    }
+    const lifts = layoutNames(boxes, cfg);
+    for (const [id, head] of this.heads) {
+      const lift = lifts.get(id) ?? 0;
+      if (lift === head.lift) continue;
+      head.lift = lift;
+      head.nameEl.style.transform = `translateX(-50%) translateY(${-lift}px)`;
+    }
+  }
+
+  /** 当前显示着名字的单位（自检用） */
+  shownNames(): UnitId[] {
+    return [...this.heads].filter(([, h]) => h.el.classList.contains('show-name')).map(([id]) => id);
   }
 
   /** 头顶条当前的目标气血（自检用：与逻辑层状态对比） */

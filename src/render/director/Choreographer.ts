@@ -103,7 +103,7 @@ export class Choreographer {
           actor.setTrail(true);
           void stage.camera.focus(point, CAMERA_FX.followZoom, CAMERA_FX.followPan, away ? TIMING.cameraFollow : TIMING.run);
         }
-        await actor.moveTo(point, away ? (whirl ? TIMING.dash : TIMING.hopNext) : TIMING.run);
+        await actor.moveTo(point, away ? (whirl ? TIMING.dash : TIMING.hopNext) : TIMING.run, target.home);
         away = true;
         lastTarget = targetId;
       }
