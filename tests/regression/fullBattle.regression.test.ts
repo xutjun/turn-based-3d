@@ -37,6 +37,23 @@ describe('整场战斗回归', () => {
     expect(director.stats.eventsPlayed).toBe(eventCount);
   });
 
+  it.each([7, 64])('种子 %i：演出中途反复开关跳过动画、切换倍速，战斗照常打完且界面与逻辑一致', async (seed) => {
+    let frame = 0;
+    const { engine, director, fakes, mismatches, eventCount } = await runBattle(seed, false, (scheduler) => {
+      frame += 1;
+      // 每隔几帧就像玩家乱按一样切一次：跳过动画 开 / 关，倍速 1 / 2
+      if (frame % 7 === 0) scheduler.setSkip(!scheduler.skip);
+      if (frame % 5 === 0) scheduler.setTimeScale(scheduler.timeScale === 1 ? 2 : 1);
+    });
+    expect(engine.getState().phase).toBe('ended');
+    expect(mismatches).toEqual([]);
+    expect(fakes.violations).toEqual([]);
+    expect(fakes.maxAway()).toBeLessThanOrEqual(1);
+    expect(fakes.away.size).toBe(0);
+    expect(director.stats.concurrentActions).toBe(0);
+    expect(director.stats.eventsPlayed).toBe(eventCount);
+  });
+
   it('回合数落在合理范围内（数值平衡的粗检查）', async () => {
     const turns: number[] = [];
     for (const seed of SKIP_SEEDS) turns.push((await runBattle(seed, true)).engine.getState().turn);

@@ -129,18 +129,26 @@ export function createFakes(scheduler: Scheduler) {
 }
 
 /** 不跳过动画时，一边推进调度器一边等 Promise 完成 */
-export async function pump(scheduler: Scheduler, promise: Promise<void>): Promise<void> {
+export async function pump(
+  scheduler: Scheduler,
+  promise: Promise<void>,
+  tweak?: (scheduler: Scheduler) => void,
+): Promise<void> {
   let done = false;
   void promise.then(() => (done = true));
   for (let i = 0; i < 100000 && !done; i++) {
+    tweak?.(scheduler); // 演出进行中插入的操作（开关跳过动画、切换倍速）
     scheduler.update(0.05);
     await new Promise((r) => setImmediate(r));
   }
   if (!done) throw new Error('演出没有结束（卡死）');
 }
 
-/** 用自动指令跑完整场战斗，每次出手都等演出结束 */
-export async function runBattle(seed: number, skip: boolean) {
+/**
+ * 用自动指令跑完整场战斗，每次出手都等演出结束。
+ * @param tweak 每推进一帧演出之前调用，用来模拟玩家在演出中途的操作
+ */
+export async function runBattle(seed: number, skip: boolean, tweak?: (scheduler: Scheduler) => void) {
   const scheduler = new Scheduler();
   scheduler.setSkip(skip);
   const fakes = createFakes(scheduler);
@@ -149,7 +157,7 @@ export async function runBattle(seed: number, skip: boolean) {
     skillName: (id) => id,
     isBasicSkill: () => true,
   });
-  const idle = (): Promise<void> => (skip ? director.idle() : pump(scheduler, director.idle()));
+  const idle = (): Promise<void> => (skip && !tweak ? director.idle() : pump(scheduler, director.idle(), tweak));
   const mismatches: string[] = [];
   let eventCount = 0;
   engine.events.onAny(() => (eventCount += 1));

@@ -149,13 +149,16 @@ tests/        core / data / render / ui 的单元测试，regression/ 是整场�
 3. **把技能发给单位。** 人物的技能来自 `classes.ts` 的 `heroSkillIds()`，例如把物理近战那一行改成
    `['combo_slash', 'whirlwind', 'heavy_strike']`；宝宝和敌人的技能直接写在 `heroes.ts` / `enemies.ts` 的模板里。
 
-4. **运行 `npm run dev`**：刀客的技能列表里出现“重击”，可以选目标、释放；魔法不足或被封印时自动置灰。AI 也会在合适的时候使用它
-   （AI 按“群体伤害技能 / 单体伤害技能 / 治疗 / 封印 / 复活”分类选技能，不认具体的技能 id）。
+4. **运行 `npm run dev`**：刀客的技能列表里出现“重击”，可以选目标、释放；魔法不足或被封印时自动置灰。
+   AI 按“群体伤害技能 / 单体伤害技能 / 治疗 / 封印 / 复活”分类选技能，不认具体的技能 id；同一类里有多个技能时用 `skillIds` 里排在前面的那个
+   （所以想让 AI 也用“重击”，把它排在“连斩”前面）。
 
-5. **运行 `npm test`**，按提示更新两处写死了当前阵容的断言：
-   - `tests/core/data.test.ts` 里“五个人物的技能”列出了每个人物的技能表；
-   - `tests/render/skillDemo.test.ts` 要求正式战斗里出现的每种“技能 + 出手方式 + 动画”在技能演示里都演过，
-     所以在 `src/ui/showcase/skillDemoScripts.ts` 里照着已有条目加一个演示（几行）。
+5. **运行 `npm test`**，按提示更新写死了当前阵容的几条断言（按上面的例子实测，会有 3 条失败）：
+   - `tests/core/data.test.ts` 的“五个人物的技能”；
+   - `tests/ui/commandSession.test.ts` 的“技能列表显示技能表里的名称、消耗和说明”和“魔法不足的技能置灰……”，它们列出了刀客的技能表。
+
+   另外，`tests/render/skillDemo.test.ts` 要求正式战斗里出现的每种“技能 + 出手方式 + 动画”在技能演示里都演过：
+   如果新技能会被 AI 用到，就在 `src/ui/showcase/skillDemoScripts.ts` 里照着已有条目加一个演示（几行）。
 
 6. **运行 `npm run balance`** 看胜率和回合数有没有跑出目标范围。
 
