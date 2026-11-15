@@ -1,12 +1,34 @@
 // Boss · 深渊魔将：两倍人高的恶魔。裸露的暗红躯干上爬满熔岩裂纹，巨大的弯角和蝠翼，
 // 黑铁肩甲与腿甲，拖着一条带刺的尾巴，手提一把熔岩巨刃。
 // 剪影特征：巨角、高举的双翼、宽肩窄腰、比人还长的刀。
+// 步骤 10 细化：巨角加长并多一对侧角，蝠翼加大、翼膜上有发光的脉络，肩后披一件破烂的披肩，
+// 躯干、四肢、尾巴全身爬满发光的熔岩裂纹（叠在皮肤外的一层裂纹光），肩甲扣着头骨、挂着锁链，
+// 背上一排骨棘；巨刃的刃口是一条细的熔岩光线。红色是 Boss 独有的主题色。
 
-import { ConeGeometry, CylinderGeometry, Group } from 'three';
+import { AdditiveBlending, ConeGeometry, CylinderGeometry, Group, Mesh, type MeshStandardMaterial } from 'three';
+import { ENEMY_RIM_CONFIG } from '../../../data/renderConfig';
 import { boneSurfaceMaterial, clothMaterial, glowMaterial, leatherMaterial, plateMaterial } from '../../materials';
-import { energyFlowTexture, tatterAlphaTexture } from '../../textures/sprites';
-import { ENEMY_RIM, finishCharacter, type CharacterBaseParams } from './common';
-import { ball, box, capeMesh, chain, lathe, membrane, mesh, pauldron, ring, seg, softSeg, taperedTube } from './parts';
+import { crackGlowTexture, energyFlowTexture, runeSpeckTexture, tatterAlphaTexture } from '../../textures/sprites';
+import { plateTextures } from '../../textures/surfaces';
+import { finishCharacter, type CharacterBaseParams } from './common';
+import {
+  ball,
+  box,
+  capeMesh,
+  chain,
+  cones,
+  lathe,
+  membrane,
+  mesh,
+  pauldron,
+  ring,
+  rivetRing,
+  scaleUv,
+  seg,
+  softSeg,
+  taperedTube,
+  type ConeSpec,
+} from './parts';
 import { createRig, DEFAULT_DIMS } from './rig';
 
 export interface AbyssLordParams extends CharacterBaseParams {
@@ -22,13 +44,13 @@ export interface AbyssLordParams extends CharacterBaseParams {
 
 export const ABYSS_LORD_DEFAULTS: AbyssLordParams = {
   scale: 2.0, // Boss 约为人物的 2 倍
-  rim: { ...ENEMY_RIM, strength: 0.75 },
-  skinColor: 0x5c1f1a,
-  plateColor: 0x1e1f24,
-  trimColor: 0x6e4a22,
-  hornColor: 0x1c1714,
-  wingColor: 0x2a0d0e,
-  clothColor: 0x240a0a,
+  rim: ENEMY_RIM_CONFIG.boss,
+  skinColor: 0x6a221a,
+  plateColor: 0x26272e,
+  trimColor: 0x8a6030,
+  hornColor: 0x2a221c,
+  wingColor: 0x3a1012,
+  clothColor: 0x30100e,
   lavaColor: 0xff4a12,
   lavaIntensity: 6,
 };
@@ -46,6 +68,38 @@ export function buildAbyssLord(params: Partial<AbyssLordParams> = {}): Group {
   const wing = clothMaterial({ color: c.wingColor, rim, doubleSide: true, alphaMap: tatterAlphaTexture(53, 0.3) });
   const lava = glowMaterial(c.lavaColor, c.lavaIntensity);
   const lavaFlow = glowMaterial(c.lavaColor, c.lavaIntensity, { emissiveMap: energyFlowTexture(7) });
+  const mantle = clothMaterial({ color: c.clothColor, rim, doubleSide: true, alphaMap: tatterAlphaTexture(55, 0.5) });
+  // 刻着符文的黑铁（肩甲、刀身）
+  const runedPlate = glowMaterial(c.lavaColor, c.lavaIntensity * 0.3, {
+    emissiveMap: runeSpeckTexture(57, 30),
+    baseColor: c.plateColor,
+    surface: plateTextures(),
+    metalness: 0.7,
+    rim,
+  });
+  // 全身的熔岩裂纹：叠在皮肤外面的一层只画裂纹的光（叠加混合），不影响皮肤本身的受击闪白
+  const crackMat = glowMaterial(c.lavaColor, c.lavaIntensity * 0.75, { emissiveMap: crackGlowTexture(51, 11), baseColor: 0x000000 });
+  crackMat.transparent = true;
+  crackMat.blending = AdditiveBlending;
+  crackMat.depthWrite = false;
+  const veinMat = glowMaterial(c.lavaColor, c.lavaIntensity * 0.35, {
+    emissiveMap: crackGlowTexture(53, 7),
+    baseColor: 0x000000,
+    doubleSide: true,
+  });
+  veinMat.transparent = true;
+  veinMat.blending = AdditiveBlending;
+  veinMat.depthWrite = false;
+  /** 给一块皮肤网格套上一层裂纹光（同一个几何体，略微放大） */
+  const cracked = (skinMesh: Mesh, repeat = 1, mat: MeshStandardMaterial = crackMat): Mesh => {
+    const shell = new Mesh(repeat === 1 ? skinMesh.geometry : skinMesh.geometry.clone(), mat);
+    if (repeat !== 1) scaleUv(shell, repeat);
+    shell.position.copy(skinMesh.position);
+    shell.rotation.copy(skinMesh.rotation);
+    shell.scale.copy(skinMesh.scale).multiplyScalar(1.012);
+    skinMesh.parent?.add(shell);
+    return skinMesh;
+  };
 
   // 双臂张开一些，显得更有压迫感
   rig.armL.shoulder.rotation.set(-0.1, 0, 0.32);
@@ -72,7 +126,7 @@ export function buildAbyssLord(params: Partial<AbyssLordParams> = {}): Group {
   back.position.set(0, 0, -0.13);
 
   // --- 尾巴：从后腰甩出，末端带骨刺 ---
-  taperedTube(
+  const tailMesh = taperedTube(
     rig.hips,
     skin,
     [
@@ -87,17 +141,38 @@ export function buildAbyssLord(params: Partial<AbyssLordParams> = {}): Group {
     8,
     16,
   );
+  cracked(tailMesh, 2);
+  // 尾巴上的一排骨棘
+  cones(
+    rig.hips,
+    bone,
+    [
+      { at: [0.03, -0.12, -0.36], dir: [0, 1, -0.6], radius: 0.022, length: 0.1 },
+      { at: [0.12, -0.36, -0.58], dir: [0.2, 0.6, -1], radius: 0.02, length: 0.09 },
+      { at: [0.32, -0.63, -0.62], dir: [0.3, -0.2, -1], radius: 0.018, length: 0.08 },
+    ],
+    4,
+  );
   const sting = mesh(new ConeGeometry(0.035, 0.16, 5), bone, rig.hips);
   sting.position.set(0.55, -0.56, -0.22);
   sting.rotation.set(0.9, 0, -0.4);
 
   // --- 腰腹与胸：倒三角的躯干，胸口熔岩裂纹 ---
-  lathe(rig.spine, skin, [
+  const belly = lathe(rig.spine, skin, [
     [0.19, 0],
     [0.175, 0.12],
     [0.21, 0.29],
-  ]).scale.z = 0.82;
-  ball(rig.chest, skin, 0.25, 0, 0.09, 0.01, [1.22, 0.95, 0.86]);
+  ]);
+  belly.scale.z = 0.82;
+  cracked(belly, 2);
+  cracked(ball(rig.chest, skin, 0.25, 0, 0.09, 0.01, [1.22, 0.95, 0.86]), 2);
+  // 背上的一排骨棘
+  cones(
+    rig.chest,
+    bone,
+    [0.22, 0.1, -0.02].map((y, i): ConeSpec => ({ at: [0, y, -0.2], dir: [0, 0.5, -1], radius: 0.035, length: 0.22 - i * 0.04 })),
+    5,
+  );
   for (const sx of [1, -1]) ball(rig.chest, skin, 0.12, sx * 0.12, 0.12, 0.13, [1.1, 0.9, 0.7]); // 胸肌
   lathe(rig.chest, skin, [
     [0.13, 0.2],
@@ -139,7 +214,7 @@ export function buildAbyssLord(params: Partial<AbyssLordParams> = {}): Group {
     [rig.armL, 1],
     [rig.armR, -1],
   ] as const) {
-    const p1 = pauldron(arm.shoulder, plate, 0.17, [1.15, 0.8, 1.2]);
+    const p1 = pauldron(arm.shoulder, runedPlate, 0.17, [1.15, 0.8, 1.2]);
     p1.position.set(sx * 0.03, 0.04, 0);
     p1.rotation.z = sx * -0.35;
     const p2 = pauldron(arm.shoulder, plate, 0.13, [1.1, 0.8, 1.15]);
@@ -154,8 +229,17 @@ export function buildAbyssLord(params: Partial<AbyssLordParams> = {}): Group {
       spike.position.set(sx * dx, dy + len * 0.3, 0);
       spike.rotation.z = sx * rz;
     }
-    softSeg(arm.shoulder, skin, 0.32, 0.085);
+    cracked(softSeg(arm.shoulder, skin, 0.32, 0.085), 1.5);
+    // 肩甲上扣着的头骨和垂下的锁链，肩甲边缘一圈铆钉
+    ball(arm.shoulder, bone, 0.06, sx * 0.13, 0.02, 0.1, [0.9, 1, 0.9]);
+    box(arm.shoulder, bone, 0.055, 0.03, 0.04, sx * 0.13, -0.03, 0.125);
+    chain(arm.shoulder, trim, [
+      [sx * 0.13, -0.05, 0.12],
+      [sx * 0.12, -0.24, 0.1],
+    ], 0.02);
+    rivetRing(arm.shoulder, trim, 0.165, 7, 0.0, 0.014, 1.2, [sx > 0 ? 0.3 : -2.8, sx > 0 ? 2.8 : -0.3]);
     ball(arm.elbow, plate, 0.08);
+    cones(arm.elbow, horn, [{ at: [0, 0, -0.07], dir: [0, 0.3, -1], radius: 0.028, length: 0.14 }], 5); // 肘刺
     seg(arm.elbow, skin, 0.14, 0.075, 0.065).position.y = -0.07;
     seg(arm.elbow, plate, 0.17, 0.082, 0.068).position.y = -0.215;
     ring(arm.elbow, trim, 0.083, 0.012, -0.14, 5, 12);
@@ -169,7 +253,7 @@ export function buildAbyssLord(params: Partial<AbyssLordParams> = {}): Group {
 
   // --- 双腿：粗腿、铁护膝和胫甲、蹄足 ---
   for (const leg of [rig.legL, rig.legR]) {
-    softSeg(leg.hip, skin, 0.42, 0.105);
+    cracked(softSeg(leg.hip, skin, 0.42, 0.105), 1.5);
     ball(leg.knee, plate, 0.095, 0, 0, 0.025);
     const kneeSpike = mesh(new ConeGeometry(0.03, 0.12, 5), trim, leg.knee);
     kneeSpike.position.set(0, 0.03, 0.12);
@@ -195,15 +279,39 @@ export function buildAbyssLord(params: Partial<AbyssLordParams> = {}): Group {
       horn,
       [
         [sx * 0.09, 0.2, -0.02],
-        [sx * 0.26, 0.26, -0.06],
-        [sx * 0.38, 0.42, -0.04],
-        [sx * 0.36, 0.62, 0.02],
-        [sx * 0.26, 0.74, 0.06],
+        [sx * 0.3, 0.26, -0.08],
+        [sx * 0.47, 0.44, -0.06],
+        [sx * 0.48, 0.7, 0.02],
+        [sx * 0.36, 0.9, 0.1],
+        [sx * 0.24, 0.98, 0.16],
       ],
-      0.065,
+      0.075,
       0.008,
       8,
-      18,
+      22,
+    );
+    // 角上的铜箍
+    for (const [bx, by, rz] of [
+      [0.2, 0.225, 1.25],
+      [0.4, 0.34, 0.75],
+    ] as const) {
+      const hoop = mesh(new CylinderGeometry(0.066, 0.066, 0.035, 8), trim, rig.head);
+      hoop.position.set(sx * bx, by, -0.05);
+      hoop.rotation.z = sx * -rz;
+    }
+    // 侧角：从颧骨向外下方再向前勾
+    taperedTube(
+      rig.head,
+      horn,
+      [
+        [sx * 0.1, 0.1, 0],
+        [sx * 0.2, 0.06, 0.02],
+        [sx * 0.24, -0.02, 0.1],
+      ],
+      0.035,
+      0.006,
+      6,
+      8,
     );
     // 小角：贴着头顶向后
     taperedTube(
@@ -230,11 +338,11 @@ export function buildAbyssLord(params: Partial<AbyssLordParams> = {}): Group {
     w.rotation.set(0, sx * 0.5, sx * 0.1); // 向后收
     rig.chest.add(w);
     const shoulder: [number, number] = [0, 0];
-    const wrist: [number, number] = [0.42, 0.62];
+    const wrist: [number, number] = [0.48, 0.74];
     const tips: [number, number][] = [
-      [1.02, 0.86],
-      [1.0, 0.22],
-      [0.66, -0.3],
+      [1.24, 1.06],
+      [1.22, 0.26],
+      [0.8, -0.38],
     ];
     const bar = (a: [number, number], b: [number, number], r: number): void => {
       taperedTube(
@@ -255,19 +363,41 @@ export function buildAbyssLord(params: Partial<AbyssLordParams> = {}): Group {
     for (const tip of tips) bar(wrist, tip, 0.026);
     const thumb = mesh(new ConeGeometry(0.022, 0.14, 5), bone, w); // 翼腕上的爪
     thumb.position.set(wrist[0] - 0.02, wrist[1] + 0.07, 0);
-    membrane(w, wing, [shoulder, wrist, tips[0]!, [0.94, 0.5], tips[1]!, [0.78, -0.02], tips[2]!, [0.3, -0.34], [0.04, -0.3]]).position.z = -0.006;
+    const outline: [number, number][] = [shoulder, wrist, tips[0]!, [1.12, 0.6], tips[1]!, [0.94, -0.04], tips[2]!, [0.36, -0.42], [0.04, -0.34]];
+    membrane(w, wing, outline).position.z = -0.006;
+    membrane(w, veinMat, outline).position.z = -0.012; // 翼膜上发光的脉络
+    // 各翼指末端的爪
+    cones(
+      w,
+      bone,
+      tips.map((tip): ConeSpec => ({ at: [tip[0], tip[1], 0], dir: [tip[0] - wrist[0], tip[1] - wrist[1] - 0.2, 0], radius: 0.018, length: 0.12 })),
+      4,
+    );
   }
 
-  // --- 熔岩巨刃：宽厚的单刃大刀，刃口和刀身裂纹发光 ---
+  // --- 披肩：搭在双肩后面的一件破烂短披，压在双翼之间 ---
+  const shawl = capeMesh(rig.cape, mantle, { topWidth: 0.62, bottomWidth: 0.9, length: 0.85, wrap: 0.16, flare: 0.3, folds: 5, foldDepth: 0.04 });
+  shawl.position.set(0, 0.06, -0.06);
+
+  // --- 熔岩巨刃：宽厚的单刃大刀，刃口一条细的熔岩光线，刀身刻着符文和裂纹 ---
   const blade = rig.weaponMount;
   blade.rotation.x += 0.35; // 刀尖压低，斜指前方地面
   mesh(new CylinderGeometry(0.03, 0.034, 0.5, 8), horn, blade).position.y = -0.08;
   ball(blade, bone, 0.055, 0, -0.36, 0, [0.9, 1, 1]);
   box(blade, trim, 0.07, 0.06, 0.3, 0, 0.2, 0.02);
-  box(blade, plate, 0.028, 1.25, 0.24, 0, 0.86, 0.04);
+  box(blade, runedPlate, 0.028, 1.25, 0.24, 0, 0.86, 0.04);
+  // 刀背的锯齿
+  cones(
+    blade,
+    plate,
+    [0.5, 0.75, 1.0, 1.25].map((y): ConeSpec => ({ at: [0, y, -0.08], dir: [0, 0.6, -1], radius: 0.03, length: 0.1, flat: 0.3 })),
+    4,
+  );
   const point = box(blade, plate, 0.028, 0.34, 0.24, 0, 1.52, -0.02);
   point.rotation.x = -0.62; // 斜切的刀头
-  box(blade, lavaFlow, 0.034, 1.3, 0.03, 0, 0.9, 0.165); // 刃口
+  box(blade, lavaFlow, 0.03, 1.3, 0.012, 0, 0.9, 0.164); // 刃口：一条细光线
+  const pointEdge = box(blade, lavaFlow, 0.03, 0.36, 0.012, 0, 1.6, 0.07);
+  pointEdge.rotation.x = -0.62;
   for (const [y, len, rx] of [
     [0.55, 0.2, 0.9],
     [0.85, 0.24, -0.8],
@@ -276,5 +406,5 @@ export function buildAbyssLord(params: Partial<AbyssLordParams> = {}): Group {
     box(blade, lava, 0.032, len, 0.014, 0, y, 0.04).rotation.x = rx;
   }
 
-  return finishCharacter(rig, 'abyssLord', 2.25, c.scale);
+  return finishCharacter(rig, 'abyssLord', 2.45, c.scale);
 }

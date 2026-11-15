@@ -1,4 +1,4 @@
-// 弓：修长的弓身，弓弦是发光的能量线；搭箭时出现发光箭矢。
+// 弓：修长的弓身，弓背弓腹各有一条发光边线，弓弦是发光的能量线；搭箭时出现发光箭矢。
 
 import { CatmullRomCurve3, ConeGeometry, CylinderGeometry, Group, OctahedronGeometry, PlaneGeometry, TubeGeometry, Vector3, type Object3D } from 'three';
 import { WEAPONS } from '../../../data/weapons';
@@ -38,8 +38,8 @@ export function buildBowWithGlow(params: Partial<BowParams> = {}): Group {
   const c = { ...BOW_DEFAULTS, ...params };
   const root = new Group();
   const glow = new WeaponGlow(c.glow, 53);
-  const limb = leatherMaterial({ color: c.limbColor, rim: c.rim });
-  const trim = plateMaterial({ color: c.trimColor, rim: c.rim, metalness: 0.95 });
+  const limb = glow.edge(leatherMaterial({ color: c.limbColor, rim: c.rim }), 1, 'main', 3.0);
+  const trim = glow.edge(plateMaterial({ color: c.trimColor, rim: c.rim, metalness: 0.95 }), 0.7, 'main', 2.2);
   const grip = leatherMaterial({ color: c.gripColor, rim: c.rim });
 
   const half = c.length / 2;
@@ -73,10 +73,13 @@ export function buildBowWithGlow(params: Partial<BowParams> = {}): Group {
     // 弓梢的小光点（弓弦的系点）
     glowMesh(new OctahedronGeometry(0.013), glow.emissive({ slot: 'accent', factor: 1.2 }), root).position.set(0, s * half * 0.93, -d);
   }
-  // 弓臂内侧的发光纹路
-  const inlayCurve = new CatmullRomCurve3(curve.getPoints(40).map((p) => new Vector3(0, p.y, p.z + 0.012)));
+  // 弓臂边缘的发光线：弓背、弓腹各一条，沿弓身流动
   const inlayFlow = glow.flow(ownTexture(energyFlowTexture(4), 3, 1), -1, 0);
-  glowMesh(new TubeGeometry(inlayCurve, 48, 0.0035, 4), glow.emissive({ factor: 0.4, map: inlayFlow }), root);
+  const inlayMat = glow.emissive({ factor: 0.85, map: inlayFlow });
+  for (const dz of [0.013, -0.013]) {
+    const inlayCurve = new CatmullRomCurve3(curve.getPoints(40).map((p) => new Vector3(0, p.y, p.z + dz)));
+    glowMesh(new TubeGeometry(inlayCurve, 48, 0.0032, 4), inlayMat, root);
+  }
 
   // --- 弓弦：发光的能量线，贴图沿弦流动 ---
   const stringLen = half * 0.93 * 2;
@@ -111,13 +114,13 @@ export function buildBowWithGlow(params: Partial<BowParams> = {}): Group {
   root.userData[ARROW_KEY] = arrow;
 
   // --- 弓弦辉光、点光源、沿弦飘散的光点 ---
-  glow.halo(root, [0, 0, -d], 1, 'main', 0.5);
-  glow.halo(root, [0, half * 0.6, -d], 0.7, 'main', 0.3);
-  glow.halo(root, [0, -half * 0.6, -d], 0.7, 'main', 0.3);
-  glow.light(root, [0, 0, -d * 0.5]);
+  // 只在两个弓梢留一点小光晕，握把附近不放光晕，不遮住弓身和手
+  glow.halo(root, [0, half * 0.93, -d], 1, 'main', 1);
+  glow.halo(root, [0, -half * 0.93, -d], 1, 'main', 1);
+  glow.light(root, [0, half * 0.5, 0.3]); // 放在弓背前上方，离手和身体远一点，不把握弓的手照得过曝
   glow.particles(root, {
     count: c.glow.particleCount,
-    size: 0.04,
+    size: 0.025,
     mode: 'rise',
     from: [0, -half * 0.85, -d],
     to: [0, half * 0.85, -d],

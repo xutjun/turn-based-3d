@@ -22,8 +22,8 @@ export interface BoneDragonParams extends CreatureBaseParams {
 
 export const BONE_DRAGON_DEFAULTS: BoneDragonParams = {
   scale: 1,
-  rim: RIM_CONFIG.ally,
-  boneColor: 0xe2d9be,
+  rim: RIM_CONFIG.pet,
+  boneColor: 0xb9bcae,
   membraneColor: 0x4a3470,
   glowColor: 0x8f7bff,
   glowIntensity: 5,

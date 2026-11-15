@@ -1,11 +1,11 @@
-// 枪：长杆，菱形尖刃枪头，枪尖有集中的金色光点，枪身缠着流动的光纹。
+// 枪：长杆，菱形尖刃枪头，枪头刃口有细光线、枪尖一点小光核，枪身缠着流动的光纹，杆和金属件带发光轮廓。
 
 import { ConeGeometry, Curve, CylinderGeometry, Group, OctahedronGeometry, SphereGeometry, TubeGeometry, Vector3 } from 'three';
 import { WEAPONS } from '../../../data/weapons';
 import { clothMaterial, leatherMaterial, plateMaterial } from '../../materials';
 import { energyFlowTexture, tatterAlphaTexture } from '../../textures/sprites';
 import { mesh, ring } from '../characters/parts';
-import { ownTexture, WEAPON_RIM, type WeaponBaseParams } from './common';
+import { bladeGeometry, ownTexture, WEAPON_RIM, type WeaponBaseParams } from './common';
 import { finishWeapon, glowMesh, WeaponGlow } from './glow';
 
 export interface SpearParams extends WeaponBaseParams {
@@ -52,9 +52,9 @@ export function buildSpearWithGlow(params: Partial<SpearParams> = {}): Group {
   const c = { ...SPEAR_DEFAULTS, ...params };
   const root = new Group();
   const glow = new WeaponGlow(c.glow, 37);
-  const shaft = leatherMaterial({ color: c.shaftColor, rim: c.rim });
-  const steel = plateMaterial({ color: c.steelColor, rim: c.rim, metalness: 0.95 });
-  const trim = plateMaterial({ color: c.trimColor, rim: c.rim, metalness: 0.95 });
+  const shaft = glow.edge(leatherMaterial({ color: c.shaftColor, rim: c.rim }), 1, 'main', 2.0);
+  const steel = glow.edge(plateMaterial({ color: c.steelColor, rim: c.rim, metalness: 0.95 }), 1, 'main', 2.6);
+  const trim = glow.edge(plateMaterial({ color: c.trimColor, rim: c.rim, metalness: 0.95 }), 0.7, 'main', 2.2);
   const tassel = clothMaterial({ color: c.tasselColor, rim: c.rim, doubleSide: true, alphaMap: tatterAlphaTexture(5, 0.5) });
 
   const bottom = -c.gripHeight;
@@ -76,12 +76,35 @@ export function buildSpearWithGlow(params: Partial<SpearParams> = {}): Group {
   const head = mesh(new OctahedronGeometry(1), steel, root);
   head.position.y = headY;
   head.scale.set(0.013, c.headLength / 2, 0.062);
-  const ridge = glowMesh(new OctahedronGeometry(1), glow.emissive({ factor: 0.9 }), root);
+  const ridge = glowMesh(new OctahedronGeometry(1), glow.emissive({ factor: 0.45 }), root);
   ridge.position.y = headY;
   ridge.scale.set(0.0165, c.headLength / 2 - 0.035, 0.012);
   // 枪尖的光核
   const tipY = headY + c.headLength / 2;
-  glowMesh(new SphereGeometry(0.014, 8, 6), glow.emissive({ slot: 'accent', factor: 1.8 }), root).position.y = tipY - 0.012;
+  glowMesh(new SphereGeometry(0.01, 8, 6), glow.emissive({ slot: 'accent', factor: 1.2 }), root).position.y = tipY - 0.012;
+  // 枪头刃口光线：菱形枪头的四条边各一条细光带，勾出枪头的轮廓
+  const hl = c.headLength / 2;
+  const hw = 0.062;
+  const lineW = 0.008;
+  const edgeMat = glow.emissive({ factor: 1 });
+  for (const s of [1, -1]) {
+    const edgeLine = glowMesh(
+      bladeGeometry(
+        [
+          [0, -hl],
+          [s * hw, 0],
+          [0, hl],
+          [0, hl - lineW * 4],
+          [s * (hw - lineW), 0],
+          [0, -hl + lineW * 4],
+        ],
+        0.007,
+      ),
+      edgeMat,
+      root,
+    );
+    edgeLine.position.y = headY;
+  }
 
   // --- 枪缨：套筒下的一圈破布 ---
   const fringe = mesh(new ConeGeometry(0.075, 0.2, 12, 1, true), tassel, root);
@@ -96,10 +119,8 @@ export function buildSpearWithGlow(params: Partial<SpearParams> = {}): Group {
   glowMesh(new TubeGeometry(new Helix(0.0215, y0, y1, -4.5), 110, 0.003, 5), glow.emissive({ slot: 'accent', factor: 0.45, map: flowB }), root);
 
   // --- 枪尖光点、点光源、环绕的光粒 ---
-  glow.halo(root, [0, tipY - 0.02, 0], 1, 'main', 1.2);
-  glow.halo(root, [0, tipY - 0.02, 0], 0.4, 'accent', 1.6);
-  glow.halo(root, [0, headY - 0.1, 0], 0.75, 'main', 0.5);
-  glow.halo(root, [0, (y0 + y1) / 2, 0], 0.6, 'main', 0.35);
+  glow.halo(root, [0, tipY - 0.03, 0], 1, 'main', 1);
+  glow.halo(root, [0, headY - 0.08, 0], 0.9, 'main', 0.6);
   glow.light(root, [0, headY, 0.05]);
   glow.particles(root, {
     count: c.glow.particleCount,

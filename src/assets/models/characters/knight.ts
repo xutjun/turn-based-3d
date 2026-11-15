@@ -29,7 +29,9 @@ import { createRig, DEFAULT_DIMS } from './rig';
 
 export interface KnightParams extends CharacterBaseParams {
   plateColor: number; // 主甲片
-  darkPlateColor: number; // 内衬甲/锁甲
+  darkPlateColor: number; // 内衬甲
+  mailColor: number; // 锁子甲
+  capeTatter: number; // 披风下摆撕裂的深度（0~1）
   trimColor: number; // 镶边（旧金）
   clothColor: number; // 披风、战袍
   leatherColor: number;
@@ -43,6 +45,8 @@ export const KNIGHT_DEFAULTS: KnightParams = {
   rim: ALLY_RIM,
   plateColor: 0xa9b1bf,
   darkPlateColor: 0x4b505c,
+  mailColor: 0x8d93a0,
+  capeTatter: 0.22,
   trimColor: 0xd0a242,
   clothColor: 0x9a1f18,
   leatherColor: 0x7a4f2c,
@@ -57,10 +61,10 @@ export function buildKnight(params: Partial<KnightParams> = {}): Group {
   const rim = c.rim;
   const plate = plateMaterial({ color: c.plateColor, rim });
   const dark = plateMaterial({ color: c.darkPlateColor, rim, metalness: 0.6 });
-  const mail = mailMaterial({ color: 0x8d93a0, rim });
+  const mail = mailMaterial({ color: c.mailColor, rim });
   const trim = plateMaterial({ color: c.trimColor, rim, metalness: 0.95 });
   const leather = leatherMaterial({ color: c.leatherColor, rim });
-  const cloth = clothMaterial({ color: c.clothColor, rim, doubleSide: true, alphaMap: tatterAlphaTexture(3) });
+  const cloth = clothMaterial({ color: c.clothColor, rim, doubleSide: true, alphaMap: tatterAlphaTexture(3, c.capeTatter) });
   const hemBand = bandMaterial(ornamentStripTexture(c.clothColor, c.trimColor, 3), { rim, doubleSide: true });
   const eye = glowMaterial(c.eyeColor, c.eyeIntensity);
 

@@ -1,4 +1,4 @@
-// 剑：直刃双面剑，十字护手嵌宝石，血槽里是冷蓝/银白的符文光带，呼吸闪烁。
+// 剑：直刃双面剑，十字护手嵌宝石，两侧刃口各一条细光线，血槽里是冷蓝/银白的符文光带，呼吸闪烁。
 
 import { BoxGeometry, CylinderGeometry, Group, OctahedronGeometry, PlaneGeometry, SphereGeometry } from 'three';
 import { WEAPONS } from '../../../data/weapons';
@@ -31,7 +31,7 @@ export function buildSwordWithGlow(params: Partial<SwordParams> = {}): Group {
   const c = { ...SWORD_DEFAULTS, ...params };
   const root = new Group();
   const glow = new WeaponGlow(c.glow, 23);
-  const steel = plateMaterial({ color: c.steelColor, rim: c.rim, metalness: 0.95 });
+  const steel = glow.edge(plateMaterial({ color: c.steelColor, rim: c.rim, metalness: 0.95 }), 1, 'main', 2.6);
   const trim = plateMaterial({ color: c.trimColor, rim: c.rim, metalness: 0.9 });
   const grip = leatherMaterial({ color: c.gripColor, rim: c.rim });
 
@@ -77,12 +77,33 @@ export function buildSwordWithGlow(params: Partial<SwordParams> = {}): Group {
     blade,
   );
 
+  // --- 刃口光线：两侧刃口各一条贴边的细光带（与刀的做法相同），勾出剑的轮廓 ---
+  const lineW = 0.005;
+  const edgeMat = glow.emissive({ factor: 1 });
+  for (const s of [1, -1]) {
+    glowMesh(
+      bladeGeometry(
+        [
+          [s * hw, 0],
+          [s * hw * 0.82, L * 0.82],
+          [0, L],
+          [0, L - lineW * 3],
+          [s * (hw * 0.82 - lineW), L * 0.82 - lineW],
+          [s * (hw - lineW), 0],
+        ],
+        0.0075,
+      ),
+      edgeMat,
+      blade,
+    );
+  }
+
   // --- 血槽：暗的底光 + 一排符文，剑身两面各一条 ---
   const fullerLen = L * 0.72;
   const fullerY = 0.04 + fullerLen / 2;
-  glowMesh(new BoxGeometry(0.0195, fullerLen, 0.014), glow.emissive({ factor: 0.4 }), blade).position.y = fullerY;
+  glowMesh(new BoxGeometry(0.0195, fullerLen, 0.014), glow.emissive({ factor: 0.18 }), blade).position.y = fullerY;
   const runes = ownTexture(runeStripTexture(7), 1, 1);
-  const runeMat = glow.emissive({ slot: 'accent', factor: 0.55, map: runes, additive: true, doubleSide: true });
+  const runeMat = glow.emissive({ slot: 'accent', factor: 0.7, map: runes, additive: true, doubleSide: true });
   for (const s of [1, -1]) {
     // 平面的长边沿 x（贴图横向），转到沿剑身方向并贴到剑面外侧
     const strip = glowMesh(new PlaneGeometry(fullerLen, 0.03), runeMat, blade);
@@ -92,9 +113,8 @@ export function buildSwordWithGlow(params: Partial<SwordParams> = {}): Group {
 
   // --- 辉光、点光源、冷色光点 ---
   const top = blade.position.y;
-  glow.halo(root, [0, guardY, 0], 0.55, 'main', 0.9);
-  glow.halo(root, [0, top + L * 0.4, 0], 1, 'main', 0.7);
-  glow.halo(root, [0, top + L * 0.78, 0], 0.7, 'main', 0.5);
+  glow.halo(root, [0, guardY, 0], 0.8, 'main', 1);
+  glow.halo(root, [0, top + L * 0.97, 0], 0.8, 'accent', 1);
   glow.light(root, [0, top + L * 0.45, 0.05]);
   glow.particles(root, {
     count: c.glow.particleCount,

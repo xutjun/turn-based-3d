@@ -23,7 +23,7 @@ export interface GhostParams extends CreatureBaseParams {
 
 export const GHOST_DEFAULTS: GhostParams = {
   scale: 1,
-  rim: RIM_CONFIG.ally,
+  rim: RIM_CONFIG.pet,
   shroudColor: 0x9aa2b8,
   innerColor: 0x07070a,
   liningColor: 0x3a2a5a,

@@ -33,7 +33,7 @@ export function buildBladeWithGlow(params: Partial<BladeParams> = {}): Group {
   const c = { ...BLADE_DEFAULTS, ...params };
   const root = new Group();
   const glow = new WeaponGlow(c.glow, 11);
-  const steel = plateMaterial({ color: c.steelColor, rim: c.rim, metalness: 0.95 });
+  const steel = glow.edge(plateMaterial({ color: c.steelColor, rim: c.rim, metalness: 0.95 }), 1, 'main', 2.6);
   const trim = plateMaterial({ color: c.trimColor, rim: c.rim, metalness: 0.95 });
   const grip = leatherMaterial({ color: c.gripColor, rim: c.rim });
 

@@ -60,12 +60,24 @@ export interface ParticleOptions {
 
 const TAU = Math.PI * 2;
 const GLOW_KEY = 'weaponGlow';
+/**
+ * 出手闪光作用到“大面积发光”（光晕精灵、轮廓光）上的比例。
+ * 细的发光线吃满闪光倍率；光晕只吃一小部分，这样出手时武器变亮但不会糊成一团。
+ */
+const SOFT_FLARE_SHARE = 0.3;
+
+interface RimUniforms {
+  uRimColor: { value: Color };
+  uRimStrength: { value: number };
+  uRimPower: { value: number };
+}
 
 export class WeaponGlow {
   private readonly colors: Record<GlowSlot, Color>;
   private readonly emissives: { mat: MeshStandardMaterial; factor: number; slot: GlowSlot }[] = [];
   private readonly tints: { color: Color; factor: number; slot: GlowSlot }[] = [];
   private readonly lights: PointLight[] = [];
+  private readonly edges: { uniforms: RimUniforms; factor: number; slot: GlowSlot }[] = [];
   private readonly flows: { tex: Texture; dirX: number; dirY: number }[] = [];
   private readonly updaters: ((time: number, dt: number, level: number) => void)[] = [];
   private readonly rng: Rng;
@@ -108,6 +120,20 @@ export class WeaponGlow {
     }
     this.emissives.push({ mat, factor, slot });
     return mat;
+  }
+
+  /**
+   * 边缘轮廓光：让武器的一种实体材质（刃、杆、金属件）沿轮廓发出发光色的亮边（菲涅耳自发光）。
+   * 材质要带轮边光（plateMaterial / leatherMaterial 传了 rim）；强度走配置的 edgeIntensity，
+   * 跟着呼吸、出手闪光和整体倍率一起变化。返回同一个材质，方便链式使用。
+   * @param power 越大亮边越窄
+   */
+  edge<T extends MeshStandardMaterial>(material: T, factor = 1, slot: GlowSlot = 'main', power = 2.4): T {
+    const uniforms = material.userData['rimUniforms'] as RimUniforms | undefined;
+    if (!uniforms || this.def.edgeIntensity <= 0) return material;
+    uniforms.uRimPower.value = power;
+    this.edges.push({ uniforms, factor, slot });
+    return material;
   }
 
   /** 让一张自发光贴图持续滚动（贴图要先 clone，避免影响其他武器） */
@@ -274,9 +300,15 @@ export class WeaponGlow {
     this.flareLevel *= Math.exp(-dt / Math.max(0.01, d.flareDecay));
     const breath = 1 + d.breathDepth * Math.sin(time * d.breathHz * TAU + this.phase);
     const level = this.scale * breath * (1 + (d.flareBoost - 1) * this.flareLevel);
+    // 光晕和轮廓光只吃一部分出手闪光（见 SOFT_FLARE_SHARE）
+    const soft = this.scale * breath * (1 + (d.flareBoost - 1) * this.flareLevel * SOFT_FLARE_SHARE);
 
     for (const e of this.emissives) e.mat.emissiveIntensity = d.intensity * e.factor * level;
-    for (const t of this.tints) t.color.copy(this.colors[t.slot]).multiplyScalar(t.factor * level);
+    for (const t of this.tints) t.color.copy(this.colors[t.slot]).multiplyScalar(t.factor * soft);
+    for (const e of this.edges) {
+      e.uniforms.uRimColor.value.copy(this.colors[e.slot]);
+      e.uniforms.uRimStrength.value = d.edgeIntensity * e.factor * soft;
+    }
     for (const l of this.lights) l.intensity = d.lightIntensity * level;
     for (const f of this.flows) {
       f.tex.offset.x = (f.tex.offset.x + f.dirX * d.flowSpeed * dt) % 1;

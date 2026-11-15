@@ -21,7 +21,7 @@ export interface WolfParams extends CreatureBaseParams {
 
 export const WOLF_DEFAULTS: WolfParams = {
   scale: 1,
-  rim: RIM_CONFIG.ally,
+  rim: RIM_CONFIG.pet,
   furColor: 0x4a5064,
   maneColor: 0x1c1e28,
   eyeColor: 0x7fd4ff,
@@ -168,13 +168,35 @@ export function buildShadowWolf(params: Partial<WolfParams> = {}): Group {
   const leg = (name: string, x: number, z: number, upperRot: number, lowerRot: number, lowerLen: number, thigh: number): void => {
     const hip = joint(name, body, x, -0.05, z);
     hip.rotation.x = upperRot;
-    seg(hip, fur, 0.3, thigh, 0.048, 8);
+    seg(hip, fur, 0.3, thigh, 0.064, 8);
     const knee = joint(`${name}Knee`, hip, 0, -0.3, 0);
     knee.rotation.x = lowerRot;
-    seg(knee, fur, lowerLen, 0.045, 0.03, 8);
+    seg(knee, fur, lowerLen, 0.06, 0.042, 8);
+    ball(knee, fur, 0.066, 0, 0, 0); // 关节处的毛团
+    // 腿上一圈圈的毛簇：把圆柱形的腿包成毛茸茸的轮廓，不再像光滑的木棍
+    const legFur = (len: number, r0: number, r1: number, rows: number): ConeSpec[] => {
+      const list: ConeSpec[] = [];
+      for (let i = 0; i < rows; i++) {
+        const t = (i + 0.3) / rows;
+        const r = r0 + (r1 - r0) * t;
+        for (let k = 0; k < 5; k++) {
+          const a = (k / 5) * Math.PI * 2 + i * 0.7;
+          list.push({
+            at: [Math.sin(a) * r * 0.7, -t * len, Math.cos(a) * r * 0.7],
+            dir: [Math.sin(a) * 0.45, -1, Math.cos(a) * 0.45 - 0.15],
+            radius: r * 0.62,
+            length: len / rows + 0.05,
+            flat: 0.55,
+          });
+        }
+      }
+      return list;
+    };
+    cones(hip, fur, legFur(0.3, thigh, 0.064, 3), 4);
+    cones(knee, fur, legFur(lowerLen, 0.06, 0.045, 3), 4);
     const paw = joint(`${name}Paw`, knee, 0, -lowerLen, 0);
     paw.rotation.x = -(upperRot + lowerRot); // 爪子放平
-    box(paw, mane, 0.09, 0.05, 0.14, 0, 0.015, 0.035);
+    box(paw, fur, 0.1, 0.055, 0.15, 0, 0.015, 0.035);
     // 三根骨白的爪
     cones(
       paw,
@@ -187,8 +209,8 @@ export function buildShadowWolf(params: Partial<WolfParams> = {}): Group {
   };
   for (const sx of [1, -1]) {
     const tag = sx > 0 ? 'L' : 'R';
-    leg(`foreLeg${tag}`, sx * 0.12, 0.2, -0.2, 0.3, 0.26, 0.075);
-    leg(`hindLeg${tag}`, sx * 0.115, -0.3, -0.55, 0.95, 0.32, 0.09);
+    leg(`foreLeg${tag}`, sx * 0.12, 0.2, -0.2, 0.3, 0.26, 0.095);
+    leg(`hindLeg${tag}`, sx * 0.115, -0.3, -0.55, 0.95, 0.32, 0.11);
   }
 
   // --- 尾巴：向后下方垂，尾尖深色 ---

@@ -46,7 +46,7 @@ function finishTexture(canvas: HTMLCanvasElement, srgb: boolean): CanvasTexture 
   tex.wrapT = RepeatWrapping;
   tex.colorSpace = srgb ? SRGBColorSpace : NoColorSpace;
   tex.minFilter = LinearMipmapLinearFilter;
-  tex.anisotropy = 8;
+  tex.anisotropy = 16; // 各向异性过滤（显卡不支持这么高时由 three 自动取上限），斜看布料、地面时不糊不闪
   tex.needsUpdate = true;
   return tex;
 }

@@ -9,6 +9,7 @@ export interface WeaponGlowDef {
   color: number; // 主发光色（刃口、符文、宝珠、弓弦）
   accentColor: number; // 辅色（内芯、光点、粒子）
   intensity: number; // 自发光基础强度（emissiveIntensity）
+  edgeIntensity: number; // 边缘轮廓光强度：武器实体（刃、杆、金属件）轮廓上的一圈发光，0 = 关闭
   breathHz: number; // 呼吸频率（每秒往返次数）
   breathDepth: number; // 呼吸幅度：0 = 恒定，0.5 = 在 50%~150% 之间起伏
   flowSpeed: number; // 自发光贴图的流动速度（每秒滚动的贴图圈数）
@@ -30,6 +31,7 @@ export interface WeaponDef {
 }
 
 export const WEAPONS: Record<WeaponId, WeaponDef> = {
+  // 步骤 10：发光改为“边缘发光”——细的发光线 + 轮廓光为主，光晕精灵只留一点柔光，武器本身的形状要看得清。
   // 刀：刃口熔岩红橙流光
   blade: {
     id: 'blade',
@@ -40,6 +42,7 @@ export const WEAPONS: Record<WeaponId, WeaponDef> = {
       color: 0xff4a12,
       accentColor: 0xffb347,
       intensity: 7,
+      edgeIntensity: 0.7,
       breathHz: 0.9,
       breathDepth: 0.25,
       flowSpeed: 0.55,
@@ -61,14 +64,15 @@ export const WEAPONS: Record<WeaponId, WeaponDef> = {
     glow: {
       color: 0x58b4ff,
       accentColor: 0xdff2ff,
-      intensity: 5,
+      intensity: 3.2,
+      edgeIntensity: 1.0,
       breathHz: 0.55,
       breathDepth: 0.5,
       flowSpeed: 0,
-      lightIntensity: 6,
+      lightIntensity: 5,
       lightDistance: 4.5,
-      haloSize: 0.55,
-      haloStrength: 0.32,
+      haloSize: 0.3,
+      haloStrength: 0.16,
       particleCount: 8,
       flareBoost: 2.4,
       flareDecay: 0.3,
@@ -83,20 +87,21 @@ export const WEAPONS: Record<WeaponId, WeaponDef> = {
     glow: {
       color: 0xffc23a,
       accentColor: 0xfff1b8,
-      intensity: 7,
+      intensity: 3,
+      edgeIntensity: 1.2,
       breathHz: 0.7,
       breathDepth: 0.3,
       flowSpeed: 0.45,
-      lightIntensity: 8,
+      lightIntensity: 5.5,
       lightDistance: 5,
-      haloSize: 0.7,
-      haloStrength: 0.7,
+      haloSize: 0.3,
+      haloStrength: 0.28,
       particleCount: 8,
       flareBoost: 2.8,
       flareDecay: 0.25,
     },
   },
-  // 法杖：杖顶悬浮宝珠 + 光粒 + 符文环；颜色默认取 STAFF_ELEMENT_COLORS 里的元素色
+  // 法杖：整根杖身的符文光纹和轮廓光 + 杖顶的小水晶核心；颜色默认取 STAFF_ELEMENT_COLORS 里的元素色
   staff: {
     id: 'staff',
     name: '法杖',
@@ -105,14 +110,15 @@ export const WEAPONS: Record<WeaponId, WeaponDef> = {
     glow: {
       color: 0x8a6bff,
       accentColor: 0xcfd6ff,
-      intensity: 7,
+      intensity: 2.8,
+      edgeIntensity: 1.4,
       breathHz: 0.6,
       breathDepth: 0.35,
       flowSpeed: 0.12,
-      lightIntensity: 10,
+      lightIntensity: 6,
       lightDistance: 5.5,
-      haloSize: 0.75,
-      haloStrength: 0.65,
+      haloSize: 0.3,
+      haloStrength: 0.2,
       particleCount: 16,
       flareBoost: 3,
       flareDecay: 0.45,
@@ -127,14 +133,15 @@ export const WEAPONS: Record<WeaponId, WeaponDef> = {
     glow: {
       color: 0x3dffc8,
       accentColor: 0xd8fff2,
-      intensity: 7,
+      intensity: 2.8,
+      edgeIntensity: 0.9,
       breathHz: 0.8,
       breathDepth: 0.3,
       flowSpeed: 0.8,
-      lightIntensity: 6,
+      lightIntensity: 2.5,
       lightDistance: 4.5,
-      haloSize: 0.5,
-      haloStrength: 0.45,
+      haloSize: 0.26,
+      haloStrength: 0.2,
       particleCount: 8,
       flareBoost: 2.6,
       flareDecay: 0.3,

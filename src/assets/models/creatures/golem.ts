@@ -22,13 +22,13 @@ export interface GolemParams extends CreatureBaseParams {
 
 export const GOLEM_DEFAULTS: GolemParams = {
   scale: 1,
-  rim: RIM_CONFIG.ally,
+  rim: RIM_CONFIG.pet,
   stoneColor: 0xa39c8a,
   darkStoneColor: 0x4f4c48,
   bandColor: 0xb07a3a,
   mossColor: 0x5a7a3a,
   glowColor: 0xd8e86a,
-  glowIntensity: 2.8,
+  glowIntensity: 1.5,
 };
 
 export function buildGolem(params: Partial<GolemParams> = {}): Group {
@@ -40,8 +40,8 @@ export function buildGolem(params: Partial<GolemParams> = {}): Group {
   const glow = glowMaterial(c.glowColor, c.glowIntensity);
   const moss = stoneSurfaceMaterial({ color: c.mossColor, rim: c.rim });
   // 刻着符文的石头：石质表面上零散的发光刻痕
-  const crystal = glowMaterial(c.glowColor, c.glowIntensity * 0.3, { baseColor: 0x4a5a22 });
-  const runedStone = glowMaterial(c.glowColor, c.glowIntensity * 0.2, {
+  const crystal = glowMaterial(c.glowColor, c.glowIntensity * 0.45, { baseColor: 0x4a5a22 });
+  const runedStone = glowMaterial(c.glowColor, c.glowIntensity * 0.3, {
     emissiveMap: runeSpeckTexture(17, 30),
     baseColor: c.stoneColor,
     surface: stoneTextures(),

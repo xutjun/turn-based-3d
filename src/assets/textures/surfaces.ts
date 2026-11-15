@@ -237,27 +237,32 @@ export function leatherTextures(seed = 31): TextureSet {
   );
 }
 
-/** 粗布/破布：经纬织纹、起球和污渍 */
+/**
+ * 粗布/破布：经纬织纹、起球和污渍。
+ * 步骤 10：纱线密度从 96 降到 40、织纹对比减半——原来的细密网格近看像编织网，远看会闪烁（摩尔纹）；
+ * 现在以大块的褶皱明暗和污渍为主，织纹只是淡淡的一层。
+ */
 export function clothTextures(seed = 41): TextureSet {
   return cached(`cloth:${seed}`, () =>
     generateTextureSet(
       512,
       (u, v, out) => {
-        const n = 96; // 每张贴图的纱线数
+        const n = 40; // 每张贴图的纱线数
         const warp = 0.5 + 0.5 * Math.sin(u * n * Math.PI * 2);
         const weft = 0.5 + 0.5 * Math.sin(v * n * Math.PI * 2);
         const weave = warp * weft;
-        const fuzz = valueNoise(u * 200, v * 200, seed, 200);
+        const fuzz = valueNoise(u * 70, v * 70, seed, 70);
         const stain = smoothstep(0.5, 0.78, fbm(u * 5, v * 5, seed + 3, 4, 5));
         const fold = fbm(u * 3, v * 12, seed + 5, 3, 3);
-        const tone = 0.74 + (weave - 0.25) * 0.16 + (fuzz - 0.5) * 0.1 - stain * 0.3 + (fold - 0.5) * 0.14;
+        const worn = fbm(u * 9, v * 9, seed + 7, 3, 9);
+        const tone = 0.76 + (weave - 0.25) * 0.07 + (fuzz - 0.5) * 0.08 - stain * 0.28 + (fold - 0.5) * 0.18 + (worn - 0.5) * 0.1;
         out.r = clamp01(tone);
         out.g = clamp01(tone * 0.98);
         out.b = clamp01(tone * 0.95);
-        out.height = clamp01(0.4 + weave * 0.35 + (fold - 0.5) * 0.3 + (fuzz - 0.5) * 0.1);
+        out.height = clamp01(0.45 + weave * 0.14 + (fold - 0.5) * 0.4 + (fuzz - 0.5) * 0.12);
         out.roughness = clamp01(0.9 + (fuzz - 0.5) * 0.1);
       },
-      2.2,
+      1.6,
     ),
   );
 }
@@ -295,11 +300,11 @@ export function furTextures(seed = 61): TextureSet {
     generateTextureSet(
       512,
       (u, v, out) => {
-        const strand = valueNoise(u * 120, v * 10, seed, 0);
-        const fine = valueNoise(u * 260, v * 22, seed + 3, 0);
+        const strand = valueNoise(u * 60, v * 7, seed, 0);
+        const fine = valueNoise(u * 130, v * 16, seed + 3, 0);
         const clump = fbm(u * 9, v * 5, seed + 5, 3, 0);
         const patch = smoothstep(0.5, 0.8, fbm(u * 4, v * 4, seed + 9, 3, 4));
-        const tone = 0.56 + (strand - 0.5) * 0.24 + (fine - 0.5) * 0.14 + (clump - 0.5) * 0.3 - patch * 0.18;
+        const tone = 0.58 + (strand - 0.5) * 0.13 + (fine - 0.5) * 0.1 + (clump - 0.5) * 0.3 - patch * 0.16;
         out.r = clamp01(tone);
         out.g = clamp01(tone * 0.97);
         out.b = clamp01(tone * 0.93);

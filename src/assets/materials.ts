@@ -193,7 +193,7 @@ export function mailMaterial(opts: SurfaceOptions): MeshStandardMaterial {
 
 /** 毛皮：顺着一个方向的毛流 */
 export function furMaterial(opts: SurfaceOptions): MeshStandardMaterial {
-  return surface(furTextures(), opts, { metalness: 0, roughness: 1, normal: 1.8 });
+  return surface(furTextures(), opts, { metalness: 0, roughness: 1, normal: 1.0 });
 }
 
 /**

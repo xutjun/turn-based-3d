@@ -106,8 +106,22 @@ export const RIM_CONFIG = {
   // 不再被一整圈同色亮边盖成单色。
   ally: { color: 0x9fc2ff, strength: 0.5, power: 3.0, lift: 0.18 }, // 友方：冷蓝白
   enemy: { color: 0xff5a3a, strength: 0.6, power: 2.4, lift: 0 }, // 敌方：暗红
+  // 友方宝宝：体型小，在战场远景里容易沉进暗处，亮边和底色提亮都比人物强一些
+  pet: { color: 0xa8c8ff, strength: 0.65, power: 2.6, lift: 0.34 },
   weapon: { color: 0x8fb8ff, strength: 0.85, power: 2.2, lift: 0 }, // 友方武器（保持步骤 4 的观感）
-} satisfies Record<Side | 'weapon', { color: number; strength: number; power: number; lift: number }>;
+} satisfies Record<Side | 'weapon' | 'pet', { color: number; strength: number; power: number; lift: number }>;
+
+/**
+ * 敌方各兵种自己的轮边光（步骤 10）：不再统一用暗红，每种敌人的亮边跟着自己的主题色走，
+ * 红色只留给 Boss。整体比友方更暗、更窄，底色提亮也更少，保持“冷暗 / 腐化”的观感。
+ */
+export const ENEMY_RIM_CONFIG = {
+  skeleton: { color: 0xa9b4a2, strength: 0.42, power: 2.8, lift: 0.16 }, // 骨白与锈铁：灰绿冷光
+  fallenKnight: { color: 0x7f8aa8, strength: 0.45, power: 2.8, lift: 0.2 }, // 黑铁：钢灰冷光
+  demonPriest: { color: 0xb45ac8, strength: 0.45, power: 2.6, lift: 0.16 }, // 暗紫长袍：紫红
+  necromancer: { color: 0x58c486, strength: 0.45, power: 2.6, lift: 0.16 }, // 墨绿毒光
+  boss: { color: 0xff5a3a, strength: 0.7, power: 2.4, lift: 0.14 }, // 熔岩红
+};
 
 /**
  * 低画质模式（右上角“画质”按钮，或地址加 ?quality=low）：给没有独立显卡的机器用。
