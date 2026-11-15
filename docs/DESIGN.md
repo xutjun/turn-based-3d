@@ -1,6 +1,6 @@
 # 工程设计文档（DESIGN.md）
 
-> 本文档是步骤 1~8 的唯一技术依据。需求以 `docs/SPEC.md` 为准；本文档只把 SPEC 落成可实现的接口、字段、公式和流程。若两者冲突，以 SPEC 为准，并在汇报中说明。
+> 本文档是步骤 1~9 的唯一技术依据。需求以 `docs/SPEC.md` 为准；本文档只把 SPEC 落成可实现的接口、字段、公式和流程。若两者冲突，以 SPEC 为准，并在汇报中说明。
 > 文中“§x”指本文档章节；引用需求文档时写作“SPEC §x”。
 
 ---
@@ -26,12 +26,12 @@
 ├─ package.json / tsconfig.json / vite.config.ts / vitest.config.ts
 ├─ README.md
 ├─ docs/  SPEC.md  DESIGN.md
-├─ scripts/  sim.ts（命令行跑一场战斗）  balance.ts（批量统计胜率、回合数、技能使用）
+├─ scripts/  sim.ts（命令行跑一场战斗）  balance.ts（批量统计胜率、回合数、技能使用、集火率、魔法不足占比）
 ├─ src/
 │  ├─ main.ts                 入口：按地址参数进入玩家战斗 / 自动战斗 / 技能演示 / 演出样例 / 模型预览
 │  ├─ core/                   规则逻辑层：纯 TS，禁止 import three / DOM / src/data / src/render / src/ui / src/assets
 │  │  ├─ types.ts             §2 的全部接口
-│  │  ├─ rng.ts               可注入种子的随机数（mulberry32）
+│  │  ├─ rng.ts               可注入种子的随机数（mulberry32）；战斗结算与 AI 选目标各用一条独立的随机序列（§8.4）
 │  │  ├─ events.ts            事件类型定义 + EventBus
 │  │  ├─ damage.ts            伤害/治疗/暴击/防御公式（SPEC §6 要求集中于此并写注释）
 │  │  ├─ turnOrder.ts         出手排序
@@ -39,18 +39,21 @@
 │  │  ├─ status.ts            封印施加/递减/解除
 │  │  ├─ commands.ts          指令校验、可用指令查询
 │  │  ├─ skillExecutor.ts     按 pattern 执行技能，产出事件
+│  │  ├─ passives.ts          被动技能的触发判定（§4.5）
 │  │  ├─ ai.ts                敌方与自动宝宝的指令决策
 │  │  ├─ battle.ts            BattleEngine：状态机与对外 API
 │  │  └─ setup.ts             由单位模板生成参战单位
 │  ├─ data/                   配置表：纯数据 + 只依赖 core/types.ts
 │  │  ├─ battleConfig.ts      全局数值（暴击、浮动、防御系数等）
-│  │  ├─ skills.ts            技能表（§4）
+│  │  ├─ skills.ts            主动技能表（§4）
+│  │  ├─ passives.ts          被动技能表（§4.5）
 │  │  ├─ classes.ts           职业 → 技能库
 │  │  ├─ weapons.ts           武器：出手方式 + 普攻技能 + 发光参数
 │  │  ├─ heroes.ts            友方 5 人物 + 5 宝宝
+│  │  ├─ pets.ts              宝宝类型（物理型 / 法术型）的定义，以及每只宝宝属于哪一型（§4.6）
 │  │  ├─ enemies.ts           敌方 10 单位
 │  │  ├─ formation.ts         阵型格子与世界坐标（§7）
-│  │  ├─ aiConfig.ts          AI 阈值
+│  │  ├─ aiConfig.ts          AI 阈值、选目标的权重参数
 │  │  ├─ defaultSetup.ts      用默认配置表组装一场 10v10
 │  │  ├─ assetKeys.ts / unitModels.ts   资源键；单位、武器用哪个模型及外观参数
 │  │  ├─ renderConfig.ts      相机、灯光、雾、后处理、低画质、绘制优化
@@ -102,6 +105,7 @@ main ──► 全部
 // ---------- 基础枚举 ----------
 export type UnitId = string;            // 例：'A0'..'A9'（友方）, 'E0'..'E9'（敌方）
 export type SkillId = string;
+export type PassiveId = string;
 export type Side = 'ally' | 'enemy';
 export type UnitKind = 'hero' | 'pet' | 'enemy';
 export type ClassId = 'physical' | 'magic' | 'seal' | 'heal';
@@ -124,6 +128,7 @@ export type AnimType =
   | 'comboSlash'  | 'tripleShot'                  // 连斩 / 原地三连射
   | 'whirlwind'   | 'arrowRain'                   // 旋风斩 / 箭雨
   | 'groupSpell'  | 'singleSpell'                 // 群体法术 / 单体法术
+  | 'groupSpellSmall'                             // 法术型宝宝的三目标法术：群体法术的缩小版
   | 'sealChain' | 'groupHeal' | 'revive';
 
 // ---------- 属性 ----------
@@ -167,7 +172,8 @@ export interface Unit {
   weaponId?: WeaponId;     // 友方人物有；宝宝/敌人无
   attackMode: AttackMode;
   basicAttackSkillId: SkillId;
-  skillIds: SkillId[];     // 不含普攻
+  skillIds: SkillId[];     // 主动技能，不含普攻；物理型宝宝为空
+  passiveIds: PassiveId[]; // 被动技能（§4.5）；没有则为空数组
   stats: Stats;
   hp: number;              // 当前气血，0 ≤ hp ≤ maxHp
   mp: number;              // 当前魔法，0 ≤ mp ≤ maxMp
@@ -201,6 +207,19 @@ export interface SkillDef {
   reviveHpRatio?: number;        // 仅 revive
 }
 
+// ---------- 被动技能（配置表行，详见 §4.5） ----------
+export type PassiveTrigger = 'basicAttack';          // 触发条件：目前只有“普攻出手时”
+export type PassiveEffect =
+  | { kind: 'extraHit'; hits: number };              // 对同一目标追加 hits 次攻击
+export interface PassiveDef {
+  id: PassiveId;
+  name: string;            // 触发时的飘字，也用于指令面板说明
+  description: string;
+  trigger: PassiveTrigger;
+  chance: number;          // 触发概率 0~1
+  effect: PassiveEffect;
+}
+
 // ---------- 指令 ----------
 export type Command =
   | { kind: 'attack'; targetId: UnitId }                     // 普攻
@@ -219,8 +238,12 @@ export interface BattleState {
   phase: BattlePhase;
   units: Record<UnitId, Unit>;
   unitIds: UnitId[];                    // 固定顺序：A0..A9, E0..E9
-  turnOrder: UnitId[];                  // 本回合出手顺序（回合开始时生成，包含倒地的友方，见 §8.2）
+  turnOrder: UnitId[];                  // 本回合出手顺序（回合开始时生成，包含倒地的友方，见 §8.2）；回合内不变
   actionCursor: number;                 // 下一个出手者在 turnOrder 中的下标
+  lateQueue: UnitId[];                  // 队尾补出手队列：复活时速度位置已过的单位，按复活先后排列（§5.5）
+  actedThisTurn: UnitId[];              // 本回合已经出过手的单位（每回合最多出手一次）
+  aiTargetCounts: Record<Side, Record<AiTargetKind, Record<UnitId, number>>>;
+                                        // 本回合各方 AI 已把某单位选为目标的次数，回合开始清零（§8.4）
   commands: Partial<Record<UnitId, Command>>; // 本回合已提交的指令
   awaitingCommandFor: UnitId | null;    // 执行阶段中等待玩家现场下指令的复活单位（§8.2）
   winner: Side | null;
@@ -242,15 +265,26 @@ export interface BattleConfig {
 export interface BattleSetup {
   config: BattleConfig;
   skills: Record<SkillId, SkillDef>;
+  passives: Record<PassiveId, PassiveDef>;
   units: Unit[];             // 由 setup.ts 根据 heroes/enemies/formation 生成
   settings: BattleSettings;
   ai: AiConfig;
   seed: number;
 }
 
+export type AiTargetKind = 'attack' | 'seal' | 'heal';
+export type AiTargetMode = 'focus' | 'spread';   // focus = 固定选“最优”目标；spread = 带权重的随机 + 分散
+
 export interface AiConfig {
   healHpThreshold: number;      // 友军 hp 比例低于该值时治疗，默认 0.6
   aoeMinTargets: number;        // 存活对方单位 ≥ 该值时优先用群体技能，默认 3
+  targetMode: Record<Side, AiTargetMode>;  // 默认 { enemy: 'spread', ally: 'focus' }，见 §8.4
+  spread: {
+    baseWeight: number;         // 每个候选目标的基础权重，默认 1
+    repeatDecay: number;        // 同一回合内每被己方 AI 选中一次，权重 × 该值，默认 0.5
+    lowHpBonus: number;         // 残血加权：权重 × (1 + lowHpBonus × 已损失气血比例)，默认 0.3
+    sealCasterBonus: number;    // 封印时，法术 / 恢复职业的权重 × 该值，默认 2
+  };
 }
 ```
 
@@ -330,7 +364,7 @@ interface EventBase { seq: number; turn: number; }
 | `BattleStart` | `start()` | `units: UnitSnapshot[]` |
 | `TurnStart` | 每回合开始 | `turnOrder: UnitId[]` |
 | `CommandPhaseStart` | 进入指令阶段 | `pending: UnitId[]` |
-| `CommandRequested` | 执行阶段中复活单位轮到出手、需要玩家下指令时（§8.2） | `unitId` |
+| `CommandRequested` | 执行阶段中复活的友方单位轮到出手、需要玩家下指令时（§8.2） | `unitId` |
 | `ExecutionPhaseStart` | `beginExecution()` | `commands: Record<UnitId, Command>`（含 AI 指令） |
 | `DefendApplied` | 紧接 `ExecutionPhaseStart`，每个防御单位一条 | `unitId` |
 | `UnitActStart` | 每个单位出手开始 | `actorId`, `command: Command` |
@@ -341,7 +375,8 @@ interface EventBase { seq: number; turn: number; }
 | `HitResolved` | 每段伤害结算 | `actorId`, `targetId`, `skillId`, `stepIndex`, `stepCount`, `hitIndex`, `hitCount`, `damageType`, `isMiss`, `isCrit`, `defended`, `damage`, `hpBefore`, `hpAfter`, `killed` |
 | `HealResolved` | 每个治疗目标结算 | `actorId`, `targetId`, `skillId`, `stepIndex`, `stepCount`, `isCrit`, `amount`（实际回复量）, `hpBefore`, `hpAfter` |
 | `UnitDied` | 气血归零 | `unitId`, `killerId`, `vanish: boolean`（敌方为 true：播放死亡后消失；友方为 false：倒地保持） |
-| `UnitRevived` | 复活成功 | `unitId`, `actorId`, `hpAfter`, `maxHp`, `actsThisTurn: boolean`（见 §5.5） |
+| `UnitRevived` | 复活成功 | `unitId`, `actorId`, `hpAfter`, `maxHp`, `actsThisTurn: boolean`（本回合是否还会出手）, `queuedAtEnd: boolean`（是否排到队尾，见 §5.5） |
+| `PassiveTriggered` | 被动技能生效的那一刻（连击：第二击之前） | `unitId`, `passiveId`, `name`（飘字）, `targetId` |
 | `StatusApplied` | 封印命中 | `unitId`, `sourceId`, `status: StatusType`, `remainingTurns` |
 | `StatusResisted` | 封印未命中 | `unitId`, `sourceId`, `status: StatusType` |
 | `StatusTicked` | 回合结算时剩余回合减少但未到期 | `unitId`, `status`, `remainingTurns` |
@@ -356,7 +391,8 @@ interface EventBase { seq: number; turn: number; }
 - 普攻：1 条，step 0。
 - 连斩：同一目标 step 0/1/2，`hitIndex` 0/1/2。
 - 旋风斩：step 0..n-1，每个目标一步。
-- 群体法术 / 群体治疗：所有目标都是 step 0（同帧爆发、同时飘字）。
+- 群体法术 / 三目标法术 / 群体治疗：所有目标都是 step 0（同帧爆发、同时飘字）。
+- 普攻触发连击：同一目标 step 0/1，`hitIndex` 0/1，`hitCount = stepCount = 2`；`PassiveTriggered` 夹在两条 `HitResolved` 之间。
 
 **死亡事件顺序**：`sequential` / `multiHit` 中，`UnitDied` 紧跟在致死的那条 `HitResolved` 之后；`simultaneous` 中，等该 step 的所有 `HitResolved` 都发出后，再统一发出 `UnitDied`。
 
@@ -366,12 +402,12 @@ UnitActStart
  [CommandFallback]       // 可选
  [TargetRetargeted]      // 可选
  SkillCast  或  ActionFizzled
- HitResolved / HealResolved / StatusApplied / StatusResisted / UnitRevived …（0..n 条）
+ HitResolved / HealResolved / StatusApplied / StatusResisted / UnitRevived / PassiveTriggered …（0..n 条）
  [UnitDied …]
 UnitActEnd
 [BattleEnd]              // 这次出手导致一方全灭时
 ```
-最后一个单位出手后，同一次 `stepAction()` 的返回值末尾追加 `StatusTicked / StatusRemoved …`、`TurnEnd`、下一回合的 `TurnStart`、`CommandPhaseStart`。
+最后一个单位（含队尾补出手的复活单位）出手后，同一次 `stepAction()` 的返回值末尾追加 `StatusTicked / StatusRemoved …`、`TurnEnd`、下一回合的 `TurnStart`、`CommandPhaseStart`。
 
 ### 3.5 表现层订阅约定
 - `BattleDirector` 用 `onAny` 收事件并转成时间线片段，片段是返回 Promise 的异步函数，按顺序执行，同一 stepIndex 的片段并行执行。
@@ -423,13 +459,15 @@ UnitActEnd
 | `whirlwind` | 旋风斩 | physical | 80 | damage | physical | 敌·存活 | 7 | sequential | 1 | 0.7 | 1.0 | 是 | whirlwind / arrowRain / — | none | `sequenceOrder: 'speedDesc'`；近战单位使用 |
 | `arrow_rain` | 箭雨 | physical | 80 | damage | physical | 敌·存活 | 7 | sequential | 1 | 0.7 | 1.0 | 是 | whirlwind / arrowRain / — | none | 旋风斩的弓箭手版本：数值相同，远程单位使用 |
 | `group_spell` | 群体法术·天雷 | magic | 80 | damage | magic | 敌·存活 | 6 | simultaneous | 1 | 0.8 | 1.0 | 否 | — / — / groupSpell | thunder | — |
-| `group_spell_fire` | 群体法术·烈焰 | magic | 80 | damage | magic | 敌·存活 | 6 | simultaneous | 1 | 0.8 | 1.0 | 否 | — / — / groupSpell | fire | 群体法术的火系版本：数值相同，骨龙幼崽使用 |
+| `triple_spell` | 三重魂火 | magic | 待定 | damage | magic | 敌·存活 | 3 | simultaneous | 1 | 0.8 | 1.0 | 否 | — / — / groupSpellSmall | fire | 法术型宝宝的主动技能（步骤 9 新增） |
 | `single_spell` | 单体法术·炎爆 | magic | 50 | damage | magic | 敌·存活 | 1 | single | 1 | 1.6 | 1.0 | 否 | — / — / singleSpell | fire | SPEC §7.1 中的“可选补充” |
 | `seal` | 封印 | seal | 60 | seal | magic | 敌·存活且未被封印 | 1 | single | 1 | 0 | 0.75 | 否 | — / — / sealChain | seal | `status: { type: 'seal', duration: 3 }` |
 | `group_heal` | 群体治疗 | heal | 80 | heal | magic | 友·存活 | 3 | simultaneous | 1 | 1.0 | 1.0 | 否 | — / — / groupHeal | heal | — |
 | `revive` | 复活 | heal | 120 | revive | magic | 友·死亡 | 1 | single | 1 | 0 | 1.0 | 否 | — / — / revive | heal | `reviveHpRatio: 0.3` |
 
-> 步骤 2 补充：`triple_shot`、`arrow_rain`、`group_spell_fire` 不是新技能，而是 SPEC §7.1 里连斩 / 旋风斩的“弓箭手版本”和群体法术的另一种元素。它们在技能表里各占一行（用原技能改名称、说明、元素得到，数值由测试保证相同），这样指令面板、日志、飘字和技能演示模式显示的名称完全一致。
+> 步骤 2 补充：`triple_shot`、`arrow_rain` 不是新技能，而是 SPEC §7.1 里连斩 / 旋风斩的“弓箭手版本”。它们在技能表里各占一行（用原技能改名称、说明得到，数值由测试保证相同），这样指令面板、日志、飘字和技能演示模式显示的名称完全一致。
+>
+> 步骤 9：删除 `group_spell_fire`（原来只有骨龙幼崽使用，宝宝改型后没有使用者）；新增 `triple_spell`。上表的 MP 列为步骤 8 的数值，步骤 9 调整魔法量后以 `skills.ts` 为准并回填本表（§9.4 V4）。
 
 单体治疗（SPEC §7.1 中的“可选补充”）本期不做，表结构已能支持（`effect: heal, pattern: single`）。
 
@@ -437,12 +475,13 @@ UnitActEnd
 | 职业 | 技能库（不含普攻） |
 |---|---|
 | physical | `combo_slash`, `whirlwind`（近战）；`triple_shot`, `arrow_rain`（远程） |
-| magic | `group_spell`, `group_spell_fire`, `single_spell` |
+| magic | `group_spell`, `single_spell`, `triple_spell`（仅法术型宝宝使用） |
 | seal | `seal` |
 | heal | `group_heal`, `revive` |
 
 - 友方人物：`skillIds` 由 `heroSkillIds(职业, 出手方式)` 给出——物理系近战拿 `combo_slash, whirlwind`，弓箭手拿 `triple_shot, arrow_rain`；法术系拿 `group_spell, single_spell`；封印、恢复拿各自的全部技能。
-- 宝宝与敌人：`skillIds` 在模板里写明，必须是所属职业技能库的子集。
+- 宝宝：`skillIds` 和 `passiveIds` 由宝宝类型决定（§4.6）。
+- 敌人：`skillIds` 在模板里写明，必须是所属职业技能库的子集。
 - 敌人不能拥有 `revive`（敌人被击败即消失，见 §5.5）；步骤 2 用测试校验。
 
 ### 4.4 Delivery 与普攻的决定方式（SPEC §7、SPEC §7.3）
@@ -450,6 +489,48 @@ UnitActEnd
 - 实际 delivery：`damageType = magic` 时固定为 `cast`；`damageType = physical` 时取单位的 `attackMode`（`melee` 或 `ranged`）。`attackMode = cast` 的单位如果被配置成物理技能，按 `melee` 处理（防御性规则，默认数据里不会出现）。
 - 实际冲锋 = `skill.meleeCharge && delivery === 'melee'`。
 - 动画 = `skill.animation[delivery]`。
+
+### 4.5 被动技能（`src/data/passives.ts`，类型为 `PassiveDef`；判定在 `src/core/passives.ts`）
+被动技能不出现在指令里、不消耗 MP、不受封印和 MP 影响；单位通过 `passiveIds` 拥有它。引擎在对应的触发点查表、按概率判定、执行效果，并发出 `PassiveTriggered`。
+
+| 字段 | 含义 |
+|---|---|
+| `id` / `name` / `description` | 键、名称（也是触发时的飘字）、说明 |
+| `trigger` | 触发条件。目前只有 `basicAttack`（单位用普攻出手时，包括技能被改成普攻的情况） |
+| `chance` | 触发概率 0~1 |
+| `effect` | 效果。目前只有 `{ kind: 'extraHit', hits }`：对同一目标追加 `hits` 次攻击 |
+
+| id | 名称 | 触发 | 概率 | 效果 |
+|---|---|---|---|---|
+| `double_strike` | 连击 | basicAttack | 0.5 | extraHit, hits: 1 |
+
+**连击的结算**（SPEC §7.1 第 5 条）：
+1. 普攻的目标确定、发出 `SkillCast` 之后，判定一次 `rand(0,1) < chance`。未触发就是普通的一次普攻。
+2. 触发后计划段数为 2。第一击照常结算（`HitResolved`，`hitIndex 0`，`hitCount 2`）。
+3. 第一击之后目标仍然存活：发出 `PassiveTriggered`，再结算第二击（`hitIndex 1`）。第二击用同一个普攻技能、同一个目标，重新独立判定命中、浮动、暴击（第一击未命中不影响第二击）。
+4. 第一击已经打死目标：第二击取消，不发 `PassiveTriggered`，不换目标（与连斩中途目标死亡的规则一致，§6.6）。
+5. 第二击不重新冲锋、不扣任何消耗；整个过程是该单位的一次出手。
+6. 随机数消耗顺序：连击判定 →（每一击）命中 → 浮动 → 暴击。没有被动技能的单位不消耗“连击判定”那一次随机数，所以原有单位的结算序列不变。
+
+新增被动技能的方法：在 `passives.ts` 加一行；需要新的触发点或效果时，扩展 `PassiveTrigger` / `PassiveEffect` 并在 `core/passives.ts` 加对应分支。
+
+### 4.6 宝宝类型（`src/data/pets.ts`）
+宝宝只有两种类型，类型决定职业、主动技能和被动技能；每只宝宝属于哪一型写在 `PET_ASSIGNMENT` 里，可以改。
+
+| 类型 | classId | 主动技能 `skillIds` | 被动技能 `passiveIds` | 指令面板 |
+|---|---|---|---|---|
+| 物理型 `physical` | physical | 无 | `double_strike` | 攻击、防御 |
+| 法术型 `magic` | magic | `triple_spell` | 无 | 攻击、技能、防御 |
+
+| 宝宝 | 原职业 / 技能 | 新类型 | 出手方式 / 普攻 |
+|---|---|---|---|
+| A5 影狼·灰 | physical / 连斩 | 物理型 | melee / basic_physical |
+| A6 影狼·赤 | physical / 连斩 | 物理型 | melee / basic_physical |
+| A7 骨龙幼崽 | magic / 群体法术·烈焰 | 法术型 | cast / basic_magic |
+| A8 幽灵 | seal / 封印 | 法术型 | cast / basic_magic |
+| A9 魔偶 | heal / 群体治疗 | 物理型 | melee / basic_physical |
+
+出手方式和普攻沿用原来的配置（幽灵本来就是原地施法，魔偶本来就是近战），所以模型和基础动作不用改。
 
 ---
 
@@ -495,9 +576,12 @@ amount = round(A.magAtk × S.multiplier × v × crit)
 - **友方死亡**：倒地并保持倒地姿态（`vanish = false`），只能被复活技能选中。
 - **复活目标**：只能选倒地的友方单位；选中存活的友方会被拒绝（`invalidTarget`）。
 - **复活效果**：`hp = max(1, floor(T.maxHp × S.reviveHpRatio))`，`mp` 保持死亡时的值，`statuses = []`，`defending = false`。
-- **复活当回合能否出手**：取决于被复活者在本回合 `turnOrder` 中的位置（`turnOrder` 包含倒地的友方，§8.2）：
-  - 位置在复活施法者**之后**（速度更慢；同速时由回合开始时的随机排序决定）：本回合到它时正常出手，`UnitRevived.actsThisTurn = true`。
-  - 位置在施法者**之前**（速度更快，那个位置已经过去）：本回合不出手，`actsThisTurn = false`。
+- **复活当回合可以行动**（步骤 9 修改，SPEC §7.1）：被复活者在本回合 `turnOrder` 中的位置（`turnOrder` 包含倒地的友方，§8.2）决定它什么时候出手：
+  - 位置在复活施法者**之后**（速度更慢；同速时由回合开始时的随机排序决定）：本回合轮到它的位置时出手。`actsThisTurn = true`，`queuedAtEnd = false`。
+  - 位置在施法者**之前**（速度更快，那个位置已经过去）：加入 `lateQueue`，在 `turnOrder` 全部走完之后出手；同一回合有多个这样的单位时，按复活的先后顺序。`actsThisTurn = true`，`queuedAtEnd = true`。
+  - **每回合最多出手一次**：本回合已经出过手（在 `actedThisTurn` 里）、之后被击倒又被复活的单位，本回合不再出手。`actsThisTurn = false`，`queuedAtEnd = false`。
+  - 排在队尾的单位如果在轮到它之前又被击倒，轮到时直接跳过；如果再次被复活，仍然保留原来的队尾位置（不重复入队）。
+  - `turnOrder` 本身在回合内不改变，所以目标补足、重选用的“速度顺序”（§6.2）不受影响。
   - 本回合出手用的指令：见 §8.2 的“复活单位的指令”。
 - 下一回合起正常下指令、参与排序。
 
@@ -563,10 +647,12 @@ targets = [主目标] + 其余合法单位按速度顺序取前 (targetCount −
 
 ### 6.5 出手时目标失效（重选或判空）
 目标在**出手开始时**统一重新校验（SPEC §5.4）：
-- **主目标已不合法**（敌方已被击败消失；封印时目标已被别人封印；群体治疗目标已倒地）：按速度顺序选第一个合法单位作为新主目标，发出 `TargetRetargeted`，再按 §6.3 补足。
+- **主目标已不合法**（敌方已被击败消失；封印时目标已被别人封印；群体治疗目标已倒地）：选一个新的合法单位作为主目标，发出 `TargetRetargeted`，再按 §6.3 补足。新主目标的选法：
+  - 玩家下的指令，以及 `targetMode = 'focus'` 一方的 AI 指令：按速度顺序选第一个合法单位（原规则）。
+  - `targetMode = 'spread'` 一方的 AI 指令（默认是敌方）：按 §8.4 的权重随机选，并计入本回合的被选次数。否则所有失效的攻击都会落到同一个“最快的友方”身上，变成变相集火。
 - **复活**目标已不是倒地状态（被别人先复活了）：不重选，发出 `ActionFizzled`，不扣 MP。
 - 找不到任何合法目标：发出 `ActionFizzled`，不扣 MP。
-- **CommandFallback 改普攻后**：原主目标是存活的敌方就沿用；否则（例如原来是治疗友军）按速度顺序取第一个存活敌人。
+- **CommandFallback 改普攻后**：原主目标是存活的敌方就沿用；否则（例如原来是治疗友军）按上一条同样的方法选一个存活敌人。
 
 ### 6.6 执行中目标死亡
 - `multiHit`（连斩/三连射）：目标死亡后剩余段数取消，不再发出 `HitResolved`。表现层随即返回原位。
@@ -637,7 +723,7 @@ position(side, row, col) = frontCenter(side)
 ### 8.2 各阶段做什么
 **TurnStart（回合开始）**
 1. `turn += 1`（首回合为 1）。
-2. 出手排序：取所有存活单位**和倒地的友方单位**（倒地友方可能在本回合被复活，§5.5；敌方被击败即消失，不参与），按 `speed` 降序；速度相同时用 RNG 打乱（Fisher–Yates，只在同速的组内打乱）。结果写入 `turnOrder`，`actionCursor = 0`，`commands = {}`。
+2. 出手排序：取所有存活单位**和倒地的友方单位**（倒地友方可能在本回合被复活，§5.5；敌方被击败即消失，不参与），按 `speed` 降序；速度相同时用 RNG 打乱（Fisher–Yates，只在同速的组内打乱）。结果写入 `turnOrder`，`actionCursor = 0`，`commands = {}`，`lateQueue = []`，`actedThisTurn = []`，`aiTargetCounts` 清零。
 3. 发出 `TurnStart`。
 
 **command（指令阶段）**
@@ -647,14 +733,15 @@ position(side, row, col) = frontCenter(side)
 - `beginExecution()`：如果有非自动单位未提交指令就抛错；然后由 `ai.ts` 给所有 `autoCommand` 单位生成指令，发出 `ExecutionPhaseStart` 和所有 `DefendApplied`，进入 execution。
 
 **execution（执行阶段）**——每次 `stepAction()`：
-1. 从 `actionCursor` 往后找下一个**仍然存活**的单位（倒地单位直接跳过，不发事件）。
+1. 找下一个出手者：先从 `actionCursor` 往后找 `turnOrder` 里下一个**仍然存活**的单位（倒地单位直接跳过，不发事件）；`turnOrder` 走完后，再依次取 `lateQueue` 里存活的单位（队尾补出手，§5.5）。出手开始时把它记入 `actedThisTurn`。
    - **复活单位的指令**：本回合被复活且 `actsThisTurn = true` 的单位，指令阶段时处于倒地状态、没有指令（单位本回合内先死亡后复活的，死亡时其指令已作废）。轮到它时：
-     - 人物，或 `petAutoCommand = false` 的宝宝：引擎**暂停**，`awaitingCommandFor = 该单位`，发出 `CommandRequested` 并返回本次事件。玩家通过 `submitCommand()` 现场下指令（校验规则与指令阶段相同）后，下一次 `stepAction()` 从这个单位的 `UnitActStart` 继续。
-     - `petAutoCommand = true` 的宝宝：由 `ai.ts` 现场生成指令，不暂停。
+     - 友方人物，或 `petAutoCommand = false` 的宝宝：引擎**暂停**，`awaitingCommandFor = 该单位`，发出 `CommandRequested` 并返回本次事件。玩家通过 `submitCommand()` 现场下指令（校验规则与指令阶段相同；界面弹出指令面板）后，下一次 `stepAction()` 从这个单位的 `UnitActStart` 继续。
+     - 敌方单位、`petAutoCommand = true` 的宝宝（即 `autoCommand = true` 的单位）：由 `ai.ts` 现场生成指令，不暂停。
      - 暂停期间调用 `stepAction()` 会抛错。
+     - 自动战斗模式（友方全部由 AI 代打）里，控制器收到 `CommandRequested` 后用 `ai.ts` 生成指令并提交。
 2. 发出 `UnitActStart`；按以下顺序处理：防御 → 只发 `UnitActEnd`；技能 → 检查封印/MP（必要时 `CommandFallback`）→ 校验目标（§6.5）→ 扣 MP + `SkillCast` → 按 pattern 结算 → `UnitActEnd`。
 3. 胜负判定：任一方存活单位数为 0 → `winner = 另一方`，`phase = ended`，发出 `BattleEnd`，之后 `stepAction()` 返回 null。
-4. 如果已经没有剩余出手者 → 进入 settlement，在同一次返回值中附加结算事件。
+4. 如果 `turnOrder` 和 `lateQueue` 里都已经没有剩余出手者 → 进入 settlement，在同一次返回值中附加结算事件。
 
 **settlement（结算）**
 1. 所有存活单位的状态 `remainingTurns −= 1`（`StatusTicked / StatusRemoved(expired)`）。
@@ -662,6 +749,8 @@ position(side, row, col) = frontCenter(side)
 3. 发出 `TurnEnd`；再次执行胜负判定（防御性，默认规则下不会在此触发）；进入下一回合的 TurnStart → command。
 
 ### 8.3 初始阵容（`heroes.ts` / `enemies.ts`，下表为步骤 8 平衡后的数值）
+
+> 步骤 9：宝宝的职业 / 技能两列已按 §4.6 更新。魔法值、技能消耗和敌方数值要等步骤 9 的代码完成、跑过批量模拟后才能定，届时回填下面三张表和 §4.2 的 MP 列（§9.4 V4、V5）；在那之前表里的数字仍是步骤 8 的。
 
 > 步骤 8 的平衡：友方物伤 / 法伤约 ×1.3；敌方气血约 ×0.7、物伤 / 法伤约 ×1.9；Boss 气血 4000 → 3200、物伤 220 → 340。
 > 双方输出都提高、敌方变脆，战斗从平均 27 回合缩短到 11 回合。防御、速度、魔法、技能表、公式、规则都没有改。
@@ -677,13 +766,13 @@ position(side, row, col) = frontCenter(side)
 | A4 | 1,4 | 守誓 | heal | 枪 spear | melee | basic_physical | 1000 | 600 | 130 | 180 | 50 | 85 |
 
 **友方宝宝（前排，位于主人身前）**
-| id | 格子 | 名称/形象 | 主人 | 职业 | attackMode | 普攻 | 技能 | HP | MP | 物伤 | 法伤 | 防御 | 速度 |
-|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
-| A5 | 0,0 | 影狼·灰 | A0 | physical | melee | basic_physical | combo_slash | 650 | 150 | 145 | 25 | 40 | 105 |
-| A6 | 0,1 | 影狼·赤 | A1 | physical | melee | basic_physical | combo_slash | 700 | 150 | 150 | 25 | 40 | 100 |
-| A7 | 0,2 | 骨龙幼崽 | A2 | magic | cast | basic_magic | group_spell_fire | 600 | 300 | 40 | 155 | 30 | 90 |
-| A8 | 0,3 | 幽灵 | A3 | seal | cast | basic_magic | seal | 600 | 250 | 40 | 115 | 30 | 115 |
-| A9 | 0,4 | 魔偶 | A4 | heal | melee | basic_physical | group_heal | 900 | 250 | 105 | 115 | 60 | 70 |
+| id | 格子 | 名称/形象 | 主人 | 类型（职业） | attackMode | 普攻 | 主动技能 | 被动技能 | HP | MP | 物伤 | 法伤 | 防御 | 速度 |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| A5 | 0,0 | 影狼·灰 | A0 | 物理型 physical | melee | basic_physical | — | double_strike | 650 | 150 | 145 | 25 | 40 | 105 |
+| A6 | 0,1 | 影狼·赤 | A1 | 物理型 physical | melee | basic_physical | — | double_strike | 700 | 150 | 150 | 25 | 40 | 100 |
+| A7 | 0,2 | 骨龙幼崽 | A2 | 法术型 magic | cast | basic_magic | triple_spell | — | 600 | 300 | 40 | 155 | 30 | 90 |
+| A8 | 0,3 | 幽灵 | A3 | 法术型 magic | cast | basic_magic | triple_spell | — | 600 | 250 | 40 | 115 | 30 | 115 |
+| A9 | 0,4 | 魔偶 | A4 | 物理型 physical | melee | basic_physical | — | double_strike | 900 | 250 | 105 | 115 | 60 | 70 |
 
 **敌方**
 | id | 格子 | 名称 | 级别 | 职业 | attackMode | 普攻 | 技能 | HP | MP | 物伤 | 法伤 | 防御 | 速度 |
@@ -700,20 +789,48 @@ position(side, row, col) = frontCenter(side)
 | E9 | 1,4 | 恶魔祭司·愈 | elite | heal | cast | basic_magic | group_heal | 560 | 500 | 115 | 245 | 40 | 88 |
 
 ### 8.4 AI 规则（`ai.ts`，敌方与自动宝宝共用，阵营相对）
-AI 在 `beginExecution()` 时、基于当时的状态决定指令；出手时目标若失效，按 §6.5 处理。只考虑当前可用（MP 足够且未被封印）的技能。“残血”统一按 `hp / maxHp` 最低判断，相同时取 id 字典序更小的。
-- **恢复系**（SPEC §8：优先治疗低血量友军）：
-  1. 存在存活友军 `hp/maxHp < healHpThreshold (0.6)` 且有群体治疗 → 群体治疗，主目标为比例最低者。
-  2. 否则存在倒地友军且有复活（只有友方自动宝宝/复活单位可能有，敌人没有复活）→ 复活，目标为 id 最小的倒地友军。
-  3. 否则普攻残血敌人。
-- **封印系**（SPEC §8：优先封印对方法术/恢复职业）：
-  1. 候选 = 存活、未被封印、`classId ∈ {magic, heal}` 的对方单位，取法伤最高者封印。
-  2. 没有候选时，对任意存活且未被封印、拥有技能的对方单位，取法伤最高者封印。
-  3. 否则普攻残血敌人。
-- **其他**（物理系、法术系；SPEC §8：优先攻击残血目标）：主目标 = 残血敌人。
-  1. 存活对方单位数 ≥ `aoeMinTargets (3)` 且有群体技能（目标数 > 1 的伤害技能：`whirlwind` / `arrow_rain` / `group_spell` / `group_spell_fire`）→ 使用群体技能。
+AI 在 `beginExecution()` 时、基于当时的状态，**按本回合出手顺序逐个**为 `autoCommand` 单位决定指令（顺序固定，结果才可复现）；出手时目标若失效，按 §6.5 处理。只考虑当前可用（MP 足够且未被封印）的技能。
+
+**选什么技能**（步骤 9 未改）
+- **恢复系**：
+  1. 存在存活友军 `hp/maxHp < healHpThreshold (0.6)` 且有群体治疗 → 群体治疗。
+  2. 否则存在倒地友军且有复活（敌人没有复活）→ 复活。
+  3. 否则普攻。
+- **封印系**：存在存活、未被封印、拥有主动技能的对方单位，且有封印 → 封印；否则普攻。
+- **其他**（物理系、法术系）：
+  1. 存活对方单位数 ≥ `aoeMinTargets (3)` 且有群体技能（目标数 > 1 的伤害技能：`whirlwind` / `arrow_rain` / `group_spell` / `triple_spell`）→ 使用群体技能。
   2. 否则有单体技能（目标数 = 1 的伤害技能：`combo_slash` / `triple_shot` / `single_spell`）→ 使用单体技能。
   3. 否则普攻。
+- 物理型宝宝没有主动技能，自动时只会普攻；法术型宝宝按“其他”的规则使用 `triple_spell`。
 - AI 不选防御指令。
+
+**选哪个目标**（步骤 9 修改）——由 `AiConfig.targetMode[该单位的阵营]` 决定，默认敌方 `spread`、友方 `focus`：
+
+`spread`（带权重的随机 + 分散，SPEC §8）：
+```
+n(T)      = 本回合己方 AI 已经把 T 选为同类目标的次数   // aiTargetCounts[side][kind][T]
+weight(T) = baseWeight × repeatDecay ^ n(T) × 加权(T)
+按 weight 做一次加权随机抽取；选中后 n(T) += 1
+```
+| 目标种类 `kind` | 候选 | 加权(T) |
+|---|---|---|
+| `attack`（普攻和所有伤害技能的主目标） | 存活的对方单位 | `1 + lowHpBonus × (1 − hp/maxHp)` |
+| `seal` | 存活、未被封印、拥有主动技能的对方单位 | 法术 / 恢复职业 × `sealCasterBonus`，其余 × 1 |
+| `heal`（群体治疗的主目标） | 气血比例低于 `healHpThreshold` 的存活友军 | `1 + lowHpBonus × (1 − hp/maxHp)` |
+| `heal`（复活） | 倒地的友军 | 1 |
+
+- 默认参数：`baseWeight 1`，`repeatDecay 0.5`，`lowHpBonus 0.3`，`sealCasterBonus 2`。残血加权最多 ×1.3，被选过一次就 ×0.5，所以随机和分散占主导。
+- 三种目标分别计数：被攻击过不影响它被封印的权重。
+- 只统计**主目标**：群体技能补足进来的其他目标不计数（补足规则 §6.3 不变）。
+- 出手时目标失效的重选（§6.5）也走这套权重并计数。
+- 计数每回合开始清零。
+
+`focus`（步骤 8 及之前的规则，友方自动出手沿用）：
+- 攻击目标 = `hp/maxHp` 最低的对方单位，相同时取 id 字典序更小的。
+- 治疗主目标 = 气血比例最低的友军；复活目标 = id 最小的倒地友军。
+- 封印目标 = 法术 / 恢复职业里法伤最高者；没有则任意拥有主动技能的单位里法伤最高者。
+
+**随机数**：AI 选目标用一条独立的随机序列（由战斗种子派生），不和伤害 / 命中 / 暴击 / 同速排序共用。这样同一个种子下结果完全可复现，而且 AI 抽多少次随机数都不会改变战斗结算的随机序列。
 
 ---
 
@@ -727,12 +844,12 @@ AI 在 `beginExecution()` 时、基于当时的状态决定指令；出手时目
 - **U5 普攻会未命中**：普攻命中率 0.95。
 - **U6 ★ 多目标补足和顺序按速度**：旋风斩、群体法术、群体治疗的目标 = 主目标 + 其余合法单位按速度由快到慢补足；主目标一定被击中且排第一，其余按速度由快到慢；目标重选也按速度（SPEC §7.2 原文为“按阵型邻近顺序”）。见 §6。
 - **U7 ★ 敌方被击败即消失**：敌人死亡后消失、不能再被选中；友方倒地不消失，只有复活能选中倒地友方，复活不能选中未倒地的友方（SPEC §5.5 原文为所有单位都“保持倒地姿态”）。见 §5.5。
-- **U8 复活当回合出手**：被复活者在本回合出手顺序中排在施法者之后，本回合可以正常出手；排在之前，则本回合不出手。轮到它时暂停，让玩家现场下指令（开启宝宝自动的宝宝由 AI 决定）。见 §5.5、§8.2。
+- **U8 复活当回合出手**（步骤 9 修改）：被复活者本回合一定可以出手——在出手顺序中排在施法者之后，就在自己的位置出手；排在之前（位置已过），排到本回合队尾。轮到它时暂停，让玩家现场下指令（敌方和开启宝宝自动的宝宝由 AI 决定）。见 §5.5、§8.2。
 - **U9 不回蓝**：暂时不做回复 MP 的技能，也不自动回复。
 - **U10 敌人没有复活技能**。
 
 ### 9.2 其他设计假设
-- **A1 宝宝形象**：物理=影狼（两只物理宝宝换配色），法术=骨龙幼崽，封印=幽灵，恢复=魔偶。每只宝宝 = 普攻 + 1 个本职业技能（“简化版”指技能数量更少、数值更低，技能模板复用）。
+- **A1 宝宝**（步骤 9 修改）：形象不变（影狼 ×2、骨龙幼崽、幽灵、魔偶）。宝宝只分物理型和法术型：影狼 ×2、魔偶为物理型（普攻 + 被动“连击”），骨龙幼崽、幽灵为法术型（普攻 + `triple_spell`）。见 §4.6。
 - **A2 敌方构成**：骷髅兵 ×4（小怪），堕落骑士 ×2、恶魔祭司 ×2（1 封印、1 恢复）、亡灵法师 ×1（精英），深渊魔将 ×1（Boss）。
 - **A3 技能命中率**：伤害类技能默认命中率 1.0，封印 0.75，都可配置；没有单独的闪避属性。
 - **A4 封印计时**：施加回合计入递减；立即生效（未出手的技能指令改为普攻）。见 §5.8。
@@ -742,7 +859,7 @@ AI 在 `beginExecution()` 时、基于当时的状态决定指令；出手时目
 - **A8 随机数**：所有随机通过可注入种子的 RNG，保证测试可复现；正式游戏用时间戳作为种子。
 - **A9 无回合上限**：最低伤害为 1 且 MP 有限，战斗一定会结束，不设平局。
 - **A10 数值**：§8.3 的数值已在步骤 8 调过平衡，只改了配置表里的数，没有改规则和公式。
-- **A11 AI 细节**：阈值见 `aiConfig.ts`；AI 不使用防御。
+- **A11 AI 细节**：阈值和选目标的权重见 `aiConfig.ts`；AI 不使用防御。
 
 ### 9.3 步骤 8 的调整与偏差
 - **S1 阵型与相机**：格子间距 1.9 / 2.0 → 2.2 / 2.3，双方前排中心 ±3.4 → ±2.7（两军拉近，整体占地不变），相机距离 35 → 32.5，`fitAspect` 1.6 → 1.75。见 §7.2。
@@ -754,9 +871,23 @@ AI 在 `beginExecution()` 时、基于当时的状态决定指令；出手时目
 - **S7 音效**：`assets/audio/SoundEngine.ts` 用 Web Audio 合成 13 种音效和环境低频嗡鸣。第一次用户操作后才创建 AudioContext；音效由舞台在动作开始时触发（`render/units/soundCues.ts`），长度按战斗倍速缩短，跳过动画时不播放战斗音效；同一种音效 45 毫秒内只响一次，同时最多 14 个；标签页在后台时暂停。
 - **S8 调试接口**：`window.__perf()`（性能快照）、`window.__capture(time)`（固定时间点截帧）、地址参数 `merge=0`、`quality=low`。
 
+### 9.4 步骤 9（v0.2）的规则调整与待确认的取舍
+- **V1 敌方不集火**：敌方 AI 选目标改为带权重的随机 + 同回合衰减（§8.4），出手时的目标重选也一样（§6.5）。SPEC §8 原来的“优先攻击残血 / 优先封印法术恢复职业 / 优先治疗低血量”改成了小幅加权。
+  - 取舍 a：**只有敌方改成 `spread`，友方的自动出手（自动宝宝、自动战斗里的人物）仍然是 `focus`**。理由：需求针对的是敌方；友方自动出手是代替玩家操作，集火残血是合理打法；也符合“优先调敌方”。两边都是配置项（`targetMode`），可以改。
+  - 取舍 b：只统计主目标，攻击 / 封印 / 治疗分别计数。
+  - 取舍 c：AI 用独立的随机序列。
+  - 统计口径（`npm run balance`）：**被集火率** = 所有“敌方至少有一次单体出手的回合”里，存在某个友方单位在该回合被敌方单体出手（普攻、连斩、单体法术，一次出手算一次，不按段数）选中 ≥ 3 次的回合占比；同时给出“每回合单个友方被单体出手的最大次数”的平均值和分布。改 AI 之前先用同一口径跑一遍旧规则，作为对比。
+- **V2 复活当回合可行动**：原规则（U8）是有意设计成“位置已过就不出手”，不是代码缺陷；默认阵容里治疗师速度 85，比她快的单位有 8 个，所以绝大多数被复活的单位当回合都被跳过。现在改为排到队尾。
+  - 取舍 d：**每个单位每回合最多出手一次**。已经出过手、被击倒后又被复活的单位不排到队尾，否则它一回合能出手两次。
+  - 敌方复活：敌人被击败即消失、没有复活技能（U7、U10 不变），所以默认规则下不存在敌方复活。引擎的分支是通用的（`autoCommand` 单位由 AI 决定），测试用自动宝宝被复活的情况覆盖“AI 现场决定指令”。
+- **V3 宝宝改型**：见 §4.5、§4.6。删除 `group_spell_fire`，新增 `triple_spell`、被动技能表、`PassiveTriggered` 事件、`groupSpellSmall` 动画类型。连击的判定时机、第一击打死目标时取消第二击，见 §4.5。
+- **V4 友方魔法量**：提高友方人物和宝宝的 `maxMp`，并适当下调技能消耗；具体数值跑批量模拟后确定并回填 §4.2、§8.3。敌方魔法如有同样问题一并调整。
+  - 统计口径：**魔法不足占比** = 友方“拥有主动技能、未被封印、但 MP 不够用任何一个主动技能，因而只能普攻”的出手次数 ÷ 友方拥有主动技能的单位的全部出手次数。物理型宝宝没有主动技能，不计入分子和分母（计入会把比例冲淡）；汇报时同时给出按“友方全部出手”做分母的数字。目标是前一个口径 < 10%。
+- **V5 再平衡**：优先调敌方数值，使友方自动战斗胜率 50%~70%、回合数 8~14 占多数，封印 / 治疗 / 复活仍有使用；至少 500 个种子。不改伤害公式、出手排序、胜负判定。
+
 ---
 
-## 10. 里程碑（步骤 1~8）
+## 10. 里程碑（步骤 1~9）
 
 每步结束：跑通该步测试 → 汇报（已完成 / 未完成 / 与 SPEC 偏差）→ 等确认 → git commit。
 
@@ -770,3 +901,4 @@ AI 在 `beginExecution()` 时、基于当时的状态决定指令；出手时目
 | 6 | 交互界面 | 指令面板（攻击/技能/防御、消耗与说明、置灰）、悬停高亮与地面光圈、多目标预览、复活只能选倒地队友、出手顺序条、战斗日志、结算与“再战一次”、设置（宝宝自动、速度、跳过动画） | 手动打完一整场 |
 | 7 | 技能动画与特效 | 连斩、旋风斩、箭雨、三连射、群体法术、单体法术、封印锁链、群体治疗、复活的专属动画；粒子与发光精灵；武器出手时光芒增强；镜头推近/跟随/震动、顿帧、慢镜头 | 对照 SPEC §10 逐条检查；动画可被速度缩放和跳过 |
 | 8 | 打磨收尾 | Web Audio 音效、性能优化（20 单位 + 特效接近 60fps）、数值平衡、README（运行、架构、扩展、外观调整、替换资源、设计假设） | 对照 SPEC §13 总验收逐条检查；全部测试通过 |
+| 9 | 规则调整与再平衡（v0.2） | 敌方 AI 带权重随机 + 分散；复活单位当回合出手（位置已过排队尾）；宝宝改为物理型（被动“连击”）/ 法术型（`triple_spell`）；被动技能表；友方魔法量；再平衡；`npm run balance` 增加集火率、魔法不足占比 | 复活后更快 / 更慢 / 同速三种情况、自动单位被复活由 AI 决定；连击触发率约 50%、两击独立、第一击致死取消第二击；三目标法术补足与缩减；AI 选目标同种子可复现、同回合分散；宝宝无封印 / 治疗；整场回归（无同时行动、无离位、数值一致）；胜率 50%~70% |
