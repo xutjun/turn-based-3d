@@ -5,6 +5,7 @@ import {
   ATTACK_ANIM,
   CAST,
   GAITS,
+  jumpSplit,
   MELEE,
   MOTION_OF_TEMPLATE,
   MOTION_PROFILES,
@@ -22,6 +23,20 @@ import type { StageUnit } from '../../src/render/director/types';
 import { EXTRA_JOINT_NAMES } from '../../src/render/units/animatedJoints';
 import { dashProgress, dashSpeed, UnitMotion, wrapAngle, type Footfall, type MotionPhase } from '../../src/render/units/UnitMotion';
 import { createFakes, pump } from './directorFakes';
+import { jumpStrikeDuration } from '../../src/render/director/Choreographer';
+import type { MoveTiming } from '../../src/data/attackAnimConfig';
+
+/** 和编排里一样按节奏 / 放慢倍率缩放动作时长（旋风斩用） */
+function scaleForTest(t: MoveTiming, tempo: number, pace: number): MoveTiming {
+  return {
+    anticipation: t.anticipation * tempo * pace,
+    strike: t.strike * tempo * pace,
+    hold: t.hold * pace,
+    follow: t.follow * tempo * pace,
+    beat: t.beat * pace,
+    recover: t.recover * pace,
+  };
+}
 
 // 步骤 11 / 11b：进攻动画。这里测三件事——
 //   1. 配置本身自洽（每个动作都有完整的节奏、用到的关节都登记过）；
@@ -346,7 +361,7 @@ describe('UnitMotion：一次出手的动作状态', () => {
     expect(falls[1]!.dust).toBeGreaterThan(0);
     expect(m.ground).toEqual(TARGET);
     expect(wrapAngle(m.yaw - Math.atan2(-1, -1))).toBeCloseTo(0, 6); // 正对 face
-    expect(m.gait).toEqual({ pitch: 0, roll: 0, hop: 0, spin: 0 });
+    expect(m.gait).toEqual({ pitch: 0, roll: 0, hop: 0, spin: 0, squash: 0 });
     expect(m.atRest).toBe(true); // 落地缓冲后回到站姿
     expect(m.away).toBe(true);
   });
@@ -687,25 +702,34 @@ const names = (marks: Mark[]): string[] => marks.map((m) => m.name);
 const ENEMIES = ['E0', 'E1', 'E2', 'E3', 'E4', 'E5', 'E6'] as const;
 
 describe('编排：进攻的节奏', () => {
-  it('近战普攻：冲刺 → 预备 → 发力 → 命中顿住 → 余势 → 停一拍 → 收招 → 回位，各阶段时长取自动作档案', async () => {
+  it('近战普攻是跳劈：起跳后在空中预备，下落段发力，落地即命中；余势和回程的下蹲重叠，没有站定的空档', async () => {
+    const J = ATTACK_ANIM.jumpStrike;
+    const FRAME = 0.05 + 1e-6; // 测试泵每帧 0.05 秒
     for (const motion of ['blade', 'sword', 'spear'] as const) {
       const { marks, fakes } = await playTimed(act([cast(), hit('E0', 0)]), { motion });
       const t = moveOf(motion, 'melee', 0).timing;
-      expect(names(marks), motion).toEqual(['moveTo', 'windup', 'release', 'hold', 'follow', 'recover', 'returnHome']);
+      expect(names(marks), motion).toEqual(['moveTo', 'windup', 'release', 'hold', 'follow', 'returnHome']); // 没有单独的收招
       const by = Object.fromEntries(marks.map((m) => [m.name, m]));
-      expect(by['moveTo']!.duration).toBe(MOTION_PROFILES[motion].approach.duration);
-      expect(by['windup']!.duration).toBe(t.anticipation);
-      expect(by['release']!.duration).toBe(t.strike);
+      const approach = MOTION_PROFILES[motion].approach;
+      const total = jumpStrikeDuration(approach.gait, approach.duration, t);
+      const { crouch, air } = jumpSplit(approach.gait, total, false);
+      expect(by['moveTo']!.duration, motion).toBeCloseTo(total, 9);
+      expect(total).toBeLessThan(approach.duration); // 去掉了落地缓冲，比原来的跳跃 + 缓冲更短
+      // 预备在离地之后、腾空途中开始（不在地上）
+      expect(by['windup']!.at - by['moveTo']!.at, motion).toBeGreaterThanOrEqual(crouch + air * J.windupAt - FRAME);
+      expect(by['windup']!.at - by['moveTo']!.at, motion).toBeLessThan(crouch + air - t.strike);
+      expect(by['windup']!.duration, motion).toBeGreaterThanOrEqual(t.anticipation - FRAME); // 至少是动作自己的预备时长（差一帧的零头）
+      // 发力结束（命中）= 落地：和跳跃同时结束（误差一帧）
+      const landAt = by['moveTo']!.at + total;
+      expect(Math.abs(by['release']!.at + t.strike - landAt), motion).toBeLessThanOrEqual(FRAME * 2);
+      // 发力时长按落地时刻倒推：等于动作自己的发力时长，最多少掉帧对齐的一帧零头
+      expect(by['release']!.duration).toBeLessThanOrEqual(t.strike + 1e-9);
+      expect(by['release']!.duration).toBeGreaterThan(t.strike - FRAME);
       expect(by['hold']!.duration).toBe(t.hold);
-      expect(by['follow']!.duration).toBe(t.follow);
-      expect(by['recover']!.duration).toBe(t.recover);
+      // 余势进行到一部分就开始回程的下蹲（收招和下蹲合成一个动作），回程时长不变
+      expect(by['returnHome']!.at, motion).toBeLessThan(by['follow']!.at + t.follow - 1e-6);
+      expect(by['returnHome']!.at, motion).toBeGreaterThanOrEqual(by['follow']!.at + t.follow * (1 - J.returnOverlap) - FRAME);
       expect(by['returnHome']!.duration).toBe(MOTION_PROFILES[motion].retreat.duration);
-      // 每个阶段在上一个阶段结束之后才开始（调度器每帧 0.05 秒，留一帧的余量）
-      for (let i = 1; i < marks.length; i++) {
-        expect(marks[i]!.at, `${motion}: ${marks[i]!.name}`).toBeGreaterThanOrEqual(marks[i - 1]!.at + marks[i - 1]!.duration - 1e-6);
-      }
-      // 余势之后停一拍才收招
-      expect(by['recover']!.at - by['follow']!.at).toBeGreaterThanOrEqual(t.follow + t.beat - 1e-6);
       // 受击、飘字发生在发力结束（命中）的那一刻，不早于它
       expect(fakes.log.indexOf('floater:E0:-10')).toBeGreaterThan(fakes.log.indexOf('release-melee:A0'));
       expect(fakes.log.indexOf('floater:E0:-10')).toBeLessThan(fakes.log.indexOf('hold:A0'));
@@ -718,7 +742,9 @@ describe('编排：进攻的节奏', () => {
   it('狼 / 魔偶：起跳的下蹲蓄力包含在跳跃里；魔偶的砸拳带冲击波、重击反馈，来回都更慢', async () => {
     const wolf = await playTimed(act([cast(), hit('E0', 0)]), { motion: 'wolf' });
     expect(names(wolf.marks).slice(0, 2)).toEqual(['moveTo', 'windup']);
-    expect(wolf.marks[0]!.duration).toBe(MOTION_PROFILES.wolf.approach.duration);
+    const bite = moveOf('wolf', 'melee', 0).timing;
+    expect(wolf.marks[0]!.duration).toBeCloseTo(jumpStrikeDuration(MOTION_PROFILES.wolf.approach.gait, MOTION_PROFILES.wolf.approach.duration, bite), 9);
+    expect(wolf.marks[1]!.at).toBeLessThan(wolf.marks[0]!.at + wolf.marks[0]!.duration); // 空中张嘴伸爪
     expect(wolf.fakes.log.some((l) => l.startsWith('burst-shockwave'))).toBe(false);
 
     const golem = await playTimed(act([cast(), hit('E0', 0)]), { motion: 'golem' });
@@ -727,6 +753,11 @@ describe('编排：进攻的节奏', () => {
     expect(golem.fakes.log).toContain(`burst-shockwave@${slam.fx!.shockwave}`);
     expect(golem.fakes.log).toContain('burst-heavyImpact'); // 目标受击反馈更重
     expect(golem.fakes.log).toContain(`cam-shake:${slam.fx!.shake}`);
+    // 空中举拳，落地砸拳和冲击波同时发生：冲击波在发力结束（= 落地）时出现
+    const g = Object.fromEntries(golem.marks.map((m) => [m.name, m]));
+    expect(g['windup']!.at).toBeLessThan(g['moveTo']!.at + g['moveTo']!.duration);
+    expect(golem.fakes.log.indexOf(`burst-shockwave@${slam.fx!.shockwave}`)).toBeGreaterThan(golem.fakes.log.indexOf('release-melee:A0'));
+    expect(golem.fakes.log.indexOf(`burst-shockwave@${slam.fx!.shockwave}`)).toBeLessThan(golem.fakes.log.indexOf('hold:A0'));
     expect(golem.seconds).toBeGreaterThan(wolf.seconds + 0.5);
   });
 
@@ -740,7 +771,11 @@ describe('编排：进攻的节奏', () => {
       ]),
       { motion: 'wolf' },
     );
-    expect(names(marks)).toEqual(['moveTo', 'windup', 'release', 'hold', 'follow', 'windup', 'release', 'hold', 'follow', 'recover', 'returnHome']);
+    expect(names(marks)).toEqual(['moveTo', 'windup', 'release', 'hold', 'follow', 'windup', 'release', 'hold', 'follow', 'returnHome']);
+    // 第二击的预备在第一击的余势播完之前就开始（余势直接接预备）
+    const follows = marks.filter((m) => m.name === 'follow');
+    const windups = marks.filter((m) => m.name === 'windup');
+    expect(windups[1]!.at).toBeLessThan(follows[0]!.at + follows[0]!.duration - 1e-6);
     expect(fakes.log.filter((l) => l.startsWith('variant:A0:'))).toEqual([`variant:A0:${MELEE.basic}`, `variant:A0:${MELEE.second}`]);
     expect(moveOf('wolf', 'melee', MELEE.basic).label).toContain('撕咬');
     expect(moveOf('wolf', 'melee', MELEE.second).label).toContain('爪击');
@@ -756,14 +791,19 @@ describe('编排：进攻的节奏', () => {
       ]),
     );
     const beat = ['windup', 'release', 'hold', 'follow'];
-    expect(names(marks)).toEqual(['moveTo', ...beat, ...beat, ...beat, 'recover', 'returnHome']);
-    const windups = marks.filter((m) => m.name === 'windup').map((m) => m.duration);
+    expect(names(marks)).toEqual(['moveTo', ...beat, ...beat, ...beat, 'returnHome']);
+    // 第 1 击是落地跳劈；第 2、3 击的预备都在上一击的余势播完之前开始，中间没有站定
+    const follows = marks.filter((m) => m.name === 'follow');
+    const starts = marks.filter((m) => m.name === 'windup');
+    expect(starts[0]!.at).toBeLessThan(marks[0]!.at + marks[0]!.duration);
+    for (let k = 1; k < 3; k++) expect(starts[k]!.at, `第 ${k + 1} 击`).toBeLessThan(follows[k - 1]!.at + follows[k - 1]!.duration - 1e-6);
+    const windups = starts.map((m) => m.duration);
     // 第 3 击（跃起重劈）蓄力最久
     expect(windups[2]).toBeGreaterThan(windups[0]!);
     expect(windups[2]).toBeGreaterThan(windups[1]!);
   });
 
-  it('旋风斩：7 次攻击节奏有变化——前几下快，越往后越沉，最后一击最慢；目标之间是连续的短跳跃，整体按 pace 放慢', async () => {
+  it('旋风斩：7 次攻击节奏有变化——前几下快，越往后越沉，最后一击最慢；目标之间是连续的短跳跃，空中蓄力、落地即斩、斩完直接起跳', async () => {
     const { marks, fakes } = await playTimed(act([cast({ animation: 'whirlwind', targets: [...ENEMIES] }), ...ENEMIES.map((id, i) => hit(id, i))]));
     const strikes = marks.filter((m) => m.name === 'release');
     expect(strikes).toHaveLength(7);
@@ -776,17 +816,22 @@ describe('编排：进攻的节奏', () => {
     const leaps = marks.filter((m) => m.name === 'moveTo').slice(1);
     expect(leaps).toHaveLength(6);
     const W = ATTACK_ANIM.whirlwind;
-    expect(leaps[0]!.duration).toBeCloseTo(W.leap.duration * W.tempo[1]! * W.pace, 9);
+    const spin = scaleForTest(moveOf('blade', 'melee', MELEE.spin).timing, W.tempo[1]!, W.pace);
+    expect(leaps[0]!.duration).toBeCloseTo(jumpStrikeDuration(W.leap.gait, W.leap.duration * W.tempo[1]! * W.pace, spin), 9);
     expect(W.pace).toBeGreaterThan(1); // 比 v0.4 慢
-    // 每一击之后都停一下再跳（最后一击之前的 6 次）：相邻两次命中的间隔不小于 跳跃 + 停顿
-    for (let i = 1; i < 6; i++) {
-      const gap = strikes[i]!.at - strikes[i - 1]!.at;
-      expect(gap, `第 ${i} 个间隔`).toBeGreaterThanOrEqual(leaps[i - 1]!.duration + W.hitPause * W.pace - 1e-6);
+    const FRAME = 0.05 + 1e-6;
+    const follows = marks.filter((m) => m.name === 'follow');
+    for (let i = 1; i < 7; i++) {
+      // 落地即斩：每一跳的发力在落地的一刻结束
+      const landAt = leaps[i - 1]!.at + leaps[i - 1]!.duration;
+      expect(Math.abs(strikes[i]!.at + strikes[i]!.duration - landAt), `第 ${i + 1} 击`).toBeLessThanOrEqual(FRAME * 2);
+      // 斩完直接起跳：下一跳在上一击的余势播完之前就开始
+      expect(leaps[i - 1]!.at, `第 ${i} 跳`).toBeLessThan(follows[i - 1]!.at + follows[i - 1]!.duration - 1e-6);
     }
     expect(leaps[4]!.duration).toBeGreaterThan(leaps[0]!.duration);
     // 最后一击：冲击波 + 重击；打完才收招、回位
     expect(fakes.log.filter((l) => l.startsWith('burst-shockwave'))).toHaveLength(1);
-    expect(names(marks).slice(-2)).toEqual(['recover', 'returnHome']);
+    expect(names(marks).slice(-2)).toEqual(['follow', 'returnHome']);
     expect(fakes.away.size).toBe(0);
   });
 
@@ -852,6 +897,7 @@ describe('编排：进攻的节奏', () => {
 
 // 阶段名在联系表里要用到：保证类型里的每个阶段都有
 const PHASES: MotionPhase[] = ['idle', 'crouch', 'approach', 'land', 'anticipation', 'strike', 'hold', 'follow', 'recover', 'crouch', 'return', 'land'];
+// （上面这串是 UnitMotion 自己按顺序调用时的阶段；跳劈的编排见“近战普攻是跳劈”）
 describe('阶段', () => {
   it('一次近战出手依次经过全部阶段', async () => {
     const scheduler = new Scheduler();

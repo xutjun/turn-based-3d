@@ -632,7 +632,7 @@ export class UnitView implements StageUnit {
     // 整体形变：扑跃时沿前后方向拉长，落地 / 蓄力时压扁
     const k = this.baseScale * (1 - 0.97 * p.shrink);
     const stretch = ch('root.stretch');
-    const squash = ch('root.squash');
+    const squash = ch('root.squash') + g.squash; // 跳劈落地被压下去（步态层）叠加在姿态上
     if (stretch === 0 && squash === 0) m.scale.setScalar(k);
     else m.scale.set(k * (1 - 0.2 * stretch + 0.25 * squash), k * (1 - 0.3 * stretch - squash), k * (1 + stretch + 0.25 * squash));
 

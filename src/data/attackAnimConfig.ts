@@ -852,9 +852,10 @@ const WOLF_BITE: MoveDef = {
   timing: { anticipation: 0.1, strike: 0.07, hold: 0.05, follow: 0.34, beat: 0.08, recover: 0.3 },
   ready: [
     {
+      // 空中（步骤 11c 起在扑跃途中摆出）：张大嘴、前爪向前伸出、后腿拖在身后，身体拉长
       pose: {
-        'neck.x': -0.5, 'head.x': -0.3, 'jaw.x': 0.95, 'root.pitch': -0.08, 'root.forward': -0.05, 'root.lift': 0.02,
-        'foreLegL.x': -0.18, 'foreLegR.x': -0.18, 'hindLegL.x': 0.09, 'hindLegR.x': 0.09, 'tail.x': 0.4,
+        'neck.x': -0.5, 'head.x': -0.3, 'jaw.x': 0.95, 'root.pitch': -0.08, 'root.forward': -0.05, 'root.lift': 0.02, 'root.stretch': 0.16,
+        'foreLegL.x': -0.75, 'foreLegR.x': -0.65, 'hindLegL.x': 0.6, 'hindLegR.x': 0.6, 'tail.x': -0.3,
       },
       ease: 'out',
     },
@@ -1467,6 +1468,17 @@ export const MOUNTED_STAFF: Record<string, { trail: readonly [number, number]; t
   enemy_necromancer: { trail: [0.55, 1.0], tip: 0.95 },
 };
 
+/**
+ * 一次移动（总时长 duration）里下蹲、腾空、落地缓冲各占多少秒（UnitMotion 和编排共用，保证两边算出来一样）。
+ * withLand = false：不要单独的落地缓冲（跳劈：落地即命中），腾空占满剩下的时间。
+ */
+export function jumpSplit(gaitId: GaitId, duration: number, withLand = true): { crouch: number; air: number; land: number } {
+  const g = GAITS[gaitId];
+  const crouch = g.crouch ? Math.min(g.crouch.duration, duration * 0.4) : 0;
+  const land = withLand && g.land ? Math.min(g.land.duration, duration * 0.4) : 0;
+  return { crouch, air: Math.max(0.05, duration - crouch - land), land };
+}
+
 /** 取某个动作；编号越界时回退到第 0 个 */
 export function moveOf(motion: MotionId, style: 'melee' | 'bow' | 'bowUp' | 'cast', variant = 0): MoveDef {
   const list = MOTION_PROFILES[motion][style];
@@ -1487,12 +1499,30 @@ export const ATTACK_ANIM = {
      * 击后停顿、最后一击）。1 = v0.4 的速度；想再快一点就调小。
      */
     pace: 1.2,
-    /** 跃向下一个目标：连续的短跳跃（含 0.1 秒的短促下蹲，见 GAITS.whirlHop），乘 tempo 和 pace */
+    /**
+     * 跃向下一个目标：连续的短跳跃（含 0.1 秒的短促下蹲，见 GAITS.whirlHop），乘 tempo 和 pace。
+     * 步骤 11c 起每一跳都是“跳劈”（见 jumpStrike）：空中蓄力、落地即斩；腾空时间不够放下预备和发力时自动加长。
+     * （v0.4.1 的落地停顿、击后停顿、最后一击前的蓄势停顿都去掉了：命中顿帧是唯一的停顿）
+     */
     leap: { gait: 'whirlHop' as GaitId, duration: 0.34 },
-    landPause: 0.05, // 落地后到出手之间的一点停顿（乘 pace）
-    hitPause: 0.06, // 每一击的余势之后、跳向下一个目标之前的停顿（乘 pace），让每一下都看得清
-    finisherPause: 0.12, // 最后一击出手前的蓄势停顿（配合慢镜头，乘 pace）
     shockwaveTime: 0.6, // 冲击波环持续时间
+  },
+  /**
+   * 跳劈（步骤 11c）：近战的“起跳 → 空中蓄力 → 下落时挥下 → 落地即命中”，各阶段互相重叠，不再有站定的空档。
+   *   windupAt     腾空进行到这个比例时开始攻击预备（举刀、扭身、蓄力）；预备一直持续到发力开始，
+   *                发力（动作自己的 strike 时长）在下落段完成，落地的一瞬间正好命中。腾空时间不够放下预备 + 发力时自动加长腾空。
+   *   chainOverlap 同一目标的下一击（连斩第 2、3 击、连击）：上一击的余势进行到这个比例之后就开始下一击的预备（0 = 等余势播完）
+   *   hopOverlap   旋风斩：余势进行到这个比例之后就开始下一次短跳的下蹲
+   *   returnOverlap 最后一击：余势进行到这个比例之后就开始回程的下蹲（收招和下蹲合成一个动作），没有单独的收招和停一拍
+   *   landSquash / landSquashTime  落地即命中时身体被压下去的幅度和回弹时长（落地缓冲和发力合成一个动作）
+   */
+  jumpStrike: {
+    windupAt: 0.3,
+    chainOverlap: 0.55,
+    hopOverlap: 0.5,
+    returnOverlap: 0.45,
+    landSquash: 0.14,
+    landSquashTime: 0.22,
   },
   /** 连击（被动）的第二击：出手各阶段的时长倍率 */
   chainTempo: 0.85,

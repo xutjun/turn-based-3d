@@ -13,6 +13,32 @@ import { snapshotOf } from '../../src/ui/showcase/showcaseScript';
 import { buildSkillDemos } from '../../src/ui/showcase/skillDemoScripts';
 import { createFakes, pump } from './directorFakes';
 import { ALL_TEMPLATES, createRealViews, poseDiff, poseSnapshot } from './realStage';
+import { FLOW_DT, measureMeleeFlow } from './meleeFlow';
+
+// 步骤 11c：近战是“跳劈”——落地即命中，命中前没有站定的空档（命中顿帧是唯一的停顿）
+describe('真实模型：近战衔接流畅（跳劈）', () => {
+  it.each([
+    ['basic_blade', 'A1'],
+    ['basic_sword', 'A3'],
+    ['basic_spear', 'A4'],
+    ['combo', 'A1'],
+    ['whirlwind', 'A1'],
+    ['double_strike', 'A5'],
+    ['golem_basic', 'A9'],
+    ['golem_double', 'A9'],
+  ])('%s：每次落地即命中，命中前站定不超过 0.05 秒（1 倍速、2 倍速）', async (id, actor) => {
+    for (const scale of [1, 2]) {
+      const r = await measureMeleeFlow(id, actor, scale);
+      expect(r.hits.length, `${id}@${scale}x`).toBeGreaterThan(0);
+      for (const [k, h] of r.hits.entries()) {
+        // 换目标的那一击：着地到命中最多差一帧（帧对齐，按演出时间）
+        if (h.land >= 0) expect(h.land, `${id}@${scale}x 第 ${k + 1} 击 落地→命中`).toBeLessThanOrEqual(FLOW_DT * scale + 1e-6);
+        // 站定时间按观众看到的真实时间算（演出时间 ÷ 倍速）
+        expect(h.still / scale, `${id}@${scale}x 第 ${k + 1} 击 命中前站定`).toBeLessThanOrEqual(0.05 + 1e-6);
+      }
+    }
+  }, 60_000);
+});
 
 // 步骤 11b：用真实模型（真实关节）检查进攻动画的结果——
 //   1. 每个技能演示（含连击、跳过动画、2 倍速）演完后，所有单位的根节点和全部关节回到演出前的基准姿态；

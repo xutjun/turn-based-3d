@@ -24,7 +24,7 @@ import type {
   UnitRevivedEvent,
 } from '../../core/events';
 import type { UnitId } from '../../core/types';
-import { ATTACK_ANIM, BOW, CAST, MELEE, MOTION_PROFILES, moveOf, type MoveTiming } from '../../data/attackAnimConfig';
+import { ATTACK_ANIM, BOW, CAST, jumpSplit, MELEE, MOTION_PROFILES, moveOf, type GaitId, type MoveTiming } from '../../data/attackAnimConfig';
 import { CAMERA_FX, ELEMENT_COLORS, FX_COLORS, FX_CONFIG, GLOW_FX, SMALL_SPELL, STAGING, TIMING } from '../../data/presentationConfig';
 import type { Scheduler } from './Scheduler';
 import type { DirectorHud, GroundPoint, Point3, Stage, StageUnit } from './types';
@@ -101,12 +101,15 @@ export class Choreographer {
   // ------------------------------------------------------------------
 
   /**
-   * 近战：（原地蓄势 →）冲到目标面前 → 预备 → 发力 → 命中顿住 → 余势 → （下一段 / 下一个目标 …）→ 停一拍 → 收招 → 回到原位。
+   * 近战（步骤 11c 起各阶段互相重叠，没有站定的空档）：
+   *   跳劈 —— 原地下蹲 → 起跳，空中开始预备（举刀、扭身、蓄力），下落段发力，落地的一瞬间正好命中（落地被压下去就是发力）；
+   *   命中顿住 → 余势 →（余势进行到一半就开始下一击的预备 / 下一次短跳的下蹲 / 回程的下蹲）→ 跳回原位 → 落地缓冲。
+   * 命中时的顿帧和受击反馈是唯一的停顿。重叠的比例在 ATTACK_ANIM.jumpStrike。
    * - 普攻：各武器自己的招式（刀斜劈收刀、剑横斩、枪蓄力突刺），发力时拖出武器光轨。
-   * - 连斩：对同一目标 3 击，方向和身体姿态各不相同，前一击的余势直接接下一击的预备；武器越来越亮，第 3 击是跃起重劈。
-   * - 旋风斩：大跳跃落到第一个目标面前，之后连续短跳跃（沿弧线、途中旋身）切向每个目标、落地横扫，镜头跟随；
-   *   节奏先快后慢，整体乘 ATTACK_ANIM.whirlwind.pace 放慢，最后一击大幅度旋转砸地，带冲击波和慢镜头；打完一个大跳跃回原位。
-   * - 连击（被动）：第一击后不返回，换一个动作再打一次。
+   * - 连斩：第 1 击是落地跳劈；第 2、3 击对同一目标，上一击的余势直接接下一击的预备，方向和身体姿态各不相同，第 3 击是跃起重劈。
+   * - 旋风斩：大跳跃落地即斩第一个目标，之后连续的短跳跃（沿弧线、途中旋身）——空中蓄力、落地即斩、斩完直接跳向下一个目标；
+   *   节奏先快后慢，整体乘 ATTACK_ANIM.whirlwind.pace；最后一击是一次大跳跃、空中旋转劈下，带冲击波和慢镜头；打完一个大跳跃回原位。
+   * - 连击（被动）：第一击后不返回，换一个动作紧接着再打一次。
    * 逻辑层没有发出结算事件的段数 / 目标不会演，所以目标死亡或不足时不会出现空挥。
    */
   private async playMelee(actor: StageUnit, cast: SkillCastEvent, steps: Step[]): Promise<void> {
@@ -115,11 +118,10 @@ export class Choreographer {
     const combo = cast.animation === 'comboSlash';
     const whirl = cast.animation === 'whirlwind';
     const W = ATTACK_ANIM.whirlwind;
+    const J = ATTACK_ANIM.jumpStrike;
     const pace = whirl ? W.pace : 1;
     let away = false;
     let lastTarget: UnitId | null = null;
-    let lastImpact: Promise<void> = Promise.resolve();
-    let lastTiming: MoveTiming | null = null;
     let leaps = 0;
     if (whirl) actor.setWeaponGlow(GLOW_FX.whirlwind, 0.2);
 
@@ -140,7 +142,7 @@ export class Choreographer {
       let finisher = false;
       const chained = this.announcePassive(step);
       if (chained) {
-        // 连击的第二击：不返回、不重新冲锋，换一个动作紧接着再打一次，出手更快、光芒更亮
+        // 连击的第二击：不返回、不重新起跳，换一个动作紧接着再打一次，出手更快、光芒更亮
         variant = MELEE.second;
         tempo = ATTACK_ANIM.chainTempo;
       } else if (combo && hit) {
@@ -154,41 +156,6 @@ export class Choreographer {
       const move = moveOf(actor.motion, 'melee', variant);
       const t = scaleTiming(move.timing, tempo, pace);
       const weight: Weight = finisher || move.fx?.heavy ? 'heavy' : 'normal';
-      // 旋风斩途中：预备动作在跃进的空中就摆好，落地即出手
-      const airborneWindup = whirl && away && !finisher && targetId !== lastTarget;
-
-      // 同一个目标上一击的受击表现先播完（连斩、连击）；换目标时不用等
-      if (targetId === lastTarget) await lastImpact;
-
-      if (targetId !== lastTarget) {
-        const point = approachPoint(actor, target);
-        if (!away) {
-          // 出发前的蓄势（狼压低身体、魔偶举臂）
-          if (profile.brace) await actor.brace(profile.brace.duration);
-          if (whirl) {
-            actor.setTrail(true);
-            void stage.camera.focus(point, CAMERA_FX.followZoom, CAMERA_FX.followPan, profile.approach.duration);
-          }
-          await actor.moveTo(point, profile.approach.duration, target.home);
-        } else if (whirl) {
-          // 短促下蹲、蹬地，短跳跃沿弧线切向下一个目标，途中旋身，拖着光轨，镜头快速平移跟上；
-          // 离地的一瞬间开始摆横扫的预备姿态，落地即出手
-          const leap = W.leap.duration * tempo * pace;
-          actor.setTrail(true);
-          void stage.camera.focus(point, CAMERA_FX.followZoom, CAMERA_FX.followPan, Math.max(leap, TIMING.cameraFollow));
-          await actor.moveTo(point, leap, target.home, {
-            gait: W.leap.gait,
-            side: leaps % 2 === 0 ? 1 : -1,
-            onAirborne: airborneWindup ? () => void actor.windup('melee', leap * 0.6, variant) : undefined,
-          });
-          leaps += 1;
-          await scheduler.wait(W.landPause * tempo * pace);
-        } else {
-          await actor.moveTo(point, profile.next.duration, target.home, { gait: profile.next.gait });
-        }
-        away = true;
-        lastTarget = targetId;
-      }
 
       if (chained) actor.setWeaponGlow(GLOW_FX.chain, t.anticipation);
       else if (combo && hit) {
@@ -196,54 +163,106 @@ export class Choreographer {
         actor.setWeaponGlow(GLOW_FX.combo[Math.min(hit.hitIndex, GLOW_FX.combo.length - 1)]!, t.anticipation);
       }
 
-      // 预备（蓄力）
-      if (!airborneWindup) await actor.windup('melee', t.anticipation, variant);
-      if (whirl && finisher) {
-        // 最后一击：蓄势停一下，短暂慢镜头
-        await scheduler.wait(W.finisherPause * pace);
-        scheduler.warp(CAMERA_FX.slowMo.factor, CAMERA_FX.slowMo.duration);
+      // 发力：武器拖出光轨，斩击光弧在挥下的同时划过目标；旋风斩最后一击发力时慢镜头
+      // duration：发力时长，默认取动作自己的；跳劈时按落地时刻倒推（和 t.strike 只差帧对齐的零头）
+      const strike = async (duration = t.strike): Promise<void> => {
+        if (whirl && finisher) scheduler.warp(CAMERA_FX.slowMo.factor, CAMERA_FX.slowMo.duration);
+        if (move.fx?.trail !== false) actor.setTrail(true);
+        const landed = hit !== undefined && !hit.isMiss;
+        const slash = move.fx?.slash ?? variant % 3;
+        if (slash >= 0) {
+          const scale = (weight === 'heavy' ? 1.35 : 1) * (move.fx?.slashScale ?? 1) * (landed ? 1 : 0.7);
+          const when = Math.max(0, duration - TIMING.slash * 0.45); // 光弧在发力的后半段出现，命中时最亮
+          void scheduler.wait(when).then(() => stage.slash(target.anchor('chest'), slash, actor.fxColor, TIMING.slash, scale));
+        }
+        await actor.release('melee', duration, variant);
+      };
+
+      if (targetId !== lastTarget) {
+        const point = approachPoint(actor, target);
+        if (!away) {
+          // 大跳跃落到第一个目标面前：空中蓄力，落地即命中
+          if (profile.brace) await actor.brace(profile.brace.duration);
+          if (whirl) actor.setTrail(true);
+          const total = jumpStrikeDuration(profile.approach.gait, profile.approach.duration, t);
+          if (whirl) void stage.camera.focus(point, CAMERA_FX.followZoom, CAMERA_FX.followPan, total);
+          await this.jumpStrike(actor, point, target.home, { gait: profile.approach.gait, total }, t, variant, strike);
+        } else if (whirl) {
+          // 连续的短跳跃（最后一击是一次大跳跃）：沿弧线切向下一个目标，途中旋身，拖着光轨，镜头快速平移跟上；空中蓄力、落地即斩
+          const gait = finisher ? profile.approach.gait : W.leap.gait;
+          const base = finisher ? profile.approach.duration * pace : W.leap.duration * tempo * pace;
+          const total = jumpStrikeDuration(gait, base, t);
+          actor.setTrail(true);
+          void stage.camera.focus(point, CAMERA_FX.followZoom, CAMERA_FX.followPan, Math.max(total, TIMING.cameraFollow));
+          await this.jumpStrike(actor, point, target.home, { gait, total, side: leaps % 2 === 0 ? 1 : -1 }, t, variant, strike);
+          leaps += 1;
+        } else {
+          // 普通的多目标近战换目标：小跳过去再出手
+          await actor.moveTo(point, profile.next.duration, target.home, { gait: profile.next.gait });
+          await actor.windup('melee', t.anticipation, variant);
+          await strike();
+        }
+        away = true;
+        lastTarget = targetId;
+      } else {
+        // 同一个目标的下一击（连斩第 2、3 击、连击）：上一击的余势已经接上了这一击的预备
+        await actor.windup('melee', t.anticipation, variant);
+        await strike();
       }
 
-      // 发力：武器拖出光轨，斩击光弧在挥下的同时划过目标
-      if (move.fx?.trail !== false) actor.setTrail(true);
-      const landed = hit !== undefined && !hit.isMiss;
-      const slash = move.fx?.slash ?? variant % 3;
-      if (slash >= 0) {
-        const scale = (weight === 'heavy' ? 1.35 : 1) * (move.fx?.slashScale ?? 1) * (landed ? 1 : 0.7);
-        const when = Math.max(0, t.strike - TIMING.slash * 0.45); // 光弧在发力的后半段出现，命中时最亮
-        void scheduler.wait(when).then(() => stage.slash(target.anchor('chest'), slash, actor.fxColor, TIMING.slash, scale));
-      }
-      await actor.release('melee', t.strike, variant);
-
-      // 命中：出手者顿住 2~4 帧，受击、飘字、顿帧同时发生
+      // 命中：出手者顿住 2~4 帧，受击、飘字、顿帧同时发生（唯一的停顿）
       if (move.fx?.shockwave) {
         const feet = target.anchor('ground');
         void stage.burst('shockwave', feet, actor.fxColor, whirl ? W.shockwaveTime : ATTACK_ANIM.shockwaveTime, move.fx.shockwave);
       }
       if (move.fx?.shake) stage.camera.shake(move.fx.shake);
-      lastImpact = this.applyStep(cast, step, weight);
-      this.impacts.push(lastImpact);
+      this.impacts.push(this.applyStep(cast, step, weight));
       await actor.hold(t.hold);
 
-      // 余势：顺着力道过冲、回弹
-      await actor.follow(t.follow);
+      // 余势：顺着力道过冲、回弹；进行到一定比例就接下一个动作（下一击的预备 / 下一次短跳 / 回程的下蹲）
+      const next = steps[i + 1];
+      const nextTarget = next ? stepTargets(next)[0] : undefined;
+      const overlap = !next ? (away ? J.returnOverlap : 0) : nextTarget === targetId ? J.chainOverlap : whirl ? J.hopOverlap : 0;
+      const following = actor.follow(t.follow);
+      if (overlap > 0) await scheduler.wait(t.follow * (1 - overlap));
+      else await following;
       if (!whirl) actor.setTrail(false);
-      // 旋风斩：每一击之后停一下再跳向下一个目标（最后一击之后有自己的“停一拍”）
-      else if (!lastStep) await scheduler.wait(W.hitPause * pace);
-      lastTiming = t;
     }
 
-    // 收尾：停一拍，再平滑收招，然后回到原位
     actor.setTrail(false);
     actor.setWeaponGlow(1, 0.3);
-    if (lastTiming) {
-      await scheduler.wait(lastTiming.beat);
-      await Promise.all([lastImpact, actor.recover(lastTiming.recover)]);
-    }
     if (away) {
+      // 回程：余势顺势下蹲、直接起跳跳回（收招和下蹲合成一个动作），落地缓冲后回到站姿
       if (whirl) void stage.camera.focus(actor.home, CAMERA_FX.focusZoom, CAMERA_FX.focusPan, profile.retreat.duration);
       await actor.returnHome(profile.retreat.duration);
     }
+  }
+
+  /**
+   * 跳劈：起跳的同时安排好空中的预备和下落段的发力，落地的一瞬间正好发力结束（命中）。
+   * 预备从腾空进行到 jumpStrike.windupAt 时开始、一直持续到发力开始；跳过动画时所有步骤立即完成。
+   */
+  private async jumpStrike(
+    actor: StageUnit,
+    point: GroundPoint,
+    face: GroundPoint,
+    jump: { gait: GaitId; total: number; side?: number },
+    t: MoveTiming,
+    variant: number,
+    strike: (duration: number) => Promise<void>,
+  ): Promise<void> {
+    const { scheduler } = this;
+    const { crouch, air } = jumpSplit(jump.gait, jump.total, false);
+    const windupStart = crouch + air * ATTACK_ANIM.jumpStrike.windupAt;
+    // 按预定的落地时刻倒推每一段还剩多少时间：每段补间都要对齐到帧，首尾相接时误差会累积，倒推之后命中始终和落地对齐
+    const landAt = scheduler.time + jump.total;
+    const travel = actor.moveTo(point, jump.total, face, { gait: jump.gait, side: jump.side, land: false });
+    const attack = (async () => {
+      await scheduler.wait(windupStart);
+      await actor.windup('melee', Math.max(0.01, landAt - t.strike - scheduler.time), variant);
+      await strike(Math.max(0.01, landAt - scheduler.time));
+    })();
+    await Promise.all([travel, attack]);
   }
 
   // ------------------------------------------------------------------
@@ -663,6 +682,16 @@ function centroid(points: readonly GroundPoint[]): GroundPoint | null {
     z += p.z;
   }
   return { x: x / points.length, z: z / points.length };
+}
+
+/**
+ * 跳劈的总时长（下蹲 + 腾空，没有单独的落地缓冲）：在原来的腾空时间里放得下“空中预备 + 发力”就用原来的，
+ * 放不下就加长腾空（预备至少占动作自己的预备时长）。base 是这次移动原来的总时长（含落地缓冲）。
+ */
+export function jumpStrikeDuration(gait: GaitId, base: number, t: MoveTiming): number {
+  const { crouch, air } = jumpSplit(gait, base, true);
+  const need = (t.anticipation + t.strike) / (1 - ATTACK_ANIM.jumpStrike.windupAt);
+  return crouch + Math.max(air, need);
 }
 
 /** 近战停步位置：目标正前方，留出双方身体半径和一点空隙 */

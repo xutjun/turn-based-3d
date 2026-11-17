@@ -41,32 +41,32 @@ const LABELS = {
  */
 const SHEETS = [
   {
-    name: 'blade', title: '刀普攻：下蹲 → 大跳跃 → 斜劈收刀 → 跳回（烬刃）', demo: 'basic_blade', actor: 'A1', zoom: 2.6, offsetY: -0.22,
-    picks: [['crouch', 0, 1, '下蹲蓄力'], ['approach', 0, 0.5, '腾空'], ['land', 0, 0.3, '落地'], ['anticipation', 0, 1], ['strike', 0, 0.55], ['hold', 0, 0.2], ['follow', 0, 0.6], ['recover', 0, 0.45, '收刀'], ['crouch', -1, 1, '下蹲'], ['return', 0, 0.5, '跳回'], ['land', -1, 0.3, '落地缓冲']],
+    name: 'blade', title: '刀普攻·跳劈：下蹲 → 起跳、空中举刀 → 下落挥下、落地即命中 → 余势顺势下蹲 → 跳回（烬刃）', demo: 'basic_blade', actor: 'A1', zoom: 2.6, offsetY: -0.22,
+    picks: [['crouch', 0, 1, '下蹲蓄力'], ['approach', 0, 0.6, '起跳'], ['anticipation', 0, 0.4, '空中举刀'], ['anticipation', 0, 1, '下落·举到最高'], ['strike', 0, 0.6, '挥下'], ['hold', 0, 0.2, '落地即命中'], ['follow', 0, 0.5], ['crouch', -1, 0.6, '顺势下蹲'], ['return', 0, 0.5, '跳回'], ['land', -1, 0.4, '落地缓冲']],
   },
   {
-    name: 'sword', title: '剑普攻：下蹲 → 大跳跃 → 横斩 → 跳回（缚魂）', demo: 'basic_sword', actor: 'A3', zoom: 2.6, offsetY: -0.22,
-    picks: [['crouch', 0, 1, '下蹲蓄力'], ['approach', 0, 0.5, '腾空'], ['land', 0, 0.3, '落地'], ['anticipation', 0, 1], ['strike', 0, 0.55], ['hold', 0, 0.2], ['follow', 0, 0.6], ['recover', 0, 0.4], ['return', 0, 0.5, '跳回'], ['land', -1, 0.3, '落地缓冲']],
+    name: 'sword', title: '剑普攻·跳劈：下蹲 → 起跳、空中拉剑 → 下落横斩、落地即命中 → 顺势下蹲 → 跳回（缚魂）', demo: 'basic_sword', actor: 'A3', zoom: 2.6, offsetY: -0.22,
+    picks: [['crouch', 0, 1, '下蹲蓄力'], ['approach', 0, 0.6, '起跳'], ['anticipation', 0, 0.4, '空中拉剑'], ['anticipation', 0, 1, '下落·蓄满'], ['strike', 0, 0.6, '横斩'], ['hold', 0, 0.2, '落地即命中'], ['follow', 0, 0.5], ['crouch', -1, 0.6, '顺势下蹲'], ['return', 0, 0.5, '跳回'], ['land', -1, 0.4, '落地缓冲']],
   },
   {
-    name: 'spear', title: '枪普攻：下蹲 → 大跳跃 → 蓄力突刺 → 回撤 → 跳回（守誓）', demo: 'basic_spear', actor: 'A4', zoom: 2.6, offsetY: -0.22,
-    picks: [['crouch', 0, 1, '下蹲蓄力'], ['approach', 0, 0.5, '腾空'], ['land', 0, 0.3, '落地'], ['anticipation', 0, 1, '蓄满'], ['strike', 0, 0.6], ['hold', 0, 0.2], ['follow', 0, 1, '回撤'], ['recover', 0, 0.5], ['return', 0, 0.5, '跳回'], ['land', -1, 0.3, '落地缓冲']],
+    name: 'spear', title: '枪普攻·跳刺：下蹲 → 起跳、空中收枪蓄力 → 下落突刺、落地即命中 → 回撤下蹲 → 跳回（守誓）', demo: 'basic_spear', actor: 'A4', zoom: 2.6, offsetY: -0.22,
+    picks: [['crouch', 0, 1, '下蹲蓄力'], ['approach', 0, 0.6, '起跳'], ['anticipation', 0, 0.4, '空中收枪'], ['anticipation', 0, 1, '下落·蓄满'], ['strike', 0, 0.6, '突刺'], ['hold', 0, 0.2, '落地即命中'], ['follow', 0, 0.5, '回撤'], ['crouch', -1, 0.6, '顺势下蹲'], ['return', 0, 0.5, '跳回'], ['land', -1, 0.4, '落地缓冲']],
   },
   {
-    name: 'combo', title: '连斩 ×3：斜劈 → 反手横斩 → 跃起重劈（烬刃）', demo: 'combo', actor: 'A1', zoom: 2.8, offsetY: -0.18,
-    picks: [['approach', 0, 0.5, '腾空'], ['anticipation', 0, 1, '第 1 击'], ['hold', 0, 0.2, '第 1 击'], ['anticipation', 1, 1, '第 2 击'], ['strike', 1, 0.6, '第 2 击'], ['hold', 1, 0.2, '第 2 击'], ['anticipation', 2, 0.3, '第 3 击·沉身'], ['anticipation', 2, 1, '第 3 击·跃起'], ['hold', 2, 0.2, '第 3 击'], ['follow', 2, 0.8], ['recover', 0, 0.5], ['return', 0, 0.5, '跳回']],
+    name: 'combo', title: '连斩 ×3：落地跳劈 → 余势接反手横斩 → 余势接跃起重劈，中间不站定（烬刃）', demo: 'combo', actor: 'A1', zoom: 2.8, offsetY: -0.18,
+    picks: [['anticipation', 0, 0.9, '空中蓄力'], ['hold', 0, 0.2, '第 1 击·落地'], ['follow', 0, 0.3, '余势'], ['anticipation', 1, 0.6, '接第 2 击'], ['hold', 1, 0.2, '第 2 击'], ['anticipation', 2, 0.3, '接第 3 击·沉身'], ['anticipation', 2, 1, '跃起'], ['hold', 2, 0.2, '第 3 击'], ['crouch', -1, 0.6, '顺势下蹲'], ['return', 0, 0.5, '跳回']],
   },
   {
-    name: 'whirlwind', title: '旋风斩 ×7：短跳跃切入 + 旋身横扫，最后一击旋转砸地，大跳跃回位（烬刃）', demo: 'whirlwind', actor: 'A1', zoom: 2.4, offsetY: -0.15,
-    picks: [['approach', 0, 0.5, '大跳跃'], ['anticipation', 0, 1, '第 1 击'], ['hold', 0, 0.2, '第 1 击'], ['crouch', 1, 1, '短跳·下蹲'], ['approach', 1, 0.5, '短跳·旋身'], ['hold', 1, 0.2, '第 2 击'], ['approach', 4, 0.5, '短跳·旋身'], ['anticipation', -1, 1, '最后一击·蓄势'], ['strike', -1, 0.45, '最后一击·旋转'], ['hold', -1, 0.5, '冲击波'], ['recover', 0, 0.5], ['return', 0, 0.5, '跳回']],
+    name: 'whirlwind', title: '旋风斩 ×7：空中蓄力、落地即斩、斩完直接起跳；最后一击空中旋转砸地（烬刃）', demo: 'whirlwind', actor: 'A1', zoom: 2.4, offsetY: -0.15,
+    picks: [['anticipation', 0, 0.8, '大跳跃·空中蓄力'], ['hold', 0, 0.2, '第 1 击·落地即斩'], ['crouch', 1, 0.5, '斩完起跳'], ['anticipation', 1, 0.5, '短跳·旋身蓄力'], ['strike', 1, 0.7, '落地即斩'], ['hold', 1, 0.2, '第 2 击'], ['anticipation', 4, 0.5, '短跳·旋身'], ['anticipation', -1, 0.8, '最后一击·空中蓄势'], ['strike', -1, 0.5, '空中旋转'], ['hold', -1, 0.5, '砸地冲击波'], ['crouch', -1, 0.6, '顺势下蹲'], ['return', 0, 0.5, '跳回']],
   },
   {
-    name: 'wolf', title: '影狼：下伏蓄力 → 扑跃 → 撕咬甩头 → 连击爪击 → 跳回', demo: 'double_strike', actor: 'A5', zoom: 3.4, offsetY: -0.16,
-    picks: [['crouch', 0, 1, '下伏'], ['approach', 0, 0.2, '蹬地'], ['approach', 0, 0.6, '腾空'], ['anticipation', 0, 1, '张嘴'], ['hold', 0, 0.2, '咬住'], ['follow', 0, 0.3, '甩头'], ['anticipation', 1, 1, '连击·举爪'], ['hold', 1, 0.2, '连击·爪击'], ['recover', 0, 0.5], ['return', 0, 0.5, '跳回'], ['idle', -1, 0.6, '站姿复位']],
+    name: 'wolf', title: '影狼：下伏 → 扑跃、空中张嘴伸爪 → 落地即撕咬 → 甩头接爪击 → 跳回', demo: 'double_strike', actor: 'A5', zoom: 3.4, offsetY: -0.16,
+    picks: [['crouch', 0, 1, '下伏'], ['approach', 0, 0.6, '蹬地'], ['anticipation', 0, 0.8, '空中张嘴伸爪'], ['strike', 0, 0.6, '扑下'], ['hold', 0, 0.2, '落地即咬住'], ['follow', 0, 0.3, '甩头'], ['anticipation', 1, 0.8, '接爪击'], ['hold', 1, 0.2, '爪击'], ['crouch', -1, 0.6, '顺势下伏'], ['return', 0, 0.5, '跳回'], ['idle', -1, 0.6, '站姿复位']],
   },
   {
-    name: 'golem', title: '魔偶：举臂下沉 → 沉重的低跳 → 砸地落下 → 砸拳（冲击波）→ 跳回', demo: 'golem_basic', actor: 'A9', zoom: 3, offsetY: -0.15,
-    picks: [['crouch', 0, 1, '举臂下沉'], ['approach', 0, 0.5, '低跳'], ['land', 0, 0.3, '落地震动'], ['anticipation', 0, 1, '后仰蓄满'], ['strike', 0, 0.6], ['hold', 0, 0.5, '冲击波'], ['follow', 0, 0.7], ['recover', 0, 0.5], ['return', 0, 0.5, '跳回'], ['land', -1, 0.3, '落地']],
+    name: 'golem', title: '魔偶：举臂下沉 → 低跳、空中举拳 → 落地砸拳与冲击波同时 → 顺势下沉 → 跳回', demo: 'golem_basic', actor: 'A9', zoom: 3, offsetY: -0.15,
+    picks: [['crouch', 0, 1, '举臂下沉'], ['approach', 0, 0.6, '低跳'], ['anticipation', 0, 0.8, '空中举拳'], ['strike', 0, 0.7, '砸下'], ['hold', 0, 0.5, '落地砸拳·冲击波'], ['follow', 0, 0.5], ['crouch', -1, 0.6, '顺势下沉'], ['return', 0, 0.5, '跳回'], ['land', -1, 0.4, '落地']],
   },
   {
     name: 'bow', title: '弓箭普攻：侧身 → 举弓 → 拉弦到脸侧（弓弦 V 形）→ 瞄准 → 放箭、弓身后坐 → 收弓（夜隼）', demo: 'basic_bow', actor: 'A0', zoom: 4.6,

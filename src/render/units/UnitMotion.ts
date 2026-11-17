@@ -14,6 +14,7 @@
 import {
   ATTACK_ANIM,
   GAITS,
+  jumpSplit,
   MOTION_PROFILES,
   SECONDARY_MOTION,
   moveOf,
@@ -162,8 +163,8 @@ export class UnitMotion {
   move: MoveDef | null = null;
   /** 动作姿态：相对站姿的偏移量；全为空 = 站姿 */
   readonly pose: Record<string, number> = {};
-  /** 步态层：冲刺 / 扑跃途中整体的前倾、侧倾、离地、旋身 */
-  readonly gait = { pitch: 0, roll: 0, hop: 0, spin: 0 };
+  /** 步态层：冲刺 / 扑跃途中整体的前倾、侧倾、离地、旋身；squash = 跳劈落地时身体被压下去（步骤 11c，和姿态层叠加） */
+  readonly gait = { pitch: 0, roll: 0, hop: 0, spin: 0, squash: 0 };
   /** 步态层：随步伐摆动的关节（魔偶的双腿） */
   readonly gaitJoints: Record<string, number> = {};
   /** 命中顿住时的震颤幅度（0 = 没有） */
@@ -197,7 +198,7 @@ export class UnitMotion {
   get atRest(): boolean {
     for (const v of Object.values(this.pose)) if (Math.abs(v) > 1e-6) return false;
     const g = this.gait;
-    return g.pitch === 0 && g.roll === 0 && g.hop === 0 && g.spin === 0 && this.shudder === 0;
+    return g.pitch === 0 && g.roll === 0 && g.hop === 0 && g.spin === 0 && g.squash === 0 && this.shudder === 0;
   }
 
   // ------------------------------------------------------------------
@@ -281,11 +282,13 @@ export class UnitMotion {
   /**
    * 离开站位移动到某点；到位时正对 face。
    * 带下蹲 / 落地缓冲的步态（大跳跃）：duration 是总时长，先下蹲蓄力、再腾空、落地后缓冲回到站姿。
+   * 跳劈（options.land = false）：没有单独的落地缓冲，腾空占满剩下的时间；落地的一瞬间身体被压下去再弹回（gait.squash），
+   * 和同时进行的挥击叠加——落地缓冲和发力是同一个动作。
    */
   async moveTo(point: GroundPoint, duration: number, face?: GroundPoint, options: MoveOptions = {}): Promise<void> {
     this.away = true;
     const gaitId = options.gait ?? MOTION_PROFILES[this.motion].approach.gait;
-    const { air, land } = await this.takeOff(gaitId, duration, options);
+    const { air, land } = await this.takeOff(gaitId, duration, options, options.land !== false);
     this.phase = 'approach';
     const dx = point.x - this.ground.x;
     const dz = point.z - this.ground.z;
@@ -294,7 +297,22 @@ export class UnitMotion {
     const travel = Math.hypot(dx, dz) > 0.05 ? Math.atan2(dx, dz) : fromYaw;
     const faceYaw = face ? Math.atan2(face.x - point.x, face.z - point.z) : travel;
     await this.travel(point, air, gaitId, options.side ?? 1, (t) => chargeYaw(t, fromYaw, travel, faceYaw, STAGING.chargeTurn));
+    if (options.land === false) {
+      this.landImpact();
+      return;
+    }
     await this.landing(gaitId, land, false);
+  }
+
+  private impactToken = 0;
+
+  /** 跳劈落地：身体被压下去再弹回（不占用编排时间，和挥击、顿住同时进行） */
+  private landImpact(): void {
+    const J = ATTACK_ANIM.jumpStrike;
+    const token = (this.impactToken += 1);
+    void this.scheduler.tween(J.landSquashTime, (t) => {
+      if (token === this.impactToken) this.gait.squash = J.landSquash * (1 - t) * (1 - t);
+    });
   }
 
   /**
@@ -303,7 +321,8 @@ export class UnitMotion {
    */
   async returnHome(duration: number, options: MoveOptions = {}): Promise<void> {
     const gaitId = options.gait ?? MOTION_PROFILES[this.motion].retreat.gait;
-    const { air, land } = await this.takeOff(gaitId, duration, options);
+    // 回程的下蹲直接从当前姿态（上一击的余势）开始：收招和下蹲合成一个动作
+    const { air, land } = await this.takeOff(gaitId, duration, options, true);
     this.phase = 'return';
     const fromYaw = this.yaw;
     await this.travel(this.home, air, gaitId, options.side ?? 1, (t) => turnToward(fromYaw, this.baseYaw, t));
@@ -317,6 +336,8 @@ export class UnitMotion {
     this.ground.z = this.home.z;
     this.poseToken += 1;
     this.clearPose();
+    this.impactToken += 1;
+    this.gait.squash = 0;
     this.away = false;
     this.phase = 'idle';
   }
@@ -325,16 +346,15 @@ export class UnitMotion {
    * 起跳前的下蹲蓄力（步态有 crouch 时）；返回腾空和落地缓冲各占的时间（三段加起来 = duration）。
    * 离地的一瞬间调用 options.onAirborne。
    */
-  private async takeOff(gaitId: GaitId, duration: number, options: MoveOptions): Promise<{ air: number; land: number }> {
+  private async takeOff(gaitId: GaitId, duration: number, options: MoveOptions, withLand: boolean): Promise<{ air: number; land: number }> {
     const g = GAITS[gaitId];
-    const crouch = g.crouch ? Math.min(g.crouch.duration, duration * 0.4) : 0;
-    const land = g.land ? Math.min(g.land.duration, duration * 0.4) : 0;
+    const { crouch, air, land } = jumpSplit(gaitId, duration, withLand);
     if (g.crouch && crouch > 0) {
       this.phase = 'crouch';
       await this.playKeys([{ pose: g.crouch.pose }], crouch, g.crouch.ease ?? 'outCubic');
     }
     options.onAirborne?.();
-    return { air: Math.max(0.05, duration - crouch - land), land };
+    return { air, land };
   }
 
   /** 落地缓冲（步态有 land 时）：先压到落地姿态，再平滑回到站姿；home = 跳回原位（结束后清空姿态） */
@@ -517,7 +537,8 @@ export class UnitMotion {
   reset(): void {
     this.poseToken += 1;
     this.clearPose();
-    this.gait.pitch = this.gait.roll = this.gait.hop = this.gait.spin = 0;
+    this.gait.pitch = this.gait.roll = this.gait.hop = this.gait.spin = this.gait.squash = 0;
+    this.impactToken += 1;
     for (const c of Object.keys(this.gaitJoints)) delete this.gaitJoints[c];
     this.shudder = 0;
     this.ground.x = this.home.x;
