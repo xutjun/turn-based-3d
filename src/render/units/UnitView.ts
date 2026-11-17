@@ -15,9 +15,12 @@ import type { UnitTemplate } from '../../core/types';
 import type { SoundPlayer } from '../../assets/audio/SoundEngine';
 import type { SoundName } from '../../data/audioConfig';
 import { animatedJointsOf, extraJointsOf } from './animatedJoints';
+import { forwardLeg, legAngles, restFoot, type FootTarget, type LegDims } from './legPose';
+import { WalkGait } from './walkGait';
+import { LEG_PLANT, WALK_GAIT } from '../../data/exploreConfig';
 import { ATTACK_ANIM, LEFT_GRIP, MOTION_OF_TEMPLATE, MOTION_PROFILES, MOUNTED_STAFF, SECONDARY_MOTION, moveOf, type MotionId } from '../../data/attackAnimConfig';
 import { solveArmIK } from './armIK';
-import { IdleAnimator } from './IdleAnimator';
+import { IdleAnimator, type LegReach } from './IdleAnimator';
 import { UnitMotion, type Footfall, type MotionPhase } from './UnitMotion';
 import { seedOf } from './idleMotion';
 import { IDLE_CONFIG } from '../../data/idleConfig';
@@ -120,6 +123,20 @@ export class UnitView implements StageUnit {
   /** 待机权重（0~1）：出手、受击、冲锋时平滑降到 0，结束后平滑回到 1 */
   private idleWeight = 1;
   private lastIdleTime = 0;
+  /**
+   * 腿（步骤 14，只有会走路的人形有）：骨架尺寸、行走步态、站姿的踝关节目标。
+   * 每帧由 IK 求髋、膝、踝的转角：走路时脚按步态落地、抬起；站着时身体下沉就屈膝，脚留在地面上；腾空时收腿。
+   */
+  private readonly legs: { dims: LegDims; walk: WalkGait; rest: FootTarget; ankleX: { L: number; R: number } } | undefined;
+  /** 腿伸到哪里：左 / 右膝、左 / 右踝相对髋关节的位置（身体坐标）；袍摆被腿顶开用 */
+  private readonly legReach: LegReach = {
+    kneeL: { z: 0, depth: 0 },
+    kneeR: { z: 0, depth: 0 },
+    footL: { z: 0, depth: 0 },
+    footR: { z: 0, depth: 0 },
+  };
+  /** 探索模式里这一帧走过的距离（世界坐标，米），update 时交给步态 */
+  private pendingWalk = 0;
 
   constructor(
     template: UnitTemplate,
@@ -195,6 +212,17 @@ export class UnitView implements StageUnit {
       }
     });
 
+    if (this.rig?.legsAnimated) {
+      const r = this.rig;
+      const dims: LegDims = { hipHeight: r.hips.position.y, thigh: r.legL.knee.position.length(), shin: r.legL.foot.position.length() };
+      const heldLeft = this.weapon !== undefined && this.weaponLeft;
+      const heldRight = this.weapon !== undefined && !this.weaponLeft;
+      // 站姿时左右踝关节离身体中线多远（髋的横向位置 + 外张角带出去的距离）；身体侧倾时据此修正脚的高度
+      const legLen = dims.thigh + dims.shin;
+      const ankleX = (leg: typeof r.legL): number => leg.hip.position.x + legLen * Math.sin(leg.hip.rotation.z);
+      this.legs = { dims, walk: new WalkGait(dims, { heldLeft, heldRight }), rest: restFoot(dims), ankleX: { L: ankleX(r.legL), R: ankleX(r.legR) } };
+    }
+
     this.idle = new IdleAnimator(model, UNIT_MODELS[template.templateId]?.idle ?? 'stiff', seedOf(template.id));
     this.restoreBase();
     this.idle.update(0, 1);
@@ -221,6 +249,51 @@ export class UnitView implements StageUnit {
   /** 调试 / 测试：倒地程度（0 = 站着）；存活单位必须为 0 */
   get fallen(): number {
     return this.pose.fall;
+  }
+
+  // ------------------------------------------------------------------
+  // 探索模式（步骤 14）：位置和朝向由探索逻辑决定，单位自己按走过的距离迈步
+  // ------------------------------------------------------------------
+
+  /** 会不会走路（有腿部关节） */
+  get canWalk(): boolean {
+    return this.legs !== undefined;
+  }
+
+  /** 行走权重 0~1（调试 / 测试；没有腿的单位恒为 0） */
+  get walkWeight(): number {
+    return this.legs?.walk.weight ?? 0;
+  }
+
+  /** 步态相位（调试 / 联系表；没有腿的单位恒为 0） */
+  get walkPhase(): number {
+    return this.legs?.walk.phase ?? 0;
+  }
+
+  /** 当前地面位置与朝向（探索模式读取） */
+  get groundPosition(): { x: number; z: number; yaw: number } {
+    return { x: this.act.ground.x, z: this.act.ground.z, yaw: this.act.yaw };
+  }
+
+  /**
+   * 移动到地面上的某点、面朝 yaw（探索模式每帧调用）。走过的距离交给步态，下一次 update 时迈步。
+   * 不改变“离开站位”（away）的判定：那只用于战斗。
+   */
+  locomote(x: number, z: number, yaw: number): void {
+    const g = this.act.ground;
+    this.pendingWalk += Math.hypot(x - g.x, z - g.z);
+    g.x = x;
+    g.z = z;
+    this.act.yaw = yaw;
+  }
+
+  /** 立即放到某点（不走过去，不迈步）：列队、回到起点时用 */
+  placeAt(x: number, z: number, yaw: number): void {
+    this.act.ground.x = x;
+    this.act.ground.z = z;
+    this.act.yaw = yaw;
+    this.pendingWalk = 0;
+    this.legs?.walk.reset();
   }
 
   // ------------------------------------------------------------------
@@ -426,6 +499,8 @@ export class UnitView implements StageUnit {
     this.setWeaponColor(null);
     this.model.visible = true;
     this.idleWeight = 1;
+    this.pendingWalk = 0;
+    this.legs?.walk.reset();
     this.restoreBase();
     this.idle.update(this.lastIdleTime, 1);
     this.idle.setSecondary(0, 0, 0, 0);
@@ -538,9 +613,18 @@ export class UnitView implements StageUnit {
   update(time: number, idleTime = time): void {
     const dt = Math.min(0.1, Math.max(0, idleTime - this.lastIdleTime));
     this.lastIdleTime = idleTime;
+    // 行走：这一帧走过的距离（换成模型坐标）推进步态相位
+    if (this.legs) {
+      if (dt > 0) {
+        this.legs.walk.advance(this.pendingWalk / this.baseScale, dt);
+        this.pendingWalk = 0;
+      }
+    }
     // 待机权重：有出手 / 受击 / 冲锋动作时目标为 0，否则为 1；按固定速率平滑靠近，切换没有跳变
+    // 走路时待机让位（只留一点呼吸）
     const p = this.pose;
-    const busy = Math.min(1, Math.max(this.act.busy ? 1 : 0, p.lean * 3, p.side * 4));
+    const walking = (this.legs?.walk.weight ?? 0) * 0.85;
+    const busy = Math.min(1, Math.max(this.act.busy ? 1 : 0, p.lean * 3, p.side * 4, walking));
     const target = (1 - busy) * (1 - (1 - IDLE_CONFIG.guardScale) * p.guard);
     this.idleWeight += (target - this.idleWeight) * (1 - Math.exp(-IDLE_CONFIG.blendRate * dt));
     // 倒地后只保留极轻微的变化；消失的单位不动
@@ -570,7 +654,8 @@ export class UnitView implements StageUnit {
     const p = this.pose;
     // 身体还在动（出手、受击后仰、闪避、站起）时甩动照常；停下后由 UnitMotion 收尾归零
     // （后仰、闪避用正弦曲线，结束时是 1e-17 量级而不是精确的 0，所以用阈值判断）
-    const active = this.act.busy || Math.abs(p.lean) > 1e-4 || Math.abs(p.side) > 1e-4 || p.fall > 1e-4;
+    const walk = this.legs?.walk;
+    const active = this.act.busy || Math.abs(p.lean) > 1e-4 || Math.abs(p.side) > 1e-4 || p.fall > 1e-4 || (walk?.active ?? false);
     this.act.updateSecondary(
       this.scheduler.delta,
       m.position.x - Math.sin(yaw) * back,
@@ -581,6 +666,8 @@ export class UnitView implements StageUnit {
     );
     const push = this.act.push;
     this.idle.setSecondary(push.x, push.y, push.z, this.act.flutter);
+    // 袍摆、裙甲被腿顶开（步骤 14）：走路迈腿、下蹲屈膝时膝盖和脚往前后伸，布料跟着让开
+    if (this.legs) this.idle.setLegReach(this.legReach, WALK_GAIT.robeClearance);
     if (this.tail && (push.x !== 0 || push.z !== 0)) {
       // 偏移量换到模型自己的左右 / 前后方向，变成尾巴的转角
       const k = c.tailGain / this.baseScale;
@@ -601,12 +688,14 @@ export class UnitView implements StageUnit {
     // 待机：整体的起伏、漂浮、重心转移（都已乘过待机权重，出手和倒地时自然归零）
     const idle = this.idle.offsets;
     const bob = (idle.bob + idle.float) * this.baseScale;
+    // 行走（步骤 14）：身体随步伐下沉起伏、前倾、左右换重心；不走时全部为 0
+    const walk = this.legs?.walk.active ? this.legs.walk.sample() : null;
 
     // 出手：动作姿态里的整体位移和转动，加上冲刺 / 扑跃的步态层
     let forward = ch('root.forward');
-    const pitch = ch('root.pitch') + g.pitch;
-    const lift = ch('root.lift');
-    const roll = ch('root.roll') + g.roll;
+    const pitch = ch('root.pitch') + g.pitch + (walk?.lean ?? 0);
+    const lift = ch('root.lift') - (walk?.drop ?? 0);
+    const roll = ch('root.roll') + g.roll + (walk?.roll ?? 0);
     const turn = ch('root.turn') + g.spin;
     // 命中顿住时的一点震颤
     if (this.act.shudder > 0) forward += this.act.shudder * Math.sin(time * 95);
@@ -620,7 +709,9 @@ export class UnitView implements StageUnit {
     m.rotation.y = yaw + turn;
     // 侧移方向：朝向的垂直方向
     const s = this.baseScale;
-    const side = p.side + idle.shift + ch('root.side'); // 重心转移带起的一点点左右位移（厘米级，不算离开站位）
+    // 重心转移带起的一点点左右位移（厘米级，不算离开站位）
+    // （p.side 为正是向右手侧；步态的 shift 为正是向左手侧）
+    const side = p.side + idle.shift + ch('root.side') - (walk?.shift ?? 0);
     m.position.set(
       this.ground.x + fx * forward * s - fz * side * s,
       g.hop + lift * s + bob,
@@ -639,6 +730,8 @@ export class UnitView implements StageUnit {
     if (this.rig) {
       this.applyRigPose();
       this.idle.addToRig(); // 待机偏移加在出手 / 受击姿态之上
+      if (walk) this.applyWalkUpperBody(walk);
+      this.applyLegs(walk, bob);
     }
     this.applyExtraJoints();
     this.applyWeaponPose();
@@ -680,6 +773,82 @@ export class UnitView implements StageUnit {
     }
   }
 
+  /** 行走时的上半身（步骤 14）：双臂与对侧腿同步前后摆、腰随步伐扭转（已乘行走权重） */
+  private applyWalkUpperBody(w: NonNullable<ReturnType<WalkGait['sample']>>): void {
+    const add = (name: string, dx: number, dy = 0): void => {
+      const j = this.rest[name]?.joint;
+      if (!j) return;
+      j.rotation.x += dx;
+      j.rotation.y += dy;
+    };
+    add('shoulderL', w.shoulderL);
+    add('shoulderR', w.shoulderR);
+    add('elbowL', w.elbowL);
+    add('elbowR', w.elbowR);
+    add('spine', 0, w.twist);
+    add('chest', 0, -w.twist * 0.4); // 胸口少转一点，肩膀的扭动更柔和
+  }
+
+  /**
+   * 腿（步骤 14）：按踝关节目标用 IK 求髋、膝、踝的转角。
+   *   - 走路时：目标来自步态（支撑脚原地不动、摆动脚抬起前送）；
+   *   - 站着时：目标是脚下的地面——身体下沉（下蹲蓄力、落地缓冲、受击、待机呼吸）时屈膝，脚不陷进地里；
+   *   - 腾空时：够不着地面，腿自然伸直，并按离地高度收腿；
+   *   - 倒地 / 消失时：逐渐回到站姿（躺平的身体不再踩地）。
+   * 必须在根节点的位置、转角、缩放都摆好之后调用。
+   */
+  private applyLegs(walk: ReturnType<WalkGait['sample']> | null, idleBob: number): void {
+    const legs = this.legs;
+    if (!legs) return;
+    const m = this.model;
+    const p = this.pose;
+    const plant = (1 - EASE.in(p.fall)) * (1 - p.shrink);
+    const reach = this.legReach;
+    if (plant <= 0) {
+      for (const k of [reach.kneeL, reach.kneeR, reach.footL, reach.footR]) k.z = 0;
+      return; // 站姿已由 applyRigPose 写好
+    }
+    // 根节点在模型坐标里离地多高（缩放会把整个身体压扁 / 拉长，用竖直方向的缩放换算）
+    const sy = Math.abs(m.scale.y) > 1e-6 ? m.scale.y : 1;
+    // 待机呼吸带起的那几毫米不算（否则膝盖会跟着呼吸一弯一弯；原来就是整个人轻微起伏）
+    const lift = (m.position.y - idleBob) / sy;
+    const hop = this.act.gait.hop;
+    const tuck = hop > 0 ? LEG_PLANT.tuck * Math.min(1, hop / LEG_PLANT.tuckHeight) : 0;
+    const pitch = m.rotation.x;
+    // 行走：按“满权重”的身体（下沉、前倾都按满值）求步态的腿，再与站姿的腿按行走权重混合
+    const w = walk ? legs.walk.weight : 0;
+    const walkPitch = walk ? pitch - walk.lean + walk.leanFull : pitch;
+    const walkLift = walk ? lift + walk.drop - walk.dropFull : lift;
+    // 身体侧倾（绕根节点）会把一侧的脚抬起、另一侧压下：每条腿的“根节点高度”按自己的横向位置修正
+    const sinRoll = Math.sin(m.rotation.z);
+    const d = legs.dims;
+    const solve = (foot: FootTarget | undefined, hip: string, knee: string, ankle: string, ankleX: number, out: { knee: LegReach['kneeL']; foot: LegReach['footL'] }): void => {
+      const tilt = ankleX * sinRoll;
+      const ang = legAngles(legs.dims, legs.rest, pitch, lift + tilt, tuck);
+      if (foot && w > 0) {
+        const step = legAngles(legs.dims, foot, walkPitch, walkLift + tilt, tuck);
+        ang.hip += (step.hip - ang.hip) * w;
+        ang.knee += (step.knee - ang.knee) * w;
+        ang.foot += (step.foot - ang.foot) * w;
+        ang.hipRoll += (step.hipRoll - ang.hipRoll) * w;
+      }
+      const h = this.rest[hip]!.joint;
+      h.rotation.x += ang.hip * plant;
+      h.rotation.z += ang.hipRoll * plant;
+      this.rest[knee]!.joint.rotation.x += ang.knee * plant;
+      this.rest[ankle]!.joint.rotation.x += ang.foot * plant;
+      // 膝、踝相对髋关节的位置（袍摆被腿顶开用）
+      const thighAng = -ang.hip * plant;
+      out.knee.z = d.thigh * Math.sin(thighAng);
+      out.knee.depth = (d.thigh * Math.cos(thighAng)) / d.hipHeight;
+      const at = forwardLeg(d.thigh, d.shin, ang.hip * plant, ang.knee * plant);
+      out.foot.z = at.dz;
+      out.foot.depth = -at.dy / d.hipHeight;
+    };
+    solve(walk?.left, 'hipL', 'kneeL', 'footL', legs.ankleX.L, { knee: reach.kneeL, foot: reach.footL });
+    solve(walk?.right, 'hipR', 'kneeR', 'footR', legs.ankleX.R, { knee: reach.kneeR, foot: reach.footR });
+  }
+
   /** 人形骨架之外的关节（宝宝的头、颈、下颌、腿、翅、臂 …）：待机已经摆好，这里把动作姿态和步态加上去 */
   private applyExtraJoints(): void {
     const a = this.act.pose;
@@ -708,6 +877,9 @@ export class UnitView implements StageUnit {
       // 弓要保持竖直：手臂抬起多少，武器就反向转回多少（都绕 x 轴，可以直接相加）
       const guard = this.pose.guard;
       x -= (a['shoulderL.x'] ?? 0) + (a['elbowL.x'] ?? 0) - 2.2 * guard;
+      // 行走时左臂的摆动同样抵消掉（步骤 14）
+      const walk = this.legs?.walk.active ? this.legs.walk.out : null;
+      if (walk) x -= walk.shoulderL + walk.elbowL;
     }
     w.rotation.set(x, r.y + (a['weapon.y'] ?? 0), r.z + (a['weapon.z'] ?? 0));
     if (this.bow) {

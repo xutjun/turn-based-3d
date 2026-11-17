@@ -13,6 +13,11 @@ export interface UnitModelDef {
   params?: Record<string, unknown>;
   /** 待机动画的风格（见 data/idleConfig.ts）；不填按 'stiff' */
   idle?: IdleStyleId;
+  /**
+   * 会走路（步骤 14）：人形骨架的髋、膝、踝成为动画关节（行走、身体下沉时屈膝踩地）。
+   * 代价是腿部网格不能再并进身体，每人多几次绘制调用，所以只给需要走路的单位打开。
+   */
+  walk?: boolean;
 }
 
 /** 某个模型（资源键）的待机风格：预览页没有单位模板，按资源键查 */
@@ -20,12 +25,17 @@ export function idleStyleOfAsset(assetKey: string): IdleStyleId | undefined {
   return Object.values(UNIT_MODELS).find((d) => d.assetKey === assetKey)?.idle;
 }
 
+/** 某个模型（资源键）会不会走路（预览页用） */
+export function walksOfAsset(assetKey: string): boolean {
+  return Object.values(UNIT_MODELS).some((d) => d.assetKey === assetKey && d.walk === true);
+}
+
 export const UNIT_MODELS: Record<string, UnitModelDef> = {
-  hero_blade: { assetKey: ASSET_KEYS.heroKnight, idle: 'stiff' }, // 烬刃：物理系重甲骑士
-  hero_staff: { assetKey: ASSET_KEYS.heroMage, idle: 'flowing' }, // 雷咒：法术系法师
-  hero_sword: { assetKey: ASSET_KEYS.heroSealer, idle: 'flowing' }, // 缚魂：封印系祭司
-  hero_spear: { assetKey: ASSET_KEYS.heroHealer, idle: 'flowing' }, // 守誓：恢复系
-  hero_bow: { assetKey: ASSET_KEYS.heroRanger, idle: 'nimble' }, // 夜隼：自由职业弓手
+  hero_blade: { assetKey: ASSET_KEYS.heroKnight, idle: 'stiff', walk: true }, // 烬刃：物理系重甲骑士
+  hero_staff: { assetKey: ASSET_KEYS.heroMage, idle: 'flowing', walk: true }, // 雷咒：法术系法师
+  hero_sword: { assetKey: ASSET_KEYS.heroSealer, idle: 'flowing', walk: true }, // 缚魂：封印系祭司
+  hero_spear: { assetKey: ASSET_KEYS.heroHealer, idle: 'flowing', walk: true }, // 守誓：恢复系
+  hero_bow: { assetKey: ASSET_KEYS.heroRanger, idle: 'nimble', walk: true }, // 夜隼：自由职业弓手
   // 宝宝（体型约为人物的 0.6 倍）
   pet_wolf_grey: { assetKey: ASSET_KEYS.petWolf, idle: 'beast' }, // 影狼·灰
   pet_wolf_red: {

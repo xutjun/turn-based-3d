@@ -1,5 +1,6 @@
 // 设置菜单（步骤 12）：右上角齿轮按钮 / Esc 打开。
-// 设置项：分辨率、画质、主音量 / 音效 / 环境音、静音；战斗中另有“重新开始”“退出游戏”（都要二次确认）。
+// 设置项：分辨率、画质、主音量 / 音效 / 环境音、静音；战斗中另有“重新开始”“退出游戏”（都要二次确认）；
+// 探索模式中（步骤 14）“重新开始”改为“回到起点”。
 // 面板只负责显示和把操作写进 SettingsStore；真正生效（改渲染尺寸、改音量）由订阅 store 的页面完成。
 // 打开时通过 onOpenChange 通知页面暂停战斗；面板盖住整个游戏区域，点击不会穿透到战场。
 
@@ -8,8 +9,8 @@ import { RESOLUTION_IDS, resolutionLabel, type ResolutionId } from '../layout/vi
 import { el } from '../theme';
 import type { GameSettings, SettingsStore } from './settingsStore';
 
-/** 菜单从哪里打开：战斗中有“重新开始”“退出游戏”，标题界面上没有 */
-export type MenuContext = 'battle' | 'title';
+/** 菜单从哪里打开：战斗中有“重新开始”“退出游戏”，探索中有“回到起点”“退出游戏”，标题界面上都没有 */
+export type MenuContext = 'battle' | 'explore' | 'title';
 
 export interface SettingsMenuDeps {
   /** 菜单层（在游戏区域里，盖在所有界面之上） */
@@ -21,7 +22,7 @@ export interface SettingsMenuDeps {
   preview(channel: SoundChannel): void;
   /** 菜单打开 / 关闭（页面据此暂停 / 继续战斗） */
   onOpenChange(open: boolean): void;
-  /** 确认“重新开始”后调用 */
+  /** 确认“重新开始”（战斗中）或“回到起点”（探索中）后调用 */
   onRestart(): void;
   /** 确认“退出游戏”后调用 */
   onExit(): void;
@@ -110,24 +111,25 @@ export class SettingsMenu {
     const s = this.deps.store.value;
     const panel = el('div', 'dk-panel dk-menu');
     panel.append(el('div', 'dk-title', '设置'));
-    if (this.context === 'battle') panel.append(el('div', 'dk-menu-paused', '战斗已暂停'));
+    if (this.context !== 'title') panel.append(el('div', 'dk-menu-paused', this.context === 'battle' ? '战斗已暂停' : '游戏已暂停'));
 
     panel.append(this.resolutionRow(s), this.qualityRow(s), el('div', 'dk-sep'));
     for (const row of VOLUME_ROWS) panel.append(this.volumeRow(s, row));
     panel.append(this.muteRow(s));
     if (!this.deps.soundSupported) panel.append(el('div', 'dk-menu-note', '当前浏览器不支持合成音效'));
 
-    if (this.context === 'battle') {
+    if (this.context !== 'title') {
+      const explore = this.context === 'explore';
       const actions = el('div', 'dk-menu-actions');
       actions.append(
-        this.button('重新开始', 'dk-btn is-danger', () =>
-          this.confirm('确定放弃当前战斗并重新开始吗？', () => {
+        this.button(explore ? '回到起点' : '重新开始', 'dk-btn is-danger', () =>
+          this.confirm(explore ? '确定让小队回到起点吗？' : '确定放弃当前战斗并重新开始吗？', () => {
             this.close();
             this.deps.onRestart();
           }),
         ),
         this.button('退出游戏', 'dk-btn is-danger', () =>
-          this.confirm('确定退出当前战斗，回到标题界面吗？', () => {
+          this.confirm(explore ? '确定退出游戏，回到标题界面吗？' : '确定退出当前战斗，回到标题界面吗？', () => {
             this.close();
             this.deps.onExit();
           }),
@@ -135,7 +137,7 @@ export class SettingsMenu {
       );
       panel.append(el('div', 'dk-sep'), actions);
     }
-    const close = this.button(this.context === 'battle' ? '返回游戏' : '关闭', 'dk-btn dk-menu-close', () => this.close());
+    const close = this.button(this.context === 'title' ? '关闭' : '返回游戏', 'dk-btn dk-menu-close', () => this.close());
     close.append(el('span', 'dk-key', 'Esc'));
     panel.append(close);
 

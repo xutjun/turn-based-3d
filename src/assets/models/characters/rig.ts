@@ -35,6 +35,11 @@ export interface HumanoidRig {
   offhandMount: Group; // 左手挂点
   hpAnchor: Object3D; // 头顶血条挂点
   height: number; // 模型总高度（未乘整体缩放）
+  /**
+   * 腿会动（步骤 14）：髋、膝、踝登记为动画关节（render/units/animatedJoints.ts）。
+   * 由摆放单位的代码按外观配置（UNIT_MODELS 的 walk）打开，必须在合并网格之前设置。
+   */
+  legsAnimated?: boolean;
 }
 
 /** 骨架尺寸（单位：米，人物总高约 1.75） */

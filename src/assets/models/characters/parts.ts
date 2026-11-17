@@ -33,6 +33,62 @@ export const SWAY_ATTR = 'aSway';
 export const SWAY_DIR_ATTR = 'aSwayDir';
 /** 袍摆的飘动比披风克制：下沿的权重上限 */
 const SKIRT_SWAY = 0.5;
+/**
+ * 跟着迈步的权重（步骤 14，配合 materials.ts 的 uSwayStride）：袍摆、裙甲、战袍、腰间挂件挂在髋部，
+ * 腿往前迈时膝盖把前片顶开，往后蹬时脚跟把后片顶开——只在腿碰到布料时推开刚好那么多。
+ * 四个分量（在髋部坐标里算好，与网格合并与否无关）：
+ *   x = 深度：顶点在髋下方的深度 ÷ 髋高（腰部 0，地面 1），着色器据此在“髋 → 膝 → 踝”之间插出这个高度上腿的前后位置；
+ *   y / w = 在不在左腿 / 右腿的正前 / 正后方（离那条腿的横向距离越远越小，侧面的布料不被推）；
+ *   z = 顶点在髋部坐标里的前后位置（米）：前片只会被往前顶，后片只会被往后顶。
+ * 着色器对两条腿各算一次推开量，前片取更靠前的，后片取更靠后的（中线附近的布料被迈出的那条腿顶开，不会对半削弱）。
+ */
+export const STRIDE_ATTR = 'aStride';
+
+/**
+ * 给挂在髋部（hips）下面的所有网格写入“跟着迈步”的权重；exclude 里的子树（两条腿、上半身）跳过。
+ * 只给会走路的人形调用（在合并网格之前）：没有这个属性的网格权重为 0，不受影响。
+ */
+export function addHipStrideWeights(hips: Object3D, exclude: readonly Object3D[], legLength: number, legX: number): void {
+  const skip = new Set(exclude);
+  const done = new Set<BufferGeometry>();
+  const rel = new Matrix4();
+  const v = new Vector3();
+  const visit = (o: Object3D): void => {
+    if (skip.has(o)) return;
+    const m = o as Mesh;
+    if (m.isMesh && m.geometry.getAttribute('position')) {
+      // 网格相对髋部的变换
+      rel.identity();
+      for (let n: Object3D | null = m; n && n !== hips; n = n.parent) {
+        n.updateMatrix();
+        rel.premultiply(n.matrix);
+      }
+      // 几何体被别的网格共用（铆钉之类）时复制一份，各自写自己的权重
+      if (done.has(m.geometry)) m.geometry = m.geometry.clone();
+      const geo = m.geometry;
+      done.add(geo);
+      const pos = geo.getAttribute('position') as BufferAttribute;
+      const w = new Float32Array(pos.count * 4);
+      const ramp = (t: number): number => {
+        const k = Math.max(0, Math.min(1, t));
+        return k * k * (3 - 2 * k);
+      };
+      for (let i = 0; i < pos.count; i++) {
+        v.fromBufferAttribute(pos, i).applyMatrix4(rel);
+        const depth = Math.max(0, Math.min(1, -v.y / legLength));
+        // 离左腿（+x）/ 右腿（−x）的横向距离：12 厘米以内算“正对着腿”，到 24 厘米降为 0
+        const inLine = (legCenter: number): number => 1 - ramp((Math.abs(v.x - legCenter) - 0.12) / 0.12);
+        w[i * 4] = depth;
+        w[i * 4 + 1] = inLine(legX);
+        w[i * 4 + 2] = v.z;
+        w[i * 4 + 3] = inLine(-legX);
+      }
+      geo.setAttribute(STRIDE_ATTR, new BufferAttribute(w, 4));
+    }
+    for (const c of o.children) visit(c);
+  };
+  for (const c of hips.children) visit(c);
+}
 
 export function mesh(geometry: BufferGeometry, material: Material, parent?: Object3D): Mesh {
   const m = new Mesh(geometry, material);

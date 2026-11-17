@@ -3,10 +3,17 @@
 //
 // 步骤 12：
 // - 画面固定 16:10（ui/layout/Viewport）：画布和所有界面都在舞台里，整体等比缩放、居中，窗口多出来的部分是黑边。
-// - 页面打开先显示标题界面（背景是压暗的战场）；点“开始游戏”进入战斗（同时解锁音频）。
+// - 页面打开先显示标题界面（背景是压暗的战场）；点“开始游戏”时解锁音频。
 // - 右上角齿轮 / Esc 打开设置菜单：分辨率、画质、音量、静音，战斗中还有“重新开始”“退出游戏”。
 //   菜单打开时战斗暂停（演出时间、待机动画、特效、战斗音效都停住），键盘快捷键不触发战斗指令。
 // - 设置保存在本地存储（ui/settings/settingsStore），地址参数优先。
+//
+// 步骤 14：
+// - “开始游戏”进入探索模式（render/explore/ExploreStage）：只显示 5 名人物和 Boss，人物在右下方出生点列队，
+//   相机跟随队长；头顶条、顺序条、指令面板都不显示。标题界面的背景也是这个布置。
+// - 方向键 / WASD 让队长直线行走（临时调试，步骤 15 换成点击移动），Tab 切换被控制的人物（调试）。
+// - 设置菜单在探索中同样暂停，“重新开始”改为“回到起点”。
+// - 探索还不能进入战斗（对话、过场在步骤 16、17）；地址加 start=1 仍可跳过标题直接开战（自检用）。
 //
 // 地址参数：
 //   seed=数字   随机种子（相同种子、相同指令战斗过程完全相同）；不填则用当前时间
@@ -14,7 +21,7 @@
 //   skip=1      一开始就跳过动画
 //   pet=auto    宝宝一开始就自动出手
 //   quality=low / high、res=1920x1200 / fit、mute=1 / 0   临时覆盖保存的设置（不写回）
-//   start=1     跳过标题界面，直接开始战斗（自检用）
+//   start=1     跳过标题界面和探索，直接开始战斗（自检用）
 
 import { Vector3 } from 'three';
 import { BattleEngine } from '../core/battle';
@@ -42,9 +49,14 @@ import { SettingsMenu } from './settings/SettingsMenu';
 import { browserStorage, SettingsStore, type GameSettings } from './settings/settingsStore';
 import { el, injectTheme } from './theme';
 import { TitleScreen } from './title/TitleScreen';
+import { ExploreInput } from './explore/ExploreInput';
+import { ExploreStage, type ExploreSnapshot } from '../render/explore/ExploreStage';
+import { ALLY_TEMPLATES } from '../data/heroes';
+import { ENEMY_TEMPLATES } from '../data/enemies';
+import type { MenuContext } from './settings/SettingsMenu';
 
 /** 页面处在哪个界面 */
-export type AppScreen = 'title' | 'battle';
+export type AppScreen = 'title' | 'explore' | 'battle';
 
 /** 调试 / 自检用（window.__player） */
 export interface PlayerDebug {
@@ -67,10 +79,16 @@ export interface AppDebug {
   settings(): Readonly<GameSettings>;
   layout(): Readonly<ViewportLayout>;
   renderSize(): { width: number; height: number };
-  /** 开始游戏 / 重新开始 / 退出到标题（与点按钮相同，但不经过确认框） */
+  /** 开始游戏（进入探索）/ 重新开始（探索中 = 回到起点）/ 退出到标题（与点按钮相同，但不经过确认框） */
   start(): Promise<void>;
   restart(): Promise<void>;
   exit(): Promise<void>;
+  /** 自检：跳过探索直接开战（同地址参数 start=1） */
+  battle(): Promise<void>;
+  /** 探索模式的状态：小队位置、朝向、速度、行走权重，显示的单位，相机注视点 */
+  explore(): ExploreSnapshot;
+  /** 自检 / 联系表：代替方向键给出行走方向（地面向量，0 = 停下） */
+  exploreMove(x: number, z: number): void;
   /** 演出时间（暂停时不变） */
   clock(): number;
   /** 某单位身体中部在窗口里的坐标（鼠标选目标自检用：已含黑边和缩放） */
@@ -116,6 +134,10 @@ export class PlayerBattleApp {
   private readonly result: ResultPanel;
   private readonly menu: SettingsMenu;
   private readonly title: TitleScreen;
+  /** 探索模式（步骤 14）：场景布置、方向键输入、操作提示 */
+  private readonly explore: ExploreStage;
+  private readonly exploreInput: ExploreInput;
+  private readonly exploreHint: HTMLDivElement;
   private readonly unsubscribeStore: () => void;
   private match: Match | null = null;
   private seed: number;
@@ -207,7 +229,7 @@ export class PlayerBattleApp {
     this.gear.type = 'button';
     this.gear.title = '设置（Esc）';
     this.gear.append(createGearIcon());
-    this.gear.onclick = () => this.menu.open('battle');
+    this.gear.onclick = () => this.menu.open(this.menuContext());
     this.menuLayer.append(this.gear);
     this.menu = new SettingsMenu({
       root: this.menuLayer,
@@ -219,19 +241,39 @@ export class PlayerBattleApp {
       onExit: () => void this.exitToTitle(),
     });
     this.unsubscribeStore = this.store.onChange((value, key) => this.applySetting(value, key));
+
+    // 探索模式：同一个场景、同一批单位，按模式切换布置；每帧在单位摆姿态之前推进移动
+    this.explore = new ExploreStage(stage, this.scene.battleCamera, [...ALLY_TEMPLATES, ...ENEMY_TEMPLATES]);
+    this.scene.onUpdate((dt) => this.explore.update(dt));
+    this.exploreInput = new ExploreInput(
+      (x, z) => this.explore.setInput(x, z),
+      () => this.explore.cycleControlled(),
+    );
+    this.exploreHint = el('div', 'dk-explore-hint', '方向键 / WASD：行走（调试）　Tab：切换人物　Esc：设置');
+    this.exploreHint.style.cssText =
+      'position:absolute;left:50%;bottom:22px;transform:translateX(-50%);padding:6px 16px;pointer-events:none;' +
+      'font-size:15px;letter-spacing:1px;color:rgba(222,206,170,0.82);background:rgba(10,8,8,0.55);' +
+      'border:1px solid rgba(150,120,70,0.35);border-radius:3px;white-space:nowrap;display:none;';
+    stageEl.insertBefore(this.exploreHint, this.menuLayer); // 在菜单层下面
+
     addEventListener('keydown', this.onKeyCapture, true);
+    addEventListener('keyup', this.onKeyUpCapture, true);
+    addEventListener('blur', this.onBlur);
 
     this.installDebug();
   }
 
   start(): void {
     this.scene.start();
-    if (this.autoStart) void this.startGame();
+    if (this.autoStart) void this.startBattle();
     else this.showTitle();
   }
 
   dispose(): void {
     removeEventListener('keydown', this.onKeyCapture, true);
+    removeEventListener('keyup', this.onKeyUpCapture, true);
+    removeEventListener('blur', this.onBlur);
+    this.exploreHint.remove();
     this.unsubscribeStore();
     this.endMatch();
     this.menu.dispose();
@@ -250,20 +292,46 @@ export class PlayerBattleApp {
   // 界面切换
   // ------------------------------------------------------------------
 
+  /** 标题界面：背景是探索模式的初始布置（小队在出生点列队，Boss 待机），不能操作 */
   private showTitle(): void {
     this.screen = 'title';
+    this.exploreInput.clear();
+    this.explore.enter();
     this.title.show();
     this.gear.classList.add('is-hidden');
+    this.exploreHint.style.display = 'none';
     this.uiRoot.style.display = 'none';
     this.hud.setControlsVisible(false);
   }
 
-  /** 标题界面点“开始游戏”：解锁音频（浏览器自动播放限制），进入战斗 */
+  /** 设置菜单从哪里打开（决定有没有“重新开始 / 回到起点”“退出游戏”） */
+  private menuContext(): MenuContext {
+    return this.screen === 'title' ? 'title' : this.screen;
+  }
+
+  /** 标题界面点“开始游戏”：解锁音频（浏览器自动播放限制），进入探索模式（步骤 14） */
   async startGame(): Promise<void> {
+    if (this.busy || this.screen !== 'title') return;
+    this.scene.sound.unlock();
+    this.menu.close();
+    this.title.hide();
+    this.gear.classList.remove('is-hidden');
+    this.uiRoot.style.display = 'none'; // 日志、宝宝指令、结算只在战斗中显示
+    this.hud.setControlsVisible(false); // 倍速、跳过、顺序条只在战斗中显示
+    this.exploreHint.style.display = '';
+    this.screen = 'explore';
+    if (!this.explore.active) this.explore.enter();
+  }
+
+  /** 跳过标题和探索，直接开战（地址参数 start=1、自检用；正式流程在步骤 16、17 由对话和入场过场进入） */
+  async startBattle(): Promise<void> {
     if (this.busy || this.screen === 'battle') return;
     this.scene.sound.unlock();
     this.menu.close();
     this.title.hide();
+    this.exploreInput.clear();
+    this.explore.leave();
+    this.exploreHint.style.display = 'none';
     this.gear.classList.remove('is-hidden');
     this.uiRoot.style.display = '';
     this.hud.setControlsVisible(true);
@@ -271,18 +339,23 @@ export class PlayerBattleApp {
     this.startMatch();
   }
 
-  /** 设置里“重新开始”：放弃当前战斗，状态完全重置后重开一局（同“再战一次”） */
+  /** 设置里“重新开始”：战斗中放弃当前战斗、状态完全重置后重开一局（同“再战一次”）；探索中回到起点 */
   async restart(): Promise<void> {
+    if (this.screen === 'explore') {
+      this.exploreInput.clear();
+      this.explore.returnToStart();
+      return;
+    }
     if (this.screen !== 'battle') return;
     await this.rematch();
   }
 
-  /** 设置里“退出游戏”：结束当前战斗，场上复位，回到标题界面 */
+  /** 设置里“退出游戏”：结束当前战斗或探索，场上复位，回到标题界面 */
   async exitToTitle(): Promise<void> {
-    if (this.busy || this.screen !== 'battle') return;
+    if (this.busy || this.screen === 'title') return;
     this.busy = true;
     try {
-      await this.teardown();
+      if (this.screen === 'battle') await this.teardown();
       this.showTitle();
     } finally {
       this.busy = false;
@@ -308,8 +381,9 @@ export class PlayerBattleApp {
   // ------------------------------------------------------------------
 
   private onMenuOpenChange(open: boolean): void {
-    // 只在战斗中暂停；标题界面上打开设置时背景里的待机动画照常
-    this.scene.setPaused(open && this.screen === 'battle');
+    // 战斗和探索中暂停；标题界面上打开设置时背景里的待机动画照常
+    if (open) this.exploreInput.clear();
+    this.scene.setPaused(open && this.screen !== 'title');
   }
 
   /** 设置变化后立即生效（不重开战斗） */
@@ -353,12 +427,30 @@ export class PlayerBattleApp {
       if (this.busy) return;
       const mode = this.match?.controller.session.mode;
       if (this.screen === 'battle' && (mode === 'target' || mode === 'skills')) return;
-      this.menu.open(this.screen === 'title' ? 'title' : 'battle');
+      this.menu.open(this.menuContext());
       e.stopImmediatePropagation();
       e.preventDefault();
       return;
     }
-    if (this.menu.isOpen || this.screen === 'title' || this.busy) e.stopImmediatePropagation();
+    if (this.menu.isOpen || this.screen === 'title' || this.busy) {
+      e.stopImmediatePropagation();
+      return;
+    }
+    if (this.screen === 'explore') {
+      // 探索模式：方向键 / WASD / Tab 交给探索输入；战斗快捷键（倍速、跳过）不生效，M 静音照常
+      this.exploreInput.handle(e, true);
+      if (e.key !== 'm' && e.key !== 'M') e.stopImmediatePropagation();
+    }
+  };
+
+  /** 松开按键：探索模式里停下（菜单、标题界面上不处理） */
+  private readonly onKeyUpCapture = (e: KeyboardEvent): void => {
+    if (this.screen === 'explore') this.exploreInput.handle(e, false);
+  };
+
+  /** 窗口失焦：松开的按键收不到 keyup，全部当作松开 */
+  private readonly onBlur = (): void => {
+    this.exploreInput.clear();
   };
 
   // ------------------------------------------------------------------
@@ -487,6 +579,9 @@ export class PlayerBattleApp {
       renderSize: () => this.scene.renderSize,
       start: () => this.startGame(),
       restart: () => this.restart(),
+      battle: () => this.startBattle(),
+      explore: () => this.explore.snapshot(),
+      exploreMove: (x, z) => this.explore.setInput(x, z),
       exit: () => this.exitToTitle(),
       clock: () => this.scene.scheduler.time,
       unitClient: (id) => {

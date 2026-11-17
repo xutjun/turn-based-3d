@@ -30,6 +30,14 @@ interface Rest {
   z: number;
 }
 
+/** 膝、踝相对髋关节的位置（身体坐标）：z = 前后（米，向前为正），depth = 在髋下方多深（÷ 髋高） */
+export interface LegReach {
+  kneeL: { z: number; depth: number };
+  kneeR: { z: number; depth: number };
+  footL: { z: number; depth: number };
+  footR: { z: number; depth: number };
+}
+
 export class IdleAnimator {
   readonly style: IdleStyle;
   readonly traits: IdleTraits;
@@ -133,6 +141,18 @@ export class IdleAnimator {
     for (const s of this.sways) {
       s.uSwayPush.value.set(x, y, z);
       s.uSwayAmp.value = amp;
+    }
+  }
+
+  /**
+   * 腿把布料顶开（步骤 14）：左 / 右膝、左 / 右踝相对髋关节的位置（身体坐标：前后（米）、深度（÷ 髋高）），
+   * 以及腿的粗细，交给布料着色器——髋部的袍摆、裙甲被腿顶开。
+   */
+  setLegReach(r: LegReach, thickness: number): void {
+    for (const s of this.sways) {
+      s.uSwayStride.value.set(r.kneeL.z, r.kneeL.depth, r.kneeR.z, r.kneeR.depth);
+      s.uSwayStrideFoot.value.set(r.footL.z, r.footL.depth, r.footR.z, r.footR.depth);
+      s.uSwayStrideMargin.value = thickness;
     }
   }
 

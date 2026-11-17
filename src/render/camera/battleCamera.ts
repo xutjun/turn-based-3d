@@ -18,6 +18,11 @@ export interface BattleCamera {
    * @param shakeY 沿画面垂直方向的抖动（米）
    */
   setView(panX: number, panZ: number, zoom: number, shakeX: number, shakeY: number): void;
+  /**
+   * 换取景（步骤 14，探索模式）：注视点和相机距离；俯角、FOV、方位角不变。传 null 回到战斗的固定机位。
+   * 演出偏移（平移、推近、抖动）照常叠加在新的取景上。
+   */
+  setFrame(frame: { x: number; y: number; z: number; distance: number } | null): void;
   /** 注视点（未偏移时）在地面上的位置 */
   readonly target: { x: number; z: number };
 }
@@ -41,7 +46,8 @@ export function createBattleCamera(config: BattleCameraConfig = CAMERA_CONFIG): 
   const look = new Vector3();
   const right = new Vector3();
   const up = new Vector3();
-  const place = (distance: number): void => {
+  let distance = config.distance;
+  const place = (): void => {
     look.set(target.x + view.panX, target.y, target.z + view.panZ);
     // 透视相机靠拉近距离来推近；正交相机用 zoom
     const d = camera instanceof PerspectiveCamera ? distance / view.zoom : distance;
@@ -59,18 +65,32 @@ export function createBattleCamera(config: BattleCameraConfig = CAMERA_CONFIG): 
       camera.updateProjectionMatrix();
     }
   };
-  place(config.distance);
+  place();
+  // 对外的注视点：换取景后跟着变（演出镜头按它计算平移量）
+  const base = { x: target.x, z: target.z };
 
   return {
     camera,
-    target: { x: target.x, z: target.z },
+    target: base,
+    setFrame(frame: { x: number; y: number; z: number; distance: number } | null): void {
+      if (frame) {
+        target.set(frame.x, frame.y, frame.z);
+        distance = frame.distance;
+      } else {
+        target.set(config.target.x, config.target.y, config.target.z);
+        distance = config.distance;
+      }
+      base.x = target.x;
+      base.z = target.z;
+      place();
+    },
     setView(panX: number, panZ: number, zoom: number, shakeX: number, shakeY: number): void {
       view.panX = panX;
       view.panZ = panZ;
       view.zoom = Math.max(0.2, zoom);
       view.shakeX = shakeX;
       view.shakeY = shakeY;
-      place(config.distance);
+      place();
     },
     resize(width: number, height: number): void {
       const aspect = width / Math.max(1, height);
@@ -86,7 +106,7 @@ export function createBattleCamera(config: BattleCameraConfig = CAMERA_CONFIG): 
         camera.bottom = -h / 2;
         camera.left = (-h * aspect) / 2;
         camera.right = (h * aspect) / 2;
-        place(config.distance);
+        place();
       }
       camera.updateProjectionMatrix();
     },

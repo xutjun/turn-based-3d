@@ -6,6 +6,7 @@
 //   model=资源键   glow=发光倍率   spin=0 关闭自动旋转   yaw=初始水平角（度）
 //   weapon=0 人物不持武器   element=fire|thunder|seal|heal 法杖元素   dist=相机距离
 //   silhouette=1 剪影测试（模型纯黑、背景浅灰）   idle=0 关闭待机动画（看静止站姿）
+//   walk=速度（米/秒）  步骤 14：会走路的人物沿地台上的圆圈行走（与探索模式同一套步态和腿部 IK）
 
 import {
   Box3,
@@ -22,6 +23,7 @@ import {
   PointLight,
   Scene,
   Vector2,
+  Vector3,
   WebGLRenderer,
   type Object3D,
 } from 'three';
@@ -41,7 +43,30 @@ import { applySilhouette, silhouetteRequested } from '../render/debug/silhouette
 import { createPostFx, type PostFx } from '../render/postfx/composer';
 import { IdleAnimator } from '../render/units/IdleAnimator';
 import { seedOf } from '../render/units/idleMotion';
-import { idleStyleOfAsset } from '../data/unitModels';
+import { idleStyleOfAsset, UNIT_MODELS, walksOfAsset } from '../data/unitModels';
+import { ALLY_TEMPLATES } from '../data/heroes';
+import { enableLegJoints } from '../render/units/animatedJoints';
+import { UnitView } from '../render/units/UnitView';
+import { Scheduler } from '../render/director/Scheduler';
+import type { FxSystem } from '../render/fx/FxSystem';
+
+/** 行走演示可选的速度（米/秒），0 = 不走；最快一档就是探索模式的走速 */
+const WALK_SPEEDS = [0, 1.2, 2.2, 3.2];
+const WALK_RADIUS = 1.8; // 行走演示的圆圈半径（地台半径 3.2）
+/** 行走演示不需要特效：尘土、拖尾都不画 */
+const NO_FX = { burst: () => Promise.resolve(), startTrail: () => ({ stop: () => undefined }) } as unknown as FxSystem;
+
+declare global {
+  interface Window {
+    /** 调试（联系表）：预览页逐帧推进与截图 */
+    __preview?: {
+      manual(on: boolean): void;
+      step(dt: number): void;
+      walk(): { phase: number; weight: number };
+      shot(azimuthDeg: number, dist: number, height?: number): string;
+    };
+  }
+}
 
 const GLOW_LEVELS = [0, 0.5, 1, 2]; // 可切换的发光倍率
 const CATEGORY_LABEL: Record<string, string> = {
@@ -81,6 +106,11 @@ export class PreviewPage {
   private spin = true;
   private time = 0;
   private lastMs = 0;
+  /** 行走演示（步骤 14）：速度（0 = 不走）、绕圈的角度、驱动模型的 UnitView */
+  private walkSpeed = 0;
+  private walkAngle = 0;
+  private walkView: UnitView | null = null;
+  private readonly walkScheduler = new Scheduler();
 
   constructor(private readonly container: HTMLElement) {
     const query = new URLSearchParams(location.search);
@@ -168,12 +198,18 @@ export class PreviewPage {
     this.holdWeapon = query.get('weapon') !== '0';
     const element = query.get('element') as StaffElement | null;
     if (element && STAFF_ELEMENTS.includes(element)) this.element = element;
+    const walk = Number(query.get('walk'));
+    if (query.has('walk') && Number.isFinite(walk) && walk > 0) {
+      this.walkSpeed = walk;
+      this.spin = false;
+    }
 
     addEventListener('keydown', this.onKey);
     this.resizeObserver = new ResizeObserver(() => this.resize());
     this.resizeObserver.observe(container);
     this.resize();
     this.showModel(this.index);
+    this.installDebug();
   }
 
   start(): void {
@@ -210,7 +246,10 @@ export class PreviewPage {
 
     if (this.model) this.turntable.remove(this.model);
     this.model = this.registry.create(entry.key, entry.previewParams ?? {});
+    // 会走路的人物：腿部关节登记为动画关节（与战场一致）
+    if (walksOfAsset(entry.key)) enableLegJoints(this.model);
     this.turntable.add(this.model);
+    this.walkView = null;
 
     // 找出画面里的武器：单独预览的武器，或人物手持的武器
     this.weapon = null;
@@ -239,10 +278,35 @@ export class PreviewPage {
     // 待机动画：与战场里同一套（预览页不合并网格，所以这里看到的就是各关节原本的动作）
     const idleStyle = idleStyleOfAsset(entry.key);
     this.idle = idleStyle ? new IdleAnimator(this.model, idleStyle, seedOf(entry.key)) : null;
+    if (this.walkSpeed > 0) this.startWalk(entry);
     // 调试：地址加 ?silhouette=1 做剪影测试
     if (silhouetteRequested()) applySilhouette(this.scene, this.turntable);
     this.renderPanel();
     this.renderInfo(entry);
+  }
+
+  /** 切换行走演示的速度（0 = 停下，重新摆回转台中央） */
+  private setWalk(speed: number): void {
+    const was = this.walkSpeed;
+    this.walkSpeed = speed;
+    if (speed > 0) this.spin = false;
+    if (speed === 0 || was === 0) this.showModel(this.index);
+    else this.renderPanel();
+  }
+
+  /** 用战场里的 UnitView 驱动当前模型行走（同一套步态、腿部 IK、袍摆跟随） */
+  private startWalk(entry: AssetEntry): void {
+    const template = ALLY_TEMPLATES.find((t) => UNIT_MODELS[t.templateId]?.assetKey === entry.key);
+    if (!template || !this.model) return;
+    this.walkView = new UnitView(template, this.model, this.walkScheduler, NO_FX);
+    const p = this.walkPoint();
+    this.walkView.placeAt(p.x, p.z, p.yaw);
+  }
+
+  /** 圆圈上当前的位置和行进方向（逆时针看是顺时针走） */
+  private walkPoint(): { x: number; z: number; yaw: number } {
+    const a = this.walkAngle;
+    return { x: WALK_RADIUS * Math.sin(a), z: WALK_RADIUS * Math.cos(a), yaw: Math.atan2(Math.cos(a), -Math.sin(a)) };
   }
 
   private setGlow(level: number): void {
@@ -328,6 +392,19 @@ export class PreviewPage {
       );
     }
 
+    if (walksOfAsset(entry.key)) {
+      // 行走演示：沿圆圈走，速度越快步幅越大、步频越高
+      this.panel.append(heading('行走（米/秒）'));
+      const walkRow = document.createElement('div');
+      walkRow.style.cssText = 'display:flex;gap:4px;';
+      for (const speed of WALK_SPEEDS) {
+        const b = button(speed === 0 ? '停' : String(speed), speed === this.walkSpeed, () => this.setWalk(speed));
+        b.style.textAlign = 'center';
+        walkRow.append(b);
+      }
+      this.panel.append(walkRow);
+    }
+
     this.panel.append(heading('其他'));
     this.panel.append(
       button(`自动旋转：${this.spin ? '开' : '关'}`, this.spin, () => {
@@ -378,14 +455,47 @@ export class PreviewPage {
     this.info.textContent = lines.join('\n');
   }
 
-  private frame(nowMs: number): void {
+  /**
+   * 调试（联系表，scripts/walkSheets.cjs）：停掉自动渲染、逐帧推进、读步态相位、从指定角度对着行走的人物截图。
+   */
+  private installDebug(): void {
+    window.__preview = {
+      manual: (on) => {
+        this.lastMs = performance.now();
+        this.renderer.setAnimationLoop(on ? null : (now) => this.frame(now));
+      },
+      step: (dt) => this.frame(this.lastMs + dt * 1000, false),
+      walk: () => ({ phase: this.walkView?.walkPhase ?? 0, weight: this.walkView?.walkWeight ?? 0 }),
+      shot: (azimuthDeg, dist, height = 1.0) => {
+        const m = this.model;
+        if (!m) return '';
+        m.updateMatrixWorld(true);
+        const p = m.getWorldPosition(new Vector3());
+        // 方位角相对人物的朝向：0 = 正前方，90 = 人物的左手侧
+        const a = m.rotation.y + (azimuthDeg * Math.PI) / 180;
+        this.camera.position.set(p.x + Math.sin(a) * dist, height + 0.35, p.z + Math.cos(a) * dist);
+        this.camera.lookAt(p.x, height, p.z);
+        this.postFx.render(this.time);
+        return this.renderer.domElement.toDataURL('image/png');
+      },
+    };
+  }
+
+  private frame(nowMs: number, render = true): void {
     const dt = Math.min(0.1, (nowMs - this.lastMs) / 1000);
     this.lastMs = nowMs;
     this.time += dt;
     if (this.spin) this.turntable.rotation.y += dt * SPIN_SPEED;
     for (const tick of this.ticks) tick(this.time, dt);
     SWAY_GLOBAL.uSwayTime.value = this.time;
-    if (this.idle && this.model) {
+    if (this.walkView) {
+      // 行走演示：沿圆圈前进，UnitView 按走过的距离迈步（它自带待机动画）
+      this.walkScheduler.update(dt);
+      this.walkAngle += (this.walkSpeed * dt) / WALK_RADIUS;
+      const p = this.walkPoint();
+      this.walkView.locomote(p.x, p.z, p.yaw);
+      this.walkView.update(this.time, this.time);
+    } else if (this.idle && this.model) {
       const idle = this.idle;
       idle.update(this.time, this.idleOn ? 1 : 0, true);
       idle.addToRig();
@@ -393,6 +503,7 @@ export class PreviewPage {
       this.model.position.set(idle.offsets.shift * k, (idle.offsets.bob + idle.offsets.float) * k, 0);
       this.model.rotation.z = idle.offsets.roll;
     }
+    if (!render) return;
     this.controls.update();
     this.postFx.render(this.time);
   }

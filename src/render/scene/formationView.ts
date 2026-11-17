@@ -10,7 +10,7 @@ import type { UnitId, UnitTemplate } from '../../core/types';
 import { facingYawOf, slotPosition } from '../../data/formation';
 import { getRig } from '../../assets/models/characters/rig';
 import { mergeStaticMeshes } from '../../assets/optimize';
-import { allAnimatedJoints, JOINT_PREFIX } from '../units/animatedJoints';
+import { allAnimatedJoints, enableLegJoints, JOINT_PREFIX } from '../units/animatedJoints';
 import { PLACEHOLDER_CONFIG, RENDER_OPTIMIZE } from '../../data/renderConfig';
 import { UNIT_MODELS, WEAPON_MODELS } from '../../data/unitModels';
 
@@ -34,6 +34,8 @@ function createUnitModel(registry: AssetRegistry, t: UnitTemplate): Object3D {
   const def = UNIT_MODELS[t.templateId];
   if (def && registry.has(def.assetKey)) {
     const model = registry.create(def.assetKey, def.params ?? {});
+    // 会走路的人形：腿部关节要在合并网格之前登记（步骤 14）
+    if (def.walk) enableLegJoints(model);
     // 人物手持发光武器
     const weaponDef = t.weaponId ? WEAPON_MODELS[t.weaponId] : undefined;
     if (weaponDef && registry.has(weaponDef.assetKey)) {

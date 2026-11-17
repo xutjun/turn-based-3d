@@ -7,6 +7,7 @@ import {
   MeshStandardMaterial,
   Vector2,
   Vector3,
+  Vector4,
   type Mesh,
   type Object3D,
   type Texture,
@@ -129,6 +130,15 @@ export interface SwayUniforms {
    * 带飘动权重的顶点按 权重 × 偏移量 位移；由单位的弹簧质点每帧写入（render/units/UnitMotion.ts），静止时为 0。
    */
   uSwayPush: { value: Vector3 };
+  /**
+   * 腿把布料顶开（步骤 14）：膝关节相对髋关节的位置（身体坐标）= (左膝前后（米）, 左膝深度（÷ 髋高）, 右膝前后, 右膝深度)。
+   * 带 aStride 属性的顶点（髋部的袍摆、裙甲、挂件）被腿顶开（见着色器）。腿在正下方时前后位置为 0。
+   */
+  uSwayStride: { value: Vector4 };
+  /** 同上，踝关节：(左踝前后, 左踝深度, 右踝前后, 右踝深度) */
+  uSwayStrideFoot: { value: Vector4 };
+  /** 腿的粗细（米） */
+  uSwayStrideMargin: { value: number };
 }
 
 export const SWAY_UNIFORMS_KEY = 'swayUniforms';
@@ -143,7 +153,16 @@ uniform float uSwayQuality;
 uniform float uSwayPhase;
 uniform float uSwayAmp;
 uniform float uSwayHz;
-uniform vec3 uSwayPush;`;
+uniform vec3 uSwayPush;
+attribute vec4 aStride;
+uniform vec4 uSwayStride;
+uniform vec4 uSwayStrideFoot;
+uniform float uSwayStrideMargin;
+// 这个深度上一条腿的前后位置：髋 (0, 0) → 膝 (kz, kd) → 踝 (fz, fd) 的折线，踝以下取踝
+float strideLegZ(float d, float kz, float kd, float fz, float fd) {
+  if (d <= kd) return kz * d / max(1e-3, kd);
+  return mix(kz, fz, clamp((d - kd) / max(1e-3, fd - kd), 0.0, 1.0));
+}`;
 
 const SWAY_VERTEX_BODY = `
 {
@@ -159,6 +178,19 @@ const SWAY_VERTEX_BODY = `
     mat3 swayM = mat3(modelMatrix);
     transformed += (uSwayPush * swayM) * (pushW / dot(swayM[0], swayM[0]));
   }
+  // 腿把布料顶开（步骤 14，防穿模，低画质也保留）：在“髋 → 膝 → 踝”之间插出这个高度上腿的前后位置，
+  // 腿（加上腿的粗细）碰到布料时把布料推开刚好那么多——迈出的腿把前片顶向前，蹬地的腿把后片顶向后，腿没碰到的地方不动。
+  // aStride = (深度, 正对左腿的程度, 顶点在髋部坐标里的前后位置, 正对右腿的程度)，与网格合并与否无关；
+  // 两条腿各算一次，前片取更靠前的推开量，后片取更靠后的
+  if (aStride.x != 0.0 && aStride.y + aStride.w != 0.0 && (uSwayStride.x != 0.0 || uSwayStride.z != 0.0 || uSwayStrideFoot.x != 0.0 || uSwayStrideFoot.z != 0.0)) {
+    float legL = strideLegZ(aStride.x, uSwayStride.x, uSwayStride.y, uSwayStrideFoot.x, uSwayStrideFoot.y) * aStride.y;
+    float legR = strideLegZ(aStride.x, uSwayStride.z, uSwayStride.w, uSwayStrideFoot.z, uSwayStrideFoot.w) * aStride.w;
+    float margin = uSwayStrideMargin;
+    float zv = aStride.z;
+    float pushFwd = max(0.0, max(legL, legR) + margin - zv) - max(0.0, margin - zv);
+    float pushBack = min(0.0, min(legL, legR) - margin - zv) - min(0.0, -margin - zv);
+    transformed.z += zv >= 0.0 ? pushFwd : pushBack;
+  }
 }`;
 
 /**
@@ -170,6 +202,9 @@ function patchCharacterShader<T extends MeshStandardMaterial>(material: T, rim?:
     uSwayAmp: { value: SWAY_DEFAULT_AMP },
     uSwayHz: { value: SWAY_DEFAULT_HZ },
     uSwayPush: { value: new Vector3() },
+    uSwayStride: { value: new Vector4() },
+    uSwayStrideFoot: { value: new Vector4() },
+    uSwayStrideMargin: { value: 0 },
   };
   material.userData[SWAY_UNIFORMS_KEY] = sway;
   const rimUniforms = rim

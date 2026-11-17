@@ -41,6 +41,23 @@ describe('逻辑层纯净性', () => {
     }
   });
 
+  it('explore（探索模式的纯逻辑，步骤 14）不引用 three、DOM，只引用 explore、data 和 core 的类型', () => {
+    const files = listTsFiles(join(__dirname, '../../src/explore'));
+    expect(files.length).toBeGreaterThan(0);
+    for (const file of files) {
+      const text = readFileSync(file, 'utf-8');
+      expect(text, file).not.toMatch(/from\s+['"]three/);
+      expect(text, file).not.toMatch(/\bdocument\b/);
+      expect(text, file).not.toMatch(/\bwindow\b/);
+      for (const m of text.matchAll(/(import(?:\s+type)?)\s[^;]*?from\s+['"]([^'"]+)['"]/g)) {
+        const typeOnly = m[1]!.includes('type');
+        const path = m[2]!;
+        const ok = /^\.\/[\w-]+$/.test(path) || /^\.\.\/data\/[\w-]+$/.test(path) || (typeOnly && /^\.\.\/core\/types$/.test(path));
+        expect(ok, `${file} 引用了 ${path}`).toBe(true);
+      }
+    }
+  });
+
   it('data 只引用 core 和 data 内部的模块', () => {
     for (const file of listTsFiles(DATA_DIR)) {
       const text = readFileSync(file, 'utf-8');

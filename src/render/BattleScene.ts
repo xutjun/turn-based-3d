@@ -98,6 +98,8 @@ export class BattleScene {
   private readonly ticks: TickFn[];
   private readonly resizeObserver: ResizeObserver;
   private readonly frameListeners: (() => void)[] = [];
+  /** 每帧在摆姿态之前调用（探索模式移动角色用）；参数为场景时间的间隔（秒，暂停时不调用） */
+  private readonly updateListeners: ((dt: number) => void)[] = [];
   private readonly projected = new Vector3();
   private low = false;
   /** 画质开关，给界面上的“画质”按钮用 */
@@ -269,6 +271,7 @@ export class BattleScene {
     // 演出：先推进调度器（动画改姿态参数），再把姿态应用到模型，最后通知界面层更新
     this.scheduler.update(dt);
     SWAY_GLOBAL.uSwayTime.value = this.time;
+    for (const fn of this.updateListeners) fn(dt);
     this.stage.update(this.time);
     this.fx.update();
     this.cameraRig.update(dt);
@@ -369,6 +372,14 @@ export class BattleScene {
   /** 注册每帧回调（界面层用它更新头顶条和飘字），在渲染之前调用 */
   onFrame(fn: () => void): void {
     this.frameListeners.push(fn);
+  }
+
+  /**
+   * 注册每帧回调（步骤 14：探索模式移动角色），在单位摆姿态之前调用；dt 为场景时间的间隔（秒），
+   * 不受战斗倍速、跳过动画影响，暂停时不调用。
+   */
+  onUpdate(fn: (dt: number) => void): void {
+    this.updateListeners.push(fn);
   }
 
   /** 世界坐标 → 容器内的像素坐标；visible 为 false 表示在镜头背后 */

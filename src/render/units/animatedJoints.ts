@@ -8,13 +8,16 @@
 //     待机动画先摆好它们，进攻动画（步骤 11，data/attackAnimConfig.ts 的动作姿态）再把偏移加上去。
 //     名字是模型里 `joint:<名字>` 的后半段（characters/rig.ts 与 creatures/common.ts 的约定）。
 //   - 步骤 11 为进攻动画新增：狼的四条腿（foreLegL/R、hindLegL/R，整条腿绕肩 / 髋摆动，用于下伏、蹬地、扑跃），
-//     魔偶的双腿（legL/R，踏步；骨龙的后腿与之同名，一并登记）。人形的腿和手指仍然没有登记（不动）。
+//     魔偶的双腿（legL/R，踏步；骨龙的后腿与之同名，一并登记）。
+//   - 步骤 14：会走路的人形（UNIT_MODELS 里 walk = true，即友方 5 人）的髋、膝、踝（rig.legsAnimated）；
+//     其余人形的腿和所有人的手指仍然没有登记（不动）。
 
 import type { Object3D } from 'three';
-import type { HumanoidRig } from '../../assets/models/characters/rig';
+import { getRig, type HumanoidRig } from '../../assets/models/characters/rig';
+import { addHipStrideWeights } from '../../assets/models/characters/parts';
 
 export function animatedJointsOf(rig: HumanoidRig): Record<string, Object3D> {
-  return {
+  const joints: Record<string, Object3D> = {
     shoulderR: rig.armR.shoulder,
     elbowR: rig.armR.elbow,
     shoulderL: rig.armL.shoulder,
@@ -23,6 +26,33 @@ export function animatedJointsOf(rig: HumanoidRig): Record<string, Object3D> {
     chest: rig.chest,
     head: rig.head,
   };
+  if (rig.legsAnimated) {
+    // 步骤 14：会走路的人形（友方 5 人）——大腿、小腿、脚各成一段
+    joints['hipL'] = rig.legL.hip;
+    joints['kneeL'] = rig.legL.knee;
+    joints['footL'] = rig.legL.foot;
+    joints['hipR'] = rig.legR.hip;
+    joints['kneeR'] = rig.legR.knee;
+    joints['footR'] = rig.legR.foot;
+  }
+  return joints;
+}
+
+/** 腿部关节的名字（与 animatedJointsOf 一致） */
+export const LEG_JOINT_NAMES = ['hipL', 'kneeL', 'footL', 'hipR', 'kneeR', 'footR'] as const;
+
+/**
+ * 让一个人形模型的腿成为动画关节（步骤 14）。必须在合并网格（formationView.mergeUnitMeshes）之前调用。
+ * 同时给挂在髋部的袍摆、裙甲、战袍写入“跟着迈步”的权重（布料着色器的 uSwayStride），走路时腿不会从袍子里戳出来。
+ * 不是人形模型、或已经打开过时什么都不做，返回 false。
+ */
+export function enableLegJoints(model: Object3D): boolean {
+  const rig = getRig(model);
+  if (!rig || rig.legsAnimated) return false;
+  rig.legsAnimated = true;
+  const legLength = rig.hips.position.y;
+  addHipStrideWeights(rig.hips, [rig.legL.hip, rig.legR.hip, rig.spine], legLength, Math.abs(rig.legL.hip.position.x));
+  return true;
 }
 
 /** 模型里关节节点的名字前缀 */
