@@ -6,6 +6,10 @@
 // - 跳过动画：不播放任何战斗音效（界面点击音和环境音不受影响）。
 // - 标签页切到后台时暂停发声，回来后恢复。
 // - 同一种音效在很短的时间内重复触发只响一次，并限制同时发声的数量。
+// - 步骤 12：分三路音量——主音量（master）下面挂“音效”（战斗音效 + 界面音）和“环境音”两条总线；
+//   战斗音效先经过一个“暂停闸门”，打开设置菜单暂停时闸门关上（正在响的战斗音效立即淡出，新的不再排），
+//   界面音和环境音不受暂停影响（设置里拖动滑块要能听到提示音）。
+//   音量设置的保存由界面层的 SettingsStore 负责，引擎只管发声。
 
 import { AUDIO_CONFIG, type SoundName } from '../../data/audioConfig';
 
@@ -18,9 +22,14 @@ export interface SoundClock {
 }
 
 export interface SoundSettings {
-  volume: number; // 0~1
+  volume: number; // 主音量 0~1
   muted: boolean;
+  sfx?: number; // 音效音量 0~1（默认 1）
+  ambient?: number; // 环境音音量 0~1（默认 1）
 }
+
+/** 试听提示音走哪条总线 */
+export type SoundChannel = 'master' | 'sfx' | 'ambient';
 
 /** 给演出层用的最小接口：方便测试时换成记录调用的假对象 */
 export interface SoundPlayer {
@@ -35,41 +44,40 @@ function clamp01(v: number): number {
   return Math.min(1, Math.max(0, Number.isFinite(v) ? v : 0));
 }
 
-function loadSettings(): SoundSettings {
-  const fallback: SoundSettings = { volume: AUDIO_CONFIG.volume, muted: AUDIO_CONFIG.muted };
-  try {
-    const raw = localStorage.getItem(AUDIO_CONFIG.storageKey);
-    if (!raw) return fallback;
-    const saved = JSON.parse(raw) as Partial<SoundSettings>;
-    return {
-      volume: typeof saved.volume === 'number' ? clamp01(saved.volume) : fallback.volume,
-      muted: typeof saved.muted === 'boolean' ? saved.muted : fallback.muted,
-    };
-  } catch {
-    return fallback; // 不能读本地存储（无痕模式等）或内容损坏：用默认值
-  }
-}
-
 export class SoundEngine implements SoundPlayer {
   private ctx: AudioContext | null = null;
   private master: GainNode | null = null;
+  /** 音效总线（战斗音效 + 界面音） */
+  private sfxBus: GainNode | null = null;
+  /** 战斗音效的暂停闸门（接在音效总线前面） */
+  private gate: GainNode | null = null;
+  /** 环境音总线 */
+  private ambientBus: GainNode | null = null;
   private noiseBuffer: AudioBuffer | null = null;
   private ambient: { gain: GainNode; stop(): void } | null = null;
-  private readonly settings: SoundSettings;
+  private readonly settings: Required<SoundSettings>;
   private readonly lastPlayed = new Map<SoundName, number>();
+  private lastPreview = -Infinity;
   private voices = 0;
   private disposed = false;
+  private pausedFlag = false;
 
   /**
    * @param clock 战斗倍速与跳过动画的状态
    * @param createContext 创建 AudioContext 的函数（测试时注入假的）；默认用浏览器的
+   * @param settings 初始音量设置（默认见 AUDIO_CONFIG）
    */
   constructor(
     private readonly clock: SoundClock,
     private readonly createContext: ContextFactory | null = defaultContextFactory(),
-    settings: SoundSettings = loadSettings(),
+    settings: SoundSettings = { volume: AUDIO_CONFIG.volume, muted: AUDIO_CONFIG.muted },
   ) {
-    this.settings = { volume: clamp01(settings.volume), muted: settings.muted };
+    this.settings = {
+      volume: clamp01(settings.volume),
+      muted: settings.muted,
+      sfx: clamp01(settings.sfx ?? 1),
+      ambient: clamp01(settings.ambient ?? 1),
+    };
     if (typeof window !== 'undefined') {
       // 第一次用户操作时解锁；之后每次操作顺便确认没有被浏览器挂起
       window.addEventListener('pointerdown', this.onGesture, true);
@@ -82,12 +90,25 @@ export class SoundEngine implements SoundPlayer {
   // 设置
   // ------------------------------------------------------------------
 
+  /** 主音量 */
   get volume(): number {
     return this.settings.volume;
   }
 
+  get sfxVolume(): number {
+    return this.settings.sfx;
+  }
+
+  get ambientVolume(): number {
+    return this.settings.ambient;
+  }
+
   get muted(): boolean {
     return this.settings.muted;
+  }
+
+  get paused(): boolean {
+    return this.pausedFlag;
   }
 
   /** 浏览器是否支持合成音效 */
@@ -103,28 +124,37 @@ export class SoundEngine implements SoundPlayer {
   setVolume(volume: number): void {
     this.settings.volume = clamp01(volume);
     this.applyVolume();
-    this.save();
+  }
+
+  setSfxVolume(volume: number): void {
+    this.settings.sfx = clamp01(volume);
+    this.applyVolume();
+  }
+
+  setAmbientVolume(volume: number): void {
+    this.settings.ambient = clamp01(volume);
+    this.applyVolume();
   }
 
   setMuted(muted: boolean): void {
     this.settings.muted = muted;
     this.applyVolume();
-    this.save();
+  }
+
+  /** 暂停战斗音效（打开设置菜单时）：正在响的战斗音效淡出，暂停期间不再播放新的战斗音效 */
+  setPaused(on: boolean): void {
+    this.pausedFlag = on;
+    if (this.ctx && this.gate) this.gate.gain.setTargetAtTime(on ? 0 : 1, this.ctx.currentTime, 0.02);
   }
 
   private applyVolume(): void {
-    if (!this.ctx || !this.master) return;
+    const ctx = this.ctx;
+    if (!ctx || !this.master) return;
     const target = this.settings.muted ? 0 : this.settings.volume;
     // 短暂过渡，避免音量突变产生“咔”声
-    this.master.gain.setTargetAtTime(target, this.ctx.currentTime, 0.03);
-  }
-
-  private save(): void {
-    try {
-      localStorage.setItem(AUDIO_CONFIG.storageKey, JSON.stringify(this.settings));
-    } catch {
-      // 不能写本地存储：只在本次生效
-    }
+    this.master.gain.setTargetAtTime(target, ctx.currentTime, 0.03);
+    this.sfxBus?.gain.setTargetAtTime(this.settings.sfx, ctx.currentTime, 0.03);
+    this.ambientBus?.gain.setTargetAtTime(this.settings.ambient, ctx.currentTime, 0.03);
   }
 
   // ------------------------------------------------------------------
@@ -142,9 +172,19 @@ export class SoundEngine implements SoundPlayer {
       } catch {
         return; // 浏览器拒绝创建：保持无声，不影响战斗
       }
-      this.master = this.ctx.createGain();
+      const ctx = this.ctx;
+      this.master = ctx.createGain();
       this.master.gain.value = this.settings.muted ? 0 : this.settings.volume;
-      this.master.connect(this.ctx.destination);
+      this.master.connect(ctx.destination);
+      this.sfxBus = ctx.createGain();
+      this.sfxBus.gain.value = this.settings.sfx;
+      this.sfxBus.connect(this.master);
+      this.gate = ctx.createGain();
+      this.gate.gain.value = this.pausedFlag ? 0 : 1;
+      this.gate.connect(this.sfxBus);
+      this.ambientBus = ctx.createGain();
+      this.ambientBus.gain.value = this.settings.ambient;
+      this.ambientBus.connect(this.master);
       this.startAmbient();
     }
     if (this.ctx.state === 'suspended' && !document.hidden) void this.ctx.resume().catch(() => undefined);
@@ -169,6 +209,9 @@ export class SoundEngine implements SoundPlayer {
     void this.ctx?.close().catch(() => undefined);
     this.ctx = null;
     this.master = null;
+    this.sfxBus = null;
+    this.gate = null;
+    this.ambientBus = null;
   }
 
   // ------------------------------------------------------------------
@@ -181,18 +224,37 @@ export class SoundEngine implements SoundPlayer {
    */
   play(name: SoundName, intensity = 1): void {
     const ctx = this.ctx;
-    if (!ctx || !this.master || ctx.state !== 'running' || this.settings.muted) return;
+    if (!ctx || !this.sfxBus || !this.gate || ctx.state !== 'running' || this.settings.muted) return;
     const ui = UI_SOUNDS.has(name);
-    if (!ui && this.clock.skip()) return; // 跳过动画时不放战斗音效
+    if (!ui && (this.clock.skip() || this.pausedFlag)) return; // 跳过动画、暂停时不放战斗音效
     const now = ctx.currentTime;
     const last = this.lastPlayed.get(name);
     if (last !== undefined && now - last < AUDIO_CONFIG.minInterval) return;
     if (this.voices >= AUDIO_CONFIG.maxVoices) return;
     this.lastPlayed.set(name, now);
 
-    // 倍速越高声音越短；界面音不随倍速变化
+    // 倍速越高声音越短；界面音不随倍速变化，也不经过暂停闸门
     const rate = ui ? 1 : Math.max(0.25, this.clock.rate());
-    const voice = new Voice(ctx, this.master, this.noise(ctx), now, 1 / rate, AUDIO_CONFIG.gain[name] * Math.min(1.6, intensity));
+    this.voice(name, intensity, ui ? this.sfxBus : this.gate, now, 1 / rate);
+  }
+
+  /**
+   * 试听提示音（设置里拖动音量滑块时）：拖“环境音”时提示音走环境音总线，其余走音效总线，
+   * 所以听到的响度就是调整后的结果。限制频率，拖动时不会连成一片。
+   */
+  preview(channel: SoundChannel): void {
+    const ctx = this.ctx;
+    if (!ctx || !this.sfxBus || !this.ambientBus || ctx.state !== 'running' || this.settings.muted) return;
+    const now = ctx.currentTime;
+    if (now - this.lastPreview < AUDIO_CONFIG.previewInterval) return;
+    if (this.voices >= AUDIO_CONFIG.maxVoices) return;
+    this.lastPreview = now;
+    this.voice('click', 1.4, channel === 'ambient' ? this.ambientBus : this.sfxBus, now, 1);
+  }
+
+  private voice(name: SoundName, intensity: number, destination: AudioNode, now: number, stretch: number): void {
+    const ctx = this.ctx!;
+    const voice = new Voice(ctx, destination, this.noise(ctx), now, stretch, AUDIO_CONFIG.gain[name] * Math.min(1.6, intensity));
     SOUNDS[name](voice, intensity);
     this.voices += 1;
     voice.onEnded(() => (this.voices -= 1));
@@ -218,7 +280,7 @@ export class SoundEngine implements SoundPlayer {
     const gain = ctx.createGain();
     gain.gain.value = 0;
     gain.gain.setTargetAtTime(a.gain, ctx.currentTime, a.fadeSeconds / 3);
-    gain.connect(this.master);
+    gain.connect(this.ambientBus ?? this.master);
 
     const sources: (OscillatorNode | AudioBufferSourceNode)[] = [];
     for (const hz of [a.baseHz, a.baseHz + a.detuneHz, a.baseHz * 1.5]) {

@@ -9,6 +9,7 @@ import { ENEMY_TEMPLATES } from '../../data/enemies';
 import { ALLY_TEMPLATES } from '../../data/heroes';
 import { STAGING } from '../../data/presentationConfig';
 import { BattleScene } from '../../render/BattleScene';
+import { hudSettingsAdapters, loadPageSettings, sceneOptionsOf } from '../settings/sceneSettings';
 import { BattleDirector } from '../../render/director/BattleDirector';
 import { BattleHud } from '../hud/BattleHud';
 import { buildShowcaseScript, SHOWCASE_SKILL_NAMES, snapshotOf, type ShowcaseEvent } from './showcaseScript';
@@ -38,7 +39,8 @@ export class ShowcaseApp {
 
   constructor(container: HTMLElement) {
     const query = new URLSearchParams(location.search);
-    this.scene = new BattleScene(container);
+    const settings = loadPageSettings();
+    this.scene = new BattleScene(container, sceneOptionsOf(settings.value));
     const { scheduler, stage } = this.scene;
     const speed = Number(query.get('speed'));
     if (STAGING.speeds.includes(speed)) scheduler.setTimeScale(speed);
@@ -49,8 +51,7 @@ export class ShowcaseApp {
       scheduler,
       project: (world) => this.scene.worldToScreen(world),
       headPosition: (id, out) => stage.unit(id).headPosition(out),
-      quality: this.scene.quality,
-      sound: this.scene.sound,
+      ...hudSettingsAdapters(this.scene, settings),
     });
     this.scene.onFrame(() => this.hud.update());
 

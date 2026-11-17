@@ -3,7 +3,7 @@
 
 import { Color, FogExp2, PCFShadowMap, Scene, Vector3, WebGLRenderer, type DirectionalLight, type Object3D } from 'three';
 import { collectTicks, type TickFn } from '../assets/AssetRegistry';
-import { SoundEngine } from '../assets/audio/SoundEngine';
+import { SoundEngine, type SoundSettings } from '../assets/audio/SoundEngine';
 import { createEnvironmentMap } from '../assets/environment';
 import { createDefaultRegistry } from '../assets/registerDefaults';
 import { ENEMY_TEMPLATES } from '../data/enemies';
@@ -31,16 +31,16 @@ import { BattleStage } from './units/BattleStage';
 
 const MAX_FRAME_DT = 0.1; // 切回标签页时限制单帧时间跨度
 
-/** 开场用哪种画质：地址参数 ?quality=low / high 优先，其次是上次的选择，默认高画质 */
-function initialLowQuality(): boolean {
-  const param = new URLSearchParams(location.search).get('quality');
-  if (param === 'low') return true;
-  if (param === 'high') return false;
-  try {
-    return localStorage.getItem(QUALITY_CONFIG.storageKey) === 'low';
-  } catch {
-    return false;
-  }
+/** 场景的初始设置（画质、音量）：由界面层的 SettingsStore 读出（已含地址参数覆盖）后传入 */
+export interface SceneOptions {
+  lowQuality: boolean;
+  audio: SoundSettings;
+}
+
+/** 固定 16:10 画面时画布的实际渲染像素（见 ui/layout/Viewport）；null = 按容器大小 × 设备像素比 */
+export interface SceneViewport {
+  renderWidth: number;
+  renderHeight: number;
 }
 
 /** 性能快照，见 BattleScene.perfSnapshot() */
@@ -103,14 +103,20 @@ export class BattleScene {
   /** 画质开关，给界面上的“画质”按钮用 */
   readonly quality = {
     isLow: (): boolean => this.low,
-    setLow: (on: boolean): void => this.setLowQuality(on, true),
+    setLow: (on: boolean): void => this.setLowQuality(on),
   };
+  /** 排版尺寸（容器的 CSS 像素）：worldToScreen 返回的坐标以它为准 */
   private width = 1;
   private height = 1;
   private time = 0;
   private lastMs = 0;
+  private viewport: SceneViewport | null = null;
+  private pausedFlag = false;
 
-  constructor(private readonly container: HTMLElement) {
+  constructor(
+    private readonly container: HTMLElement,
+    options: SceneOptions = { lowQuality: false, audio: { volume: 0.6, muted: false } },
+  ) {
     this.renderer = new WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
     this.renderer.info.autoReset = false; // 每帧手动清零，这样统计的是整帧（含后处理）的绘制调用
     this.renderer.shadowMap.enabled = true;
@@ -135,7 +141,11 @@ export class BattleScene {
     this.cameraRig = new CameraRig(this.battleCamera, this.scheduler);
     const fx = new FxSystem(this.scheduler, this.battleCamera.camera);
     this.fx = fx;
-    this.sound = new SoundEngine({ rate: () => this.scheduler.timeScale, skip: () => this.scheduler.skip });
+    this.sound = new SoundEngine(
+      { rate: () => this.scheduler.timeScale, skip: () => this.scheduler.skip },
+      undefined,
+      options.audio,
+    );
     this.stage = new BattleStage(templates, this.formation.units, this.scheduler, fx, this.cameraRig, this.sound);
     this.scene.add(
       createLighting(),
@@ -155,7 +165,7 @@ export class BattleScene {
     this.postFx = createPostFx(this.renderer, this.scene, this.battleCamera.camera);
     this.ticks = collectTicks(this.scene);
 
-    this.setLowQuality(initialLowQuality(), false);
+    this.setLowQuality(options.lowQuality);
     // 调试：地址加 ?silhouette=1 做剪影测试（单位纯黑、背景浅灰、隐藏其余物件）
     if (silhouetteRequested()) {
       applySilhouette(this.scene, this.formation.group);
@@ -231,10 +241,28 @@ export class BattleScene {
     this.renderer.domElement.remove();
   }
 
+  get paused(): boolean {
+    return this.pausedFlag;
+  }
+
+  /**
+   * 暂停 / 继续（步骤 12：打开设置菜单时暂停）。暂停期间场景时间、演出调度、待机动画、特效、镜头、
+   * 头顶条和飘字都不推进，战斗音效淡出；画面照常绘制（改分辨率、画质能立刻看到）。
+   */
+  setPaused(on: boolean): void {
+    this.pausedFlag = on;
+    this.scheduler.setPaused(on);
+    this.sound.setPaused(on);
+  }
+
   private frame(nowMs: number, render = true): void {
     this.lastFrameDt = (nowMs - this.lastMs) / 1000;
     const dt = Math.min(MAX_FRAME_DT, this.lastFrameDt);
     this.lastMs = nowMs;
+    if (this.pausedFlag) {
+      if (render) this.draw(nowMs);
+      return;
+    }
     this.time += dt;
     const updateStart = performance.now();
     for (const tick of this.ticks) tick(this.time, dt);
@@ -247,7 +275,10 @@ export class BattleScene {
     this.rings.update(this.time);
     for (const fn of this.frameListeners) fn();
     this.lastUpdateMs = performance.now() - updateStart;
-    if (!render) return;
+    if (render) this.draw(nowMs);
+  }
+
+  private draw(nowMs: number): void {
     this.renderer.info.reset();
     this.postFx.render(this.time);
     this.lastDrawCalls = this.renderer.info.render.calls;
@@ -257,9 +288,9 @@ export class BattleScene {
 
   /**
    * 切换低画质：关闭辉光、降低阴影贴图分辨率、减少粒子和雾片、不按高分屏放大分辨率。
-   * @param remember 是否记住这次选择（下次打开页面沿用）
+   * 记住选择由界面层的 SettingsStore 负责。
    */
-  setLowQuality(on: boolean, remember: boolean): void {
+  setLowQuality(on: boolean): void {
     this.low = on;
     const low = QUALITY_CONFIG.low;
     this.postFx.setBloom(on ? low.bloom : true);
@@ -286,13 +317,6 @@ export class BattleScene {
       puff.visible = !on || i < fog.children.length * low.groundFogRatio;
     });
     this.resize();
-    if (remember) {
-      try {
-        localStorage.setItem(QUALITY_CONFIG.storageKey, on ? 'low' : 'high');
-      } catch {
-        // 无痕模式等情况下不能写本地存储：不影响本次生效
-      }
-    }
   }
 
   /**
@@ -357,14 +381,43 @@ export class BattleScene {
     };
   }
 
+  /**
+   * 固定 16:10 画面（步骤 12）：画布按容器的排版尺寸铺满（CSS 100%），实际渲染 renderWidth × renderHeight 像素。
+   * 传 null 恢复为“容器大小 × 设备像素比”（预览页、演示页）。
+   */
+  setViewport(viewport: SceneViewport | null): void {
+    this.viewport = viewport;
+    this.resize();
+  }
+
+  /** 画布当前的渲染像素（自检用） */
+  get renderSize(): { width: number; height: number } {
+    const canvas = this.renderer.domElement;
+    return { width: canvas.width, height: canvas.height };
+  }
+
   /** 窗口自适应：渲染尺寸、相机宽高比、后处理缓冲一起更新 */
   private resize(): void {
     const width = Math.max(1, this.container.clientWidth);
     const height = Math.max(1, this.container.clientHeight);
-    const cap = this.low ? QUALITY_CONFIG.low.maxPixelRatio : QUALITY_CONFIG.maxPixelRatio;
-    const pixelRatio = Math.min(cap, devicePixelRatio || 1);
     this.width = width;
     this.height = height;
+    const view = this.viewport;
+    if (view) {
+      // 直接按目标像素设置画布缓冲（像素比 1），避免 宽 × 小数像素比 取整后差一个像素
+      const w = Math.max(1, Math.round(view.renderWidth));
+      const h = Math.max(1, Math.round(view.renderHeight));
+      this.renderer.setPixelRatio(1);
+      this.renderer.setSize(w, h, false);
+      const style = this.renderer.domElement.style;
+      style.width = '100%';
+      style.height = '100%';
+      this.battleCamera.resize(w, h);
+      this.postFx.setSize(w, h, 1);
+      return;
+    }
+    const cap = this.low ? QUALITY_CONFIG.low.maxPixelRatio : QUALITY_CONFIG.maxPixelRatio;
+    const pixelRatio = Math.min(cap, devicePixelRatio || 1);
     this.renderer.setPixelRatio(pixelRatio);
     this.renderer.setSize(width, height);
     this.battleCamera.resize(width, height);

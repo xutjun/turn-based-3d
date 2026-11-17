@@ -43,3 +43,28 @@ export const UI_CONFIG = {
     hover: { halfWidth: 30, above: 36, below: 84 }, // 鼠标指着的判定范围（像素；Boss 按 2 倍）
   },
 };
+
+/** 步骤 12：固定 16:10 画面。界面按 design 尺寸排版，整体等比缩放到窗口里的 16:10 区域 */
+export const VIEWPORT_CONFIG = {
+  aspect: 16 / 10,
+  /** 界面排版用的逻辑尺寸（CSS 像素）：所有面板、头顶条、飘字都按这个尺寸摆放，再整体缩放 */
+  design: { width: 1440, height: 900 },
+  /** 设置里可选的固定渲染分辨率（都是 16:10） */
+  resolutions: [
+    { width: 1280, height: 800 },
+    { width: 1440, height: 900 },
+    { width: 1680, height: 1050 },
+    { width: 1920, height: 1200 },
+  ],
+};
+
+/** 步骤 12：设置菜单 */
+export const SETTINGS_CONFIG = {
+  storageKey: 'dk-battle-settings', // 分辨率、画质、音量、静音统一保存在这个本地存储键里（JSON）
+};
+
+/** 步骤 12：标题界面（游戏名暂定，改名只改这里） */
+export const TITLE_CONFIG = {
+  name: '深渊之战',
+  subtitle: '暗黑风 3D 回合制战斗',
+};

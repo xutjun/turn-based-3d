@@ -54,7 +54,7 @@ export function pickUnitAt(x: number, y: number, boxes: readonly ScreenBox[]): U
 }
 
 /** 界面面板的选择器：落在这些元素上的鼠标事件不算选目标 */
-export const PANEL_SELECTOR = '.dk-panel, .dk-result-veil, .hud-controls';
+export const PANEL_SELECTOR = '.dk-panel, .dk-result-veil, .hud-controls, .dk-menu-layer > *';
 
 /**
  * 一次鼠标事件是否发生在界面面板上。

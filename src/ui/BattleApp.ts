@@ -11,6 +11,7 @@ import { createDefaultSetup } from '../data/defaultSetup';
 import { STAGING } from '../data/presentationConfig';
 import { SKILLS } from '../data/skills';
 import { BattleScene } from '../render/BattleScene';
+import { hudSettingsAdapters, loadPageSettings, sceneOptionsOf } from './settings/sceneSettings';
 import { BattleDirector } from '../render/director/BattleDirector';
 import { AutoBattleController, type BattleCheck } from './AutoBattleController';
 import { BattleHud } from './hud/BattleHud';
@@ -33,7 +34,8 @@ export class BattleApp {
     const seedParam = Number(query.get('seed'));
     const seed = query.has('seed') && Number.isFinite(seedParam) ? seedParam >>> 0 : Date.now() >>> 0;
 
-    this.scene = new BattleScene(container);
+    const settings = loadPageSettings();
+    this.scene = new BattleScene(container, sceneOptionsOf(settings.value));
     const { scheduler, stage } = this.scene;
     const speed = Number(query.get('speed'));
     if (STAGING.speeds.includes(speed)) scheduler.setTimeScale(speed);
@@ -44,8 +46,7 @@ export class BattleApp {
       scheduler,
       project: (world) => this.scene.worldToScreen(world),
       headPosition: (id, out) => stage.unit(id).headPosition(out),
-      quality: this.scene.quality,
-      sound: this.scene.sound,
+      ...hudSettingsAdapters(this.scene, settings),
     });
     this.scene.onFrame(() => this.hud.update());
 

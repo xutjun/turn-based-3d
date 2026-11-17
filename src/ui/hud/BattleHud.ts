@@ -11,6 +11,7 @@ import { FLOATER_STYLES, STAGING, TIMING, type FloaterStyle } from '../../data/p
 import type { Scheduler } from '../../render/director/Scheduler';
 import type { DirectorHud } from '../../render/director/types';
 import { UI_CONFIG } from '../../data/uiConfig';
+import { clientToLocal } from '../layout/viewportMath';
 import { layoutNames, pointedHead, type HeadBox } from './nameLayout';
 
 /** 把世界坐标投影到容器内的像素坐标；visible 为 false 表示在镜头外 */
@@ -33,6 +34,11 @@ export interface HudDeps {
   };
   /** 画质开关（可选）：提供后右上角多一个“画质”按钮 */
   quality?: { isLow(): boolean; setLow(on: boolean): void };
+  /**
+   * 画质和音量由设置菜单管理（步骤 12，玩家战斗页）：右上角只留倍速和跳过动画，
+   * 并给右侧的设置按钮让出位置。不传时（演示页）沿用原来的画质按钮和音量滑块。
+   */
+  settingsMenu?: boolean;
 }
 
 /** 头顶条上的标记 */
@@ -104,6 +110,8 @@ const CSS = `
 .hud-btn { padding:4px 10px; font:inherit; font-size:14px; cursor:pointer; color:#d8c690; background:rgba(40,36,30,.92);
   border:1px solid rgba(150,120,70,.7); }
 .hud-btn.on { color:#1a1408; background:#c9a85a; }
+.hud-controls.with-menu { right:58px; width:auto; flex-wrap:nowrap; }
+.hud-controls.is-hidden { display:none; }
 `;
 
 interface HeadBar {
@@ -172,7 +180,7 @@ export class BattleHud implements DirectorHud {
     this.bannerEl = document.createElement('div');
     this.bannerEl.className = 'hud-banner';
     this.controlsEl = document.createElement('div');
-    this.controlsEl.className = 'hud-controls';
+    this.controlsEl.className = `hud-controls${deps.settingsMenu ? ' with-menu' : ''}`;
     this.root.append(this.orderEl, this.bannerEl, this.controlsEl);
     deps.container.appendChild(this.root);
     this.renderControls();
@@ -198,8 +206,9 @@ export class BattleHud implements DirectorHud {
   private pointer: { x: number; y: number } | null = null;
 
   private readonly onPointerMove = (e: PointerEvent): void => {
-    const rect = this.deps.container.getBoundingClientRect();
-    this.pointer = { x: e.clientX - rect.left, y: e.clientY - rect.top };
+    // 游戏区域可能被整体缩放（固定 16:10 画面）：换算回排版坐标
+    const c = this.deps.container;
+    this.pointer = clientToLocal(e.clientX, e.clientY, c.getBoundingClientRect(), c.clientWidth, c.clientHeight);
   };
 
   /** 点到任何界面按钮都响一声 */
@@ -220,6 +229,12 @@ export class BattleHud implements DirectorHud {
     this.renderControls();
   };
 
+  /** 显示 / 隐藏右上角的速度按钮和顶部的出手顺序条（标题界面上隐藏） */
+  setControlsVisible(on: boolean): void {
+    this.controlsEl.classList.toggle('is-hidden', !on);
+    this.orderEl.style.display = on ? '' : 'none';
+  }
+
   /** 重画右上角的速度按钮（外部改了速度或跳过状态后也可以调用） */
   renderControls(): void {
     const { scheduler } = this.deps;
@@ -239,6 +254,7 @@ export class BattleHud implements DirectorHud {
       button(`${speed}×`, scheduler.timeScale === speed, `战斗速度 ${speed} 倍（按键 ${speed}）`, () => scheduler.setTimeScale(speed));
     }
     button('跳过动画', scheduler.skip, '跳过动画（按键 S）', () => scheduler.setSkip(!scheduler.skip));
+    if (this.deps.settingsMenu) return; // 画质、音量在设置菜单里
     const { quality } = this.deps;
     if (quality) {
       const low = quality.isLow();
@@ -552,6 +568,11 @@ export class BattleHud implements DirectorHud {
   /** 当前显示着名字的单位（自检用） */
   shownNames(): UnitId[] {
     return [...this.heads].filter(([, h]) => h.el.classList.contains('show-name')).map(([id]) => id);
+  }
+
+  /** 还在飘的飘字数量（自检用：重新开始 / 退出后应为 0） */
+  get floaterCount(): number {
+    return this.floaters.length;
   }
 
   /** 头顶条当前的目标气血（自检用：与逻辑层状态对比） */

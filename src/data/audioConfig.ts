@@ -18,7 +18,7 @@ export type SoundName =
   | 'click'; // 界面点击
 
 export const AUDIO_CONFIG = {
-  storageKey: 'dk-battle-audio', // 记住音量和静音用的本地存储键
+  storageKey: 'dk-battle-audio', // 旧版（步骤 8）记住音量和静音用的本地存储键；步骤 12 起统一存到 SETTINGS_CONFIG.storageKey，只用于迁移
   volume: 0.6, // 默认总音量（0~1）
   muted: false,
   /** 各音效的相对响度（再乘总音量） */
@@ -39,6 +39,8 @@ export const AUDIO_CONFIG = {
   } satisfies Record<SoundName, number>,
   /** 同一种音效两次播放之间的最短间隔（秒）：群体法术 6 个目标同帧受击时只响一声，不会叠成爆音 */
   minInterval: 0.045,
+  /** 设置里拖动音量滑块时提示音的最短间隔（秒），拖动时不会连成一片 */
+  previewInterval: 0.12,
   /** 同时发声的音效上限，超过的直接丢弃 */
   maxVoices: 14,
   /** 环境低频嗡鸣 */

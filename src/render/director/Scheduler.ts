@@ -41,6 +41,7 @@ export class Scheduler {
 
   private scale = 1;
   private skipping = false;
+  private pausedFlag = false;
   /** 进行中的时间扭曲（顿帧、慢镜头）：factor 为时间流速，left 为剩余时长 */
   private readonly warps: { factor: number; left: number }[] = [];
   private readonly tasks = new Set<Task>();
@@ -68,6 +69,18 @@ export class Scheduler {
     }
   }
 
+  get paused(): boolean {
+    return this.pausedFlag;
+  }
+
+  /**
+   * 暂停（步骤 12：打开设置菜单时）：暂停期间 update() 不推进任何时间，进行中的动画停在原处，
+   * 等下一帧的 nextFrame() 也不会完成（战斗流程整体停住）。恢复后从停下的地方继续。
+   */
+  setPaused(on: boolean): void {
+    this.pausedFlag = on;
+  }
+
   /**
    * 时间扭曲：接下来的 duration 秒内（按倍速后的时间计），演出时间只以 factor 倍流逝。
    * factor 接近 0 = 顿帧（hit stop），0.3 左右 = 慢镜头。多个扭曲同时存在时取最慢的。
@@ -92,6 +105,10 @@ export class Scheduler {
 
   /** 每帧调用一次，realDt 为真实经过的秒数 */
   update(realDt: number): void {
+    if (this.pausedFlag) {
+      this.delta = 0;
+      return;
+    }
     const scaled = realDt * this.scale;
     const dt = scaled * this.warpFactor;
     for (let i = this.warps.length - 1; i >= 0; i--) {

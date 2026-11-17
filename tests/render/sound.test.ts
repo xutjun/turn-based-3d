@@ -246,3 +246,72 @@ describe('动作 → 音效', () => {
     }
   });
 });
+
+describe('音效引擎：步骤 12 的分路音量、暂停、试听', () => {
+  it('解锁后建立 主音量 → 音效总线 / 环境音总线 两路，初始值来自设置', () => {
+    const fake = fakeContext();
+    const engine = new SoundEngine({ rate: () => 1, skip: () => false }, () => fake.ctx as unknown as AudioContext, {
+      volume: 0.5,
+      muted: false,
+      sfx: 0.3,
+      ambient: 0.8,
+    });
+    engine.unlock();
+    // 创建顺序：主音量、音效总线、暂停闸门、环境音总线
+    const [master, sfx, gate, ambient] = fake.gains;
+    expect(master!.value).toBeCloseTo(0.5);
+    expect(sfx!.value).toBeCloseTo(0.3);
+    expect(gate!.value).toBe(1);
+    expect(ambient!.value).toBeCloseTo(0.8);
+    engine.setSfxVolume(0.9);
+    engine.setAmbientVolume(2); // 越界截断
+    expect(sfx!.value).toBeCloseTo(0.9);
+    expect(ambient!.value).toBe(1);
+    expect(engine.sfxVolume).toBeCloseTo(0.9);
+    expect(engine.ambientVolume).toBe(1);
+  });
+
+  it('暂停时战斗音效不再播放、正在响的淡出；界面音照常；恢复后继续', () => {
+    const { engine, fake, sfx } = setup();
+    engine.unlock();
+    const gate = fake.gains[2]!;
+    engine.setPaused(true);
+    expect(engine.paused).toBe(true);
+    expect(gate.value).toBe(0);
+    engine.play('hit');
+    expect(sfx()).toHaveLength(0);
+    engine.play('click');
+    expect(sfx().length).toBeGreaterThan(0);
+    const before = sfx().length;
+    engine.setPaused(false);
+    expect(gate.value).toBe(1);
+    fake.ctx.currentTime = 1;
+    engine.play('hit');
+    expect(sfx().length).toBeGreaterThan(before);
+  });
+
+  it('解锁之前就暂停：解锁时闸门直接是关着的', () => {
+    const { engine, fake } = setup();
+    engine.setPaused(true);
+    engine.unlock();
+    expect(fake.gains[2]!.value).toBe(0);
+  });
+
+  it('试听提示音：拖动时有声音，频率受限；静音时不响', () => {
+    const { engine, fake, sfx } = setup();
+    engine.unlock();
+    engine.preview('sfx');
+    const once = sfx().length;
+    expect(once).toBeGreaterThan(0);
+    engine.preview('ambient'); // 同一时刻再拖：被限频
+    expect(sfx()).toHaveLength(once);
+    fake.ctx.currentTime = AUDIO_CONFIG.previewInterval + 0.01;
+    engine.preview('ambient');
+    expect(sfx().length).toBeGreaterThan(once);
+    engine.setMuted(true);
+    fake.ctx.currentTime = 5;
+    const n = sfx().length;
+    engine.preview('master');
+    expect(sfx()).toHaveLength(n);
+  });
+});

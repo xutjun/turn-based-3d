@@ -7,6 +7,7 @@ import { SELECTION_CONFIG } from '../../data/uiConfig';
 import type { RingMark } from '../../render/scene/selectionRings';
 import type { CommandSession } from '../command/CommandSession';
 import type { HeadMark } from '../hud/BattleHud';
+import { clientToLocal } from '../layout/viewportMath';
 import { eventOnPanel, pickUnitAt, screenBoxOf, type ScreenBox } from './picking';
 
 export interface TargetingDeps {
@@ -87,8 +88,10 @@ export class TargetingInput {
   }
 
   private locate(e: MouseEvent): UnitId | null {
-    const rect = this.deps.container.getBoundingClientRect();
-    return pickUnitAt(e.clientX - rect.left, e.clientY - rect.top, this.boxes());
+    // 游戏区域可能被整体缩放（固定 16:10 画面）：鼠标坐标先换算回排版坐标，再和投影出来的单位范围比较
+    const c = this.deps.container;
+    const p = clientToLocal(e.clientX, e.clientY, c.getBoundingClientRect(), c.clientWidth, c.clientHeight);
+    return pickUnitAt(p.x, p.y, this.boxes());
   }
 
   /** 场上能被指到的单位：存活单位 + 倒地的友方（敌方被击败后已消失） */

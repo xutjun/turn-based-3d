@@ -81,7 +81,8 @@ export class CommandPanel {
     const { session } = this.deps;
     if (session.mode === 'idle' || e.ctrlKey || e.metaKey || e.altKey) return;
     const key = e.key.toLowerCase();
-    if (key === 'escape') session.back();
+    if (key === 'escape' && session.mode !== 'menu') session.back();
+    else if (key === 'backspace') session.back();
     else if (session.mode !== 'menu') return;
     else if (key === 'a') session.chooseAttack();
     else if (key === 'w' && session.hasSkills) session.openSkills();
@@ -218,7 +219,9 @@ export class CommandPanel {
           : '选择指令';
     row.append(el('span', 'dk-hint', hint));
     if (session.canGoBack) {
-      row.append(button(session.mode === 'menu' ? '上一个' : '返回', 'Esc', () => session.back()));
+      // 步骤 12：指令菜单里 Esc 用来打开设置，“上一个”改用退格键；技能列表 / 选目标里 Esc 仍是返回
+      const menu = session.mode === 'menu';
+      row.append(button(menu ? '上一个' : '返回', menu ? '退格' : 'Esc', () => session.back()));
     }
     return row;
   }

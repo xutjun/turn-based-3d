@@ -101,13 +101,13 @@ const CSS = `
 .dk-toast.show { opacity:1; transition:none; }
 
 /* ---------- 设置条（宝宝自动 / 手动） ---------- */
-.dk-settings { right:12px; top:80px; padding:6px 9px; display:flex; align-items:center; gap:6px; font-size:13px; }
+.dk-settings { right:12px; top:56px; padding:6px 9px; display:flex; align-items:center; gap:6px; font-size:13px; }
 .dk-settings .dk-btn { font-size:13px; padding:3px 9px; letter-spacing:1px; }
 .dk-settings-note { position:absolute; right:0; top:100%; margin-top:6px; font-size:11px; color:#9c8f6c; white-space:nowrap;
   text-shadow:0 1px 2px #000; }
 
 /* ---------- 战斗日志 ---------- */
-.dk-log { right:12px; top:128px; width:252px; padding:8px 4px 8px 10px; }
+.dk-log { right:12px; top:104px; width:252px; padding:8px 4px 8px 10px; }
 .dk-log .dk-title { margin-bottom:5px; padding-bottom:4px; font-size:13px; cursor:pointer; }
 .dk-log-body { height:150px; overflow-y:auto; padding-right:6px; font-size:12px; line-height:1.45; user-select:text; }
 .dk-log.is-collapsed .dk-log-body { display:none; }
@@ -158,6 +158,65 @@ const CSS = `
 .dk-result tr.is-mvp td:first-child { color:#ffe08a; }
 .dk-result-actions { margin-top:14px; text-align:center; }
 .dk-result-actions .dk-btn { padding:9px 34px; font-size:18px; letter-spacing:6px; text-indent:6px; }
+
+/* ---------- 步骤 12：菜单层（设置按钮、设置面板、确认框、标题界面） ---------- */
+.dk-menu-layer { position:absolute; inset:0; pointer-events:none; overflow:hidden; user-select:none; z-index:20;
+  font-family:${SERIF_FONT}; color:#d8c690; font-size:14px; line-height:1.35; }
+.dk-gear { position:absolute; right:12px; top:8px; width:38px; height:38px; padding:0; pointer-events:auto;
+  display:flex; align-items:center; justify-content:center; letter-spacing:0; }
+.dk-gear svg { width:24px; height:24px; display:block; transition:transform .35s ease-out; }
+.dk-gear:hover svg { transform:rotate(60deg); }
+.dk-gear.is-hidden { display:none; }
+.dk-menu-veil { position:absolute; inset:0; pointer-events:auto; display:flex; align-items:center; justify-content:center;
+  background:radial-gradient(ellipse at center, rgba(0,0,0,.5), rgba(0,0,0,.85)); animation:dk-fade .18s ease-out; }
+.dk-menu { position:relative; width:480px; padding:16px 24px 18px; }
+.dk-menu .dk-title { font-size:20px; letter-spacing:8px; text-indent:8px; margin-bottom:12px; }
+.dk-menu-paused { margin:-6px 0 10px; text-align:center; font-size:12px; letter-spacing:3px; color:#9c8f6c; }
+.dk-row { display:flex; align-items:center; gap:12px; min-height:34px; margin:4px 0; }
+.dk-row-label { width:84px; flex:none; font-size:15px; letter-spacing:2px; color:#e2cf98; }
+.dk-row-body { flex:1; display:flex; align-items:center; gap:8px; }
+.dk-row-body .dk-btn { font-size:14px; padding:4px 16px; }
+.dk-row-value { width:42px; text-align:right; font-size:13px; color:#c9bb94; font-variant-numeric:tabular-nums; }
+.dk-sep { height:1px; margin:10px 0; background:linear-gradient(90deg, transparent, #7a6338 20%, #c9a85a 50%, #7a6338 80%, transparent); }
+.dk-select { flex:1; height:30px; padding:0 8px; font:inherit; font-size:14px; color:#e2cf98; cursor:pointer;
+  background:linear-gradient(#2a2520, #1a1714); border:1px solid #0b0a09; box-shadow:0 0 0 1px #6b5731; outline:none; }
+.dk-select:focus { box-shadow:0 0 0 1px #c9a85a; }
+.dk-select option { color:#e2cf98; background:#1a1714; }
+.dk-range { flex:1; -webkit-appearance:none; appearance:none; height:18px; margin:0; background:transparent; cursor:pointer; }
+.dk-range::-webkit-slider-runnable-track { height:6px; background:linear-gradient(90deg, #8a6a2c var(--fill,50%), #0b0a0a var(--fill,50%));
+  border:1px solid #4a3d24; box-shadow:inset 0 1px 2px #000; }
+.dk-range::-moz-range-track { height:6px; background:#0b0a0a; border:1px solid #4a3d24; }
+.dk-range::-moz-range-progress { height:6px; background:#8a6a2c; }
+.dk-range::-webkit-slider-thumb { -webkit-appearance:none; width:12px; height:18px; margin-top:-7px; border:1px solid #0b0a09;
+  background:linear-gradient(#e2c170, #8a6a2c); box-shadow:0 0 0 1px #6b5731, 0 0 6px rgba(201,168,90,.45); }
+.dk-range::-moz-range-thumb { width:12px; height:18px; border:1px solid #0b0a09; border-radius:0;
+  background:linear-gradient(#e2c170, #8a6a2c); }
+.dk-range:disabled { opacity:.4; cursor:default; }
+.dk-menu-note { font-size:12px; color:#9c8f6c; }
+.dk-menu-actions { display:flex; gap:10px; margin-top:6px; }
+.dk-menu-actions .dk-btn { flex:1; padding:8px 0; font-size:15px; }
+.dk-menu-close { display:block; width:100%; margin-top:12px; padding:9px 0; font-size:17px; letter-spacing:6px; }
+.dk-confirm-veil { position:absolute; inset:0; pointer-events:auto; display:flex; align-items:center; justify-content:center;
+  background:rgba(0,0,0,.55); z-index:2; animation:dk-fade .15s ease-out; }
+.dk-confirm { position:relative; width:380px; padding:18px 22px 16px; text-align:center; }
+.dk-confirm-text { margin:4px 0 16px; font-size:16px; line-height:1.6; letter-spacing:1px; color:#e8d9a8; }
+.dk-confirm-actions { display:flex; gap:12px; }
+.dk-confirm-actions .dk-btn { flex:1; padding:8px 0; }
+
+.dk-title-screen { position:absolute; inset:0; pointer-events:auto; display:flex; flex-direction:column; align-items:center;
+  justify-content:center; animation:dk-fade .5s ease-out;
+  background:
+    radial-gradient(ellipse 70% 60% at 50% 48%, rgba(0,0,0,.25), rgba(0,0,0,.72) 70%, rgba(0,0,0,.94)),
+    linear-gradient(rgba(6,5,8,.35), rgba(6,5,8,.55)); }
+.dk-title-screen.is-hidden { display:none; }
+.dk-game-name { font-size:76px; letter-spacing:22px; text-indent:22px; color:#e8cf86; line-height:1.1;
+  text-shadow:0 0 24px rgba(201,150,44,.55), 0 0 2px #000, 0 4px 8px #000; }
+.dk-game-sub { margin-top:10px; font-size:16px; letter-spacing:8px; text-indent:8px; color:#a99a72; text-shadow:0 1px 3px #000; }
+.dk-title-rule { width:420px; height:1px; margin:26px 0 30px;
+  background:linear-gradient(90deg, transparent, #7a6338 20%, #c9a85a 50%, #7a6338 80%, transparent); }
+.dk-title-menu { display:flex; flex-direction:column; gap:14px; width:240px; }
+.dk-title-menu .dk-btn { padding:11px 0; font-size:20px; letter-spacing:10px; text-indent:10px; }
+.dk-title-hint { position:absolute; bottom:22px; font-size:12px; letter-spacing:2px; color:#6f6650; }
 `;
 
 /** 把主题样式注入页面（重复调用只注入一次） */

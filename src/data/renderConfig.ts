@@ -128,7 +128,7 @@ export const ENEMY_RIM_CONFIG = {
  * 关闭辉光、降低阴影贴图分辨率、减少粒子和雾片、不按高分屏放大渲染分辨率。
  */
 export const QUALITY_CONFIG = {
-  storageKey: 'dk-battle-quality', // 记住玩家选择用的本地存储键
+  storageKey: 'dk-battle-quality', // 旧版（步骤 8）记住画质用的本地存储键；步骤 12 起统一存到 SETTINGS_CONFIG.storageKey，只用于迁移
   maxPixelRatio: 2, // 高画质下渲染分辨率倍率的上限（高分屏）
   low: {
     bloom: false, // 关闭辉光
