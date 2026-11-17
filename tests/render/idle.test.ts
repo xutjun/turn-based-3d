@@ -171,11 +171,14 @@ describe('待机动画：关节登记', () => {
     const body = named('body', root);
     const tail = named('tail', body);
     const head = named('head', body);
-    named('foreLegL', body);
+    // 步骤 11 起狼的四条腿（foreLegL …）登记为进攻动画的关节；膝、爪仍然没有登记
+    const leg = named('foreLegL', body);
+    named('foreLegLKnee', leg);
     const found = extraJointsOf(root);
     expect(found['tail']).toBe(tail);
     expect(found['head']).toBe(head);
-    expect(Object.keys(found).sort()).toEqual(['head', 'tail']);
+    expect(found['foreLegL']).toBe(leg);
+    expect(Object.keys(found).sort()).toEqual(['foreLegL', 'head', 'tail']);
     expect(EXTRA_JOINT_NAMES).toContain('wingL');
   });
 });

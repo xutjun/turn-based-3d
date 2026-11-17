@@ -8,6 +8,7 @@
 //   speed=2     初始两倍速；skip=1 一开始就跳过动画
 // 快捷键：1 / 2 切换速度，S 跳过动画（和正式战斗相同）。
 
+import { Vector3 } from 'three';
 import { EventBus, type BattleEvent, type BattleEventInput } from '../../core/events';
 import { ENEMY_TEMPLATES } from '../../data/enemies';
 import { ALLY_TEMPLATES } from '../../data/heroes';
@@ -49,9 +50,13 @@ export interface SkillDemoCheck {
   fx(): { objects: number; particles: number; trails: number };
   /** 调试用：任意演出速度（例如 0.25 慢放逐帧检查） */
   timeScale(scale: number): void;
-  /** 调试用：停掉自动渲染，改为用 step(dt) 手动逐帧推进（逐帧检查演出） */
+  /** 调试用：停掉自动渲染，改为用 step(dt) 手动逐帧推进（逐帧检查演出）；render 为 false 时只推进不画 */
   manual(on: boolean): void;
-  step(dt: number): void;
+  step(dt: number, render?: boolean): void;
+  /** 联系表用：某个单位当前的动作阶段和动作名 */
+  phase(id: string): { phase: string; move: string | null };
+  /** 联系表用：以某个单位当前的位置为中心、放大 zoom 倍画一帧，返回 PNG（data URL）。不推进时间 */
+  shot(id: string, zoom: number, offsetX?: number, offsetY?: number): string;
 }
 
 declare global {
@@ -84,6 +89,7 @@ export class SkillDemoApp {
   private readonly units = [...ALLY_TEMPLATES, ...ENEMY_TEMPLATES].map(snapshotOf);
   private readonly demos: SkillDemo[];
   private readonly check: SkillDemoCheck;
+  private readonly tmp = new Vector3();
   private director: BattleDirector | null = null;
   private stopped = false;
   /** 正在统计的帧耗时（秒）；null = 没有在统计 */
@@ -161,7 +167,12 @@ export class SkillDemoApp {
       fx: () => this.scene.fx.activeCount(),
       timeScale: (scale) => scheduler.setTimeScale(scale),
       manual: (on) => this.scene.setManual(on),
-      step: (dt) => this.scene.stepFrame(dt),
+      step: (dt, render = true) => this.scene.stepFrame(dt, render),
+      phase: (id) => {
+        const m = stage.unit(id).motionSnapshot();
+        return { phase: m.phase, move: m.move };
+      },
+      shot: (id, zoom, offsetX = 0, offsetY = 0) => this.shot(id, zoom, offsetX, offsetY),
     };
     window.__skillDemo = this.check;
   }
@@ -186,6 +197,30 @@ export class SkillDemoApp {
     this.uiRoot.remove();
     this.hud.dispose();
     this.scene.dispose();
+  }
+
+  /**
+   * 联系表：把画面裁剪到以某个单位为中心的一块（放大 zoom 倍）并画一帧。
+   * offsetX / offsetY 把取景框沿画面方向挪一点（占取景框宽 / 高的比例），让目标也在框内。
+   */
+  private shot(id: string, zoom: number, offsetX: number, offsetY: number): string {
+    const { stage } = this.scene;
+    this.scene.setCrop(null);
+    const camera = this.scene.battleCamera.camera;
+    camera.updateMatrixWorld(); // 上一帧没有画的话，相机矩阵还是旧的
+    camera.matrixWorldInverse.copy(camera.matrixWorld).invert();
+    const head = stage.unit(id).headPosition(this.tmp);
+    head.y *= 0.5; // 取身体中部
+    const p = this.scene.worldToScreen(head);
+    const size = 1 / Math.max(1, zoom);
+    const w = this.uiRoot.parentElement?.clientWidth || 1;
+    const h = this.uiRoot.parentElement?.clientHeight || 1;
+    const x = Math.min(1 - size, Math.max(0, p.x / w - size / 2 + offsetX * size));
+    const y = Math.min(1 - size, Math.max(0, p.y / h - size / 2 + offsetY * size));
+    this.scene.setCrop({ x, y, w: size, h: size });
+    const png = this.scene.snapshot();
+    this.scene.setCrop(null);
+    return png;
   }
 
   /** 战场复位到满状态，换一个新的导演 */

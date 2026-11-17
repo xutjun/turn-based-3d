@@ -327,12 +327,60 @@ export function buildSkillDemos(units: readonly UnitSnapshot[]): SkillDemo[] {
     s.strike('E8', 0, 128, { magic: true });
     s.end();
   });
-  add('basic_spear', '普攻', '枪 / 剑普攻', '守誓持枪突刺，随后缚魂持剑出手：武器出手瞬间光芒增强', (s) => {
+  add('basic_blade', '普攻', '刀普攻', '烬刃：举刀过肩蓄力 → 右上到左下斜劈 → 顿住 → 余势 → 收刀回位', (s) => {
+    s.cast('A1', 'basic_physical', 'melee', 'meleeStrike', ['E3']);
+    s.strike('E3', 0, 137);
+    s.end();
+  });
+  add('basic_sword', '普攻', '剑普攻', '缚魂：剑拉到身后 → 腰带动手臂横斩 → 顿住 → 余势 → 立剑回位', (s) => {
+    s.cast('A3', 'basic_physical', 'melee', 'meleeStrike', ['E4']);
+    s.strike('E4', 0, 88);
+    s.end();
+  });
+  add('basic_spear', '普攻', '枪普攻', '守誓：侧身沉腰蓄力 → 突刺 → 顿住 → 回撤 → 回位', (s) => {
     s.cast('A4', 'basic_physical', 'melee', 'meleeStrike', ['E4']);
     s.strike('E4', 0, 61);
     s.end();
+  });
+  add('basic_miss', '普攻', '剑普攻·未命中', '对方闪避：照常出手，没有受击和顿帧', (s) => {
     s.cast('A3', 'basic_physical', 'melee', 'meleeStrike', ['E4']);
     s.strike('E4', 0, 0, { miss: true });
+    s.end();
+  });
+
+  // ---------------- 宝宝 ----------------
+  add('wolf_basic', '宝宝', '影狼·撕咬', '压低身体蓄力 → 扑跃 → 张嘴撕咬并甩头 → 后撤 → 跳回', (s) => {
+    s.cast('A6', 'basic_physical', 'melee', 'meleeStrike', ['E2']);
+    s.strike('E2', 0, 96);
+    s.end();
+  });
+  add('golem_basic', '宝宝', '魔偶·砸拳', '双臂举过头顶蓄力 → 沉重踏步靠近 → 砸拳，地面冲击波，目标重受击 → 缓慢退回', (s) => {
+    s.cast('A9', 'basic_physical', 'melee', 'meleeStrike', ['E4']);
+    s.strike('E4', 0, 84);
+    s.end();
+  });
+  add('golem_double', '宝宝', '连击·魔偶', '砸拳之后不返回，拧身横扫再打一次', (s) => {
+    s.cast('A9', 'basic_physical', 'melee', 'meleeStrike', ['E4'], { stepCount: 2, hitCount: 2 });
+    s.strike('E4', 0, 84, {}, 0);
+    s.push({ type: 'PassiveTriggered', unitId: 'A9', passiveId: 'double_strike', name: '连击', targetId: 'E4' });
+    s.strike('E4', 1, 91, {}, 1);
+    s.end();
+  });
+  add('dragon_basic', '宝宝', '骨龙·吐息', '法术普攻：后仰、双翼张开、张口蓄火 → 探头喷出光弹', (s) => {
+    s.cast('A7', 'basic_magic', 'cast', 'castBolt', ['E7'], { element: 'fire' });
+    s.strike('E7', 0, 74, { magic: true });
+    s.end();
+  });
+  add('ghost_spell', '宝宝', '幽灵·三重魂火', '上浮、双臂展开、魂火在身前汇聚 → 双手前推，3 道小火柱同帧爆发', (s) => {
+    const three = ['E8', 'E9', 'E4'];
+    s.cast('A8', 'triple_spell', 'cast', 'groupSpellSmall', three, { element: 'fire' });
+    const dmg = [71, 66, 93];
+    three.forEach((id, i) => s.hit(id, 0, dmg[i]!, { magic: true }));
+    s.end();
+  });
+  add('ghost_basic', '宝宝', '幽灵·魂弹', '法术普攻：上浮蓄力 → 双手前推光弹', (s) => {
+    s.cast('A8', 'basic_magic', 'cast', 'castBolt', ['E8'], { element: 'fire' });
+    s.strike('E8', 0, 58, { magic: true });
     s.end();
   });
 

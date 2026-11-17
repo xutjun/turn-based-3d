@@ -32,12 +32,15 @@ export const BURST_SOUND: Record<BurstKind, SoundName | null> = {
   reviveLight: null, // 复活音由站起来的单位发出
   landing: null,
   shatter: 'dodge', // 封印被抵抗：锁链崩碎
+  dust: null, // 脚下的尘土：无声
+  shockwave: 'blast', // 地面冲击波（魔偶砸拳、旋风斩收尾）
 };
 
 export const AURA_SOUND: Record<AuraKind, SoundName | null> = {
   runeCircle: null,
   charge: null,
   bind: null,
+  gather: null,
 };
 
 /** 封印锁链光束 */

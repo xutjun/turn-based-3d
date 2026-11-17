@@ -29,7 +29,10 @@ export class BattleStage implements Stage {
     for (const t of templates) {
       const model = models.get(t.id);
       if (!model) throw new Error(`单位 ${t.id} 没有模型`);
-      this.views.set(t.id, new UnitView(t, model, scheduler, fx, sound));
+      const view = new UnitView(t, model, scheduler, fx, sound);
+      // 沉重的踏步（魔偶）让镜头轻震
+      view.onShake = (amount) => this.camera.shake(amount);
+      this.views.set(t.id, view);
     }
   }
 
@@ -86,6 +89,11 @@ export class BattleStage implements Stage {
   /** 调试：所有单位当前的待机状态 */
   idleSnapshot(): Record<UnitId, ReturnType<UnitView['idleSnapshot']>> {
     return Object.fromEntries([...this.views].map(([id, view]) => [id, view.idleSnapshot()]));
+  }
+
+  /** 调试：所有单位当前的动作状态（阶段、动作名、是否回到站姿、相对原位和原朝向的偏差） */
+  motionSnapshot(): Record<UnitId, ReturnType<UnitView['motionSnapshot']>> {
+    return Object.fromEntries([...this.views].map(([id, view]) => [id, view.motionSnapshot()]));
   }
 
   /** 当前离开站位的单位（任意时刻最多 1 个，且只能是正在近战冲锋的出手者） */

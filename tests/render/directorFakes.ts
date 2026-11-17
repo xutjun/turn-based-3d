@@ -35,7 +35,11 @@ export function createFakes(scheduler: Scheduler) {
       fxColor: 0xffffff,
       home,
       facing: facingOf(u.side),
+      motion: 'blade',
       anchor: () => ({ x: home.x, y: 1, z: home.z }),
+      brace: (d) => act('brace', d),
+      hold: (d) => act('hold', d),
+      follow: (d) => act('follow', d),
       moveTo: (_p: GroundPoint, d: number) => {
         if (active !== u.id) violations.push(`${u.id} 不是出手者却离开了站位`);
         away.add(u.id);

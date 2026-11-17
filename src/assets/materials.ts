@@ -6,6 +6,7 @@ import {
   FrontSide,
   MeshStandardMaterial,
   Vector2,
+  Vector3,
   type Mesh,
   type Object3D,
   type Texture,
@@ -123,6 +124,11 @@ export interface SwayUniforms {
   uSwayPhase: { value: number };
   uSwayAmp: { value: number }; // 最大位移（米，模型缩放前）
   uSwayHz: { value: number };
+  /**
+   * 次级运动（步骤 11）：身体运动把布料“甩”出去的偏移量（世界坐标，米）。
+   * 带飘动权重的顶点按 权重 × 偏移量 位移；由单位的弹簧质点每帧写入（render/units/UnitMotion.ts），静止时为 0。
+   */
+  uSwayPush: { value: Vector3 };
 }
 
 export const SWAY_UNIFORMS_KEY = 'swayUniforms';
@@ -136,7 +142,8 @@ uniform float uSwayTime;
 uniform float uSwayQuality;
 uniform float uSwayPhase;
 uniform float uSwayAmp;
-uniform float uSwayHz;`;
+uniform float uSwayHz;
+uniform vec3 uSwayPush;`;
 
 const SWAY_VERTEX_BODY = `
 {
@@ -145,6 +152,12 @@ const SWAY_VERTEX_BODY = `
     float swayPh = uSwayTime * uSwayHz * 6.2832 + uSwayPhase + position.y * 5.0 + position.x * 2.5;
     vec3 swayDir = dot(aSwayDir, aSwayDir) > 0.0 ? aSwayDir : objectNormal;
     transformed += swayDir * swayW * (0.65 * sin(swayPh) + 0.35 * sin(swayPh * 1.83 + 1.7));
+  }
+  float pushW = aSway * uSwayQuality;
+  if (pushW != 0.0 && dot(uSwayPush, uSwayPush) > 0.0) {
+    // 世界坐标的偏移量换回模型坐标（旋转 + 等比缩放的逆 = 转置 / 缩放的平方）
+    mat3 swayM = mat3(modelMatrix);
+    transformed += (uSwayPush * swayM) * (pushW / dot(swayM[0], swayM[0]));
   }
 }`;
 
@@ -156,6 +169,7 @@ function patchCharacterShader<T extends MeshStandardMaterial>(material: T, rim?:
     uSwayPhase: { value: 0 },
     uSwayAmp: { value: SWAY_DEFAULT_AMP },
     uSwayHz: { value: SWAY_DEFAULT_HZ },
+    uSwayPush: { value: new Vector3() },
   };
   material.userData[SWAY_UNIFORMS_KEY] = sway;
   const rimUniforms = rim

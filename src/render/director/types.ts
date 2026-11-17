@@ -3,6 +3,7 @@
 
 import type { UnitSnapshot } from '../../core/events';
 import type { Side, StatusType, UnitId, UnitKind } from '../../core/types';
+import type { GaitId, MotionId } from '../../data/attackAnimConfig';
 import type { FloaterStyle } from '../../data/presentationConfig';
 
 /** 空间中的一个点 */
@@ -21,8 +22,16 @@ export interface GroundPoint {
 /** 出手动作的种类 */
 export type AttackStyle = 'melee' | 'bow' | 'bowUp' | 'cast';
 
-/** 单位身上的挂点 */
-export type AnchorName = 'ground' | 'chest' | 'head' | 'weapon';
+/** 单位身上的挂点；muzzle = 施法点（骨龙的嘴前、幽灵的双手之间；人形等同于武器） */
+export type AnchorName = 'ground' | 'chest' | 'head' | 'weapon' | 'muzzle';
+
+/** 移动方式（步态见 data/attackAnimConfig.ts 的 GAITS） */
+export interface MoveOptions {
+  /** 步态；不传则用该单位动作档案里的默认步态 */
+  gait?: GaitId;
+  /** 弧线路径往哪一侧偏：1 / −1（只对带弧线的步态有意义） */
+  side?: number;
+}
 
 /** 舞台上的一个单位。所有动画方法都返回 Promise，在动画播完（或被跳过）时完成 */
 export interface StageUnit {
@@ -36,21 +45,31 @@ export interface StageUnit {
   readonly home: GroundPoint;
   /** 面向对方的单位向量 */
   readonly facing: GroundPoint;
+  /** 动作档案：这个单位用哪一套进攻动作（data/attackAnimConfig.ts 的 MOTION_PROFILES） */
+  readonly motion: MotionId;
 
   anchor(name: AnchorName): Point3;
   /**
    * 离开站位移动到某点（只有近战冲锋会调用）。途中平滑转向跑动方向，
    * 到位时正对 face（要攻击的目标所在的位置）；不传 face 则保持跑动方向。
    */
-  moveTo(point: GroundPoint, duration: number, face?: GroundPoint): Promise<void>;
+  moveTo(point: GroundPoint, duration: number, face?: GroundPoint, options?: MoveOptions): Promise<void>;
   /** 回到站位，途中平滑转回原来的朝向 */
-  returnHome(duration: number): Promise<void>;
+  returnHome(duration: number, options?: MoveOptions): Promise<void>;
+  /** 出发前在原地蓄势（狼压低身体、魔偶举臂）；动作档案里没有蓄势姿态的单位立即完成 */
+  brace(duration: number): Promise<void>;
   /**
-   * 出手动作三段：蓄力 → 出手 → 收招。
-   * variant 只对近战有意义，表示挥砍轨迹：0 = 斜劈，1 = 横斩，2 = 跃起重劈。
+   * 出手动作的各个阶段：预备（蓄力）→ 发力 → 命中顿住 → 余势 → 收招。
+   * variant 是动作编号（data/attackAnimConfig.ts 的 MELEE / BOW / CAST）：
+   * 近战 0 = 普攻（各武器自己的招式），1 = 第二式，2 = 跃起重劈，3 = 旋身横扫，4 = 旋风斩收尾。
    */
   windup(style: AttackStyle, duration: number, variant?: number): Promise<void>;
   release(style: AttackStyle, duration: number, variant?: number): Promise<void>;
+  /** 命中后顿住：姿态停在命中的一瞬 */
+  hold(duration: number): Promise<void>;
+  /** 余势：顺着力道过冲、回弹 */
+  follow(duration: number): Promise<void>;
+  /** 收招：回到自然站姿 */
   recover(duration: number): Promise<void>;
   /** 受击：闪白 + 后仰 */
   hit(duration: number, heavy: boolean): Promise<void>;
@@ -85,7 +104,7 @@ export interface StageCamera {
 /** 飞行物：普通箭矢 / 法术光弹 / 火球 / 射向天空的光箭 / 从天而降的光箭 */
 export type ProjectileKind = 'arrow' | 'bolt' | 'fireball' | 'skyArrow' | 'rainArrow';
 /**
- * 爆发类光效：命中火花 / 重击 / 落雷 / 火柱 / 治疗光柱 / 复活光芒 / 箭雨落点 / 锁链崩碎 / 爆炸
+ * 爆发类光效：命中火花 / 重击 / 落雷 / 火柱 / 治疗光柱 / 复活光芒 / 箭雨落点 / 锁链崩碎 / 爆炸 / 尘土 / 冲击波
  */
 export type BurstKind =
   | 'impact'
@@ -96,15 +115,17 @@ export type BurstKind =
   | 'reviveLight'
   | 'landing'
   | 'shatter'
-  | 'explosion';
-/** 持续一段时间的范围光效：地面符文阵 / 施法者脚下的蓄力光环 / 缠绕目标的锁链 */
-export type AuraKind = 'runeCircle' | 'charge' | 'bind';
+  | 'explosion'
+  | 'dust' // 脚下的尘土（scale = 尘土量）
+  | 'shockwave'; // 地面冲击波环（scale = 半径，米）
+/** 持续一段时间的范围光效：地面符文阵 / 施法者脚下的蓄力光环 / 缠绕目标的锁链 / 在空中一点汇聚的光团（宝宝施法） */
+export type AuraKind = 'runeCircle' | 'charge' | 'bind' | 'gather';
 
 export interface Stage {
   unit(id: UnitId): StageUnit;
   /** 一个光效从 from 飞到 to */
   projectile(kind: ProjectileKind, from: Point3, to: Point3, color: number, duration: number): Promise<void>;
-  /** 在某点爆开 / 落下 / 升起的光效；scale 为规模倍率（目前只有火柱支持，默认 1） */
+  /** 在某点爆开 / 落下 / 升起的光效；scale 为规模倍率（火柱、尘土、冲击波支持，默认 1） */
   burst(kind: BurstKind, at: Point3, color: number, duration: number, scale?: number): Promise<void>;
   /** 斩击光弧；variant 决定光弧的角度（与挥砍轨迹对应），scale 为大小倍率 */
   slash(at: Point3, variant: number, color: number, duration: number, scale: number): Promise<void>;

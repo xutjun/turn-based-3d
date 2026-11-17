@@ -117,7 +117,23 @@ export class IdleAnimator {
       g.mat.emissiveIntensity = g.base * scale * o.glow;
     }
     const cloth = IDLE_RUNTIME.cloth ? this.style.cloth * weight : 0;
+    this.clothBase = cloth;
     for (const s of this.sways) s.uSwayAmp.value = cloth;
+  }
+
+  private clothBase = 0;
+
+  /**
+   * 次级运动（步骤 11）：把身体运动带起的“甩动”交给布料着色器。
+   * @param x 弹簧质点相对身体的偏移量（世界坐标，米）：带飘动权重的顶点按它位移
+   * @param flutter 飘动幅度的增量（米）：动得越快布料抖得越厉害；在 update() 之后调用
+   */
+  setSecondary(x: number, y: number, z: number, flutter: number): void {
+    const amp = this.clothBase + (IDLE_RUNTIME.cloth ? flutter : 0);
+    for (const s of this.sways) {
+      s.uSwayPush.value.set(x, y, z);
+      s.uSwayAmp.value = amp;
+    }
   }
 
   /** 把待机偏移加到人形骨架的关节上（在调用方摆完出手 / 受击姿态之后调用）。非人形模型是空操作 */

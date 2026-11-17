@@ -4,8 +4,11 @@
 //
 // 两类：
 //   - 人形骨架的关节（rig.ts）：出手 / 受击 / 待机都会用到；
-//   - 按名字找的“额外关节”（步骤 10 · C 组）：宝宝的头、尾、翅膀、手臂等，以及 Boss 的双翼，只有待机动画会转它们。
+//   - 按名字找的“额外关节”（步骤 10 · C 组）：宝宝的头、尾、翅膀、手臂等，以及 Boss 的双翼；
+//     待机动画先摆好它们，进攻动画（步骤 11，data/attackAnimConfig.ts 的动作姿态）再把偏移加上去。
 //     名字是模型里 `joint:<名字>` 的后半段（characters/rig.ts 与 creatures/common.ts 的约定）。
+//   - 步骤 11 为进攻动画新增：狼的四条腿（foreLegL/R、hindLegL/R，整条腿绕肩 / 髋摆动，用于下伏、蹬地、扑跃），
+//     魔偶的双腿（legL/R，踏步；骨龙的后腿与之同名，一并登记）。人形的腿和手指仍然没有登记（不动）。
 
 import type { Object3D } from 'three';
 import type { HumanoidRig } from '../../assets/models/characters/rig';
@@ -26,11 +29,11 @@ export function animatedJointsOf(rig: HumanoidRig): Record<string, Object3D> {
 export const JOINT_PREFIX = 'joint:';
 
 /**
- * 待机动画会转动的额外关节（按名字）。
- *   狼：neck、head、jaw、tail
- *   骨龙：head、jaw、wingL / wingR、foreL / foreR（小前肢的前臂）
+ * 待机 / 进攻动画会转动的额外关节（按名字）。
+ *   狼：neck、head、jaw、tail，foreLegL / foreLegR、hindLegL / hindLegR（步骤 11）
+ *   骨龙：head、jaw、wingL / wingR、foreL / foreR（小前肢的前臂），legL / legR（步骤 11，与魔偶同名）
  *   幽灵：head、shoulderL / shoulderR
- *   魔偶：torso、head、shoulderL / shoulderR
+ *   魔偶：torso、head、shoulderL / shoulderR，legL / legR（步骤 11）
  *   Boss（人形骨架之外）：wingL / wingR
  */
 export const EXTRA_JOINT_NAMES = [
@@ -45,6 +48,13 @@ export const EXTRA_JOINT_NAMES = [
   'shoulderR',
   'foreL',
   'foreR',
+  // 步骤 11：进攻动画用
+  'foreLegL',
+  'foreLegR',
+  'hindLegL',
+  'hindLegR',
+  'legL',
+  'legR',
 ] as const;
 
 /**

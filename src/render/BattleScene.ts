@@ -25,6 +25,8 @@ import { applySilhouette, silhouetteRequested } from './debug/silhouette';
 import { SWAY_GLOBAL } from '../assets/materials';
 import { IDLE_CONFIG } from '../data/idleConfig';
 import { IDLE_RUNTIME } from './units/IdleAnimator';
+import { ATTACK_RUNTIME } from './units/UnitView';
+import { ATTACK_ANIM } from '../data/attackAnimConfig';
 import { BattleStage } from './units/BattleStage';
 
 const MAX_FRAME_DT = 0.1; // 切回标签页时限制单帧时间跨度
@@ -60,6 +62,8 @@ declare global {
     /** 调试：所有单位当前的待机状态（权重、呼吸相位、周期倍率 …） */
     __idle?: () => Record<string, { weight: number; breath: number; headYaw: number; roll: number; rate: number; style: string }>;
     __capture?: (time: number) => string;
+    /** 调试：所有单位当前的动作状态（阶段、动作名、是否回到站姿、相对原位和原朝向的偏差） */
+    __motion?: () => Record<string, { phase: string; move: string | null; atRest: boolean; yawOffset: number; x: number; z: number }>;
   }
 }
 
@@ -159,6 +163,7 @@ export class BattleScene {
     }
     window.__perf = () => this.perfSnapshot();
     window.__idle = () => this.stage.idleSnapshot();
+    window.__motion = () => this.stage.motionSnapshot();
     window.__capture = (time) => this.captureAt(time);
 
     this.resizeObserver = new ResizeObserver(() => this.resize());
@@ -181,9 +186,25 @@ export class BattleScene {
     this.renderer.setAnimationLoop(on ? null : (now) => this.frame(now));
   }
 
-  /** 调试用：手动推进一帧，dt 为这一帧的时长（秒） */
-  stepFrame(dt: number): void {
-    this.frame(this.lastMs + dt * 1000);
+  /** 调试用：手动推进一帧，dt 为这一帧的时长（秒）；render 为 false 时只推进动画、不画（快进用） */
+  stepFrame(dt: number, render = true): void {
+    this.frame(this.lastMs + dt * 1000, render);
+  }
+
+  /**
+   * 调试用（联系表）：只把画面中的一块矩形放大到整个画布来画（坐标为占整幅画面的比例，0~1）；传 null 恢复。
+   * 不改变相机位置，只裁剪投影，所以演出镜头的推近、跟随照常叠加。
+   */
+  setCrop(rect: { x: number; y: number; w: number; h: number } | null): void {
+    const camera = this.battleCamera.camera;
+    if (!rect) camera.clearViewOffset();
+    else camera.setViewOffset(1, 1, rect.x, rect.y, rect.w, rect.h);
+  }
+
+  /** 调试用（联系表）：不推进时间，按当前状态重画一帧并返回 PNG（data URL） */
+  snapshot(): string {
+    this.frame(this.lastMs);
+    return this.renderer.domElement.toDataURL('image/png');
   }
 
   /**
@@ -210,7 +231,7 @@ export class BattleScene {
     this.renderer.domElement.remove();
   }
 
-  private frame(nowMs: number): void {
+  private frame(nowMs: number, render = true): void {
     this.lastFrameDt = (nowMs - this.lastMs) / 1000;
     const dt = Math.min(MAX_FRAME_DT, this.lastFrameDt);
     this.lastMs = nowMs;
@@ -226,6 +247,7 @@ export class BattleScene {
     this.rings.update(this.time);
     for (const fn of this.frameListeners) fn();
     this.lastUpdateMs = performance.now() - updateStart;
+    if (!render) return;
     this.renderer.info.reset();
     this.postFx.render(this.time);
     this.lastDrawCalls = this.renderer.info.render.calls;
@@ -246,6 +268,8 @@ export class BattleScene {
     IDLE_RUNTIME.cloth = !(on && !IDLE_CONFIG.lowQuality.cloth);
     IDLE_RUNTIME.events = !(on && !IDLE_CONFIG.lowQuality.events);
     IDLE_RUNTIME.tremble = !(on && !IDLE_CONFIG.lowQuality.tremble);
+    // 进攻动画的次级运动（披风、链条、尾巴的惯性）在低画质下关闭；主要动作不受影响
+    ATTACK_RUNTIME.secondary = !(on && !ATTACK_ANIM.lowQuality.secondary);
     this.fx.particleScale = on ? low.particleScale : 1;
     this.scene.traverse((o) => {
       const light = o as DirectionalLight;

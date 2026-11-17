@@ -424,7 +424,76 @@ export class FxSystem {
         return this.shatter(at, color, duration);
       case 'explosion':
         return this.explosion(at, color, duration);
+      case 'dust':
+        return this.dust(at, color, scale);
+      case 'shockwave':
+        return this.shockwave(at, color, duration, scale);
     }
+  }
+
+  /**
+   * 脚下的尘土（步骤 11）：贴着地面散开、缓缓上浮的烟团，外加几点火星。只用粒子，不占对象池。
+   * @param amount 尘土量（1 ≈ 一次蹬地）
+   */
+  private dust(at: Point3, color: number, amount: number): Promise<void> {
+    this.c.setHex(color);
+    const n = this.burstCount(7 * amount);
+    for (let i = 0; i < n; i++) {
+      const a = Math.random() * TAU;
+      const sp = rnd(0.5, 1.8) * Math.sqrt(amount);
+      this.spawn(
+        at.x + Math.cos(a) * 0.12, rnd(0.04, 0.16), at.z + Math.sin(a) * 0.12,
+        Math.cos(a) * sp, rnd(0.25, 0.9), Math.sin(a) * sp,
+        rnd(0.4, 0.75), rnd(0.3, 0.55) * Math.sqrt(amount), this.c, 0.3, PARTICLE_CELL.smoke, -0.15, 2.6, 1.3,
+      );
+    }
+    const sparks = this.burstCount(2 * amount);
+    for (let i = 0; i < sparks; i++) {
+      const a = Math.random() * TAU;
+      const sp = rnd(1, 2.6);
+      this.spawn(at.x, 0.06, at.z, Math.cos(a) * sp, rnd(1, 2.4), Math.sin(a) * sp, rnd(0.2, 0.4), rnd(0.05, 0.09), this.c, 1.6, PARTICLE_CELL.ember, 9, 1.2, -0.5);
+    }
+    return Promise.resolve();
+  }
+
+  /**
+   * 地面冲击波（步骤 11）：两道由内向外扩散的光环、一圈贴地炸开的尘土和碎火星、一下闪光。
+   * @param radius 冲击波最终的半径（米）
+   */
+  private shockwave(at: Point3, color: number, duration: number, radius: number): Promise<void> {
+    const ring = this.decal(ringTexture(), color, 2.4, at.x, at.z);
+    const inner = this.decal(ringTexture(), 0xffffff, 1.1, at.x, at.z);
+    const glow = this.sprite(glowTexture(), color, 2.2);
+    glow.position.set(at.x, 0.3, at.z);
+    this.flashLight(at.x, 0.6, at.z, color, 10);
+    this.c.setHex(color);
+    const n = this.burstCount(26 * radius);
+    for (let i = 0; i < n; i++) {
+      const a = (i / Math.max(1, n)) * TAU + rnd(-0.1, 0.1);
+      const sp = rnd(0.55, 1) * radius * 3.2;
+      const smoke = i % 3 !== 0;
+      this.spawn(
+        at.x + Math.cos(a) * 0.2, rnd(0.05, 0.2), at.z + Math.sin(a) * 0.2,
+        Math.cos(a) * sp, smoke ? rnd(0.2, 0.9) : rnd(1.2, 3.2), Math.sin(a) * sp,
+        smoke ? rnd(0.45, 0.8) : rnd(0.25, 0.5), smoke ? rnd(0.35, 0.6) : rnd(0.07, 0.14), this.c,
+        smoke ? 0.32 : 2, smoke ? PARTICLE_CELL.smoke : PARTICLE_CELL.ember, smoke ? -0.1 : 9, smoke ? 3.2 : 1.6, smoke ? 1.2 : -0.5,
+      );
+    }
+    return this.scheduler
+      .tween(duration, (t) => {
+        const k = EASE.outCubic(t);
+        ring.scale.setScalar(radius * (0.15 + 0.85 * k));
+        ring.material.opacity = (1 - t) * (1 - t);
+        inner.scale.setScalar(radius * (0.08 + 0.6 * EASE.out(t)));
+        inner.material.opacity = Math.max(0, 1 - t * 1.8);
+        glow.scale.setScalar(0.5 + radius * 0.9 * k);
+        glow.material.opacity = Math.max(0, 1 - t * 2.2);
+      })
+      .then(() => {
+        this.decals.release(ring);
+        this.decals.release(inner);
+        this.sprites.release(glow);
+      });
   }
 
   /** 命中闪光 + 火花；heavy = 重击（更大、带冲击环和闪光） */
@@ -827,6 +896,7 @@ export class FxSystem {
   /** 持续一段时间的范围光效：地面符文阵 / 蓄力光环 / 缠绕的锁链 */
   aura(kind: AuraKind, at: Point3, color: number, duration: number, radius: number): Promise<void> {
     if (kind === 'bind') return this.bind(at, color, duration, radius);
+    if (kind === 'gather') return this.gather(at, color, duration, radius);
     const big = kind === 'runeCircle';
     const rune = this.decal(big ? runeCircleTexture(6, 5) : runeCircleTexture(8, 11), color, big ? 1.5 : 1.7, at.x, at.z);
     const halo = this.decal(ringTexture(), color, 0.8, at.x, at.z);
@@ -865,6 +935,49 @@ export class FxSystem {
       .then(() => {
         this.decals.release(rune);
         this.decals.release(halo);
+      });
+  }
+
+  /**
+   * 汇聚的光团（步骤 11）：宝宝施法蓄力时，光点从四周向空中一点汇聚，光团越聚越大，出手后消散。
+   * @param size 蓄满时光团的直径（米）
+   */
+  private gather(at: Point3, color: number, duration: number, size: number): Promise<void> {
+    const orb = this.sprite(glowTexture(), color, 2.4);
+    const core = this.sprite(glowTexture(), 0xffffff, 1.2);
+    orb.position.set(at.x, at.y, at.z);
+    core.position.set(at.x, at.y, at.z);
+    return this.scheduler
+      .tween(duration, (t) => {
+        const grow = EASE.out(Math.min(1, t / 0.75));
+        const fade = t < 0.8 ? Math.min(1, t / 0.1) : (1 - t) / 0.2;
+        const pulse = 1 + 0.12 * Math.sin(t * duration * 22);
+        orb.scale.setScalar(size * (0.25 + 0.95 * grow) * pulse * (t < 0.8 ? 1 : 1 + (t - 0.8) * 4));
+        orb.material.opacity = fade;
+        core.scale.setScalar(size * (0.1 + 0.4 * grow) * pulse);
+        core.material.opacity = fade * 0.9;
+        if (t < 0.75) {
+          this.c.setHex(color);
+          const n = this.emitCount(60);
+          for (let i = 0; i < n; i++) {
+            // 从一个球面上出发，飞向中心
+            const a = Math.random() * TAU;
+            const up = rnd(-0.6, 0.9);
+            const h = Math.sqrt(Math.max(0, 1 - up * up));
+            const d = size * rnd(1.1, 1.9);
+            const life = rnd(0.22, 0.38);
+            const sp = d / life;
+            this.spawn(
+              at.x + Math.cos(a) * h * d, at.y + up * d, at.z + Math.sin(a) * h * d,
+              -Math.cos(a) * h * sp, -up * sp, -Math.sin(a) * h * sp,
+              life, rnd(0.05, 0.11), this.c, 1.8, Math.random() < 0.25 ? PARTICLE_CELL.spark : PARTICLE_CELL.glow, 0, 0.4, -0.5,
+            );
+          }
+        }
+      })
+      .then(() => {
+        this.sprites.release(orb);
+        this.sprites.release(core);
       });
   }
 

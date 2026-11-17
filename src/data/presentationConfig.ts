@@ -3,21 +3,15 @@
 
 import type { Element, Side, WeaponId } from '../core/types';
 
+// 步骤 11 起，冲刺、预备、发力、命中顿住、余势、收招这些“出手动作”的时长在 data/attackAnimConfig.ts（每个动作一组）；
+// 这里只剩提示、飞行物、光效、镜头的时长。
 export const TIMING = {
   turnBanner: 0.7, // 回合开始提示停留
   defendNotice: 0.35, // 防御提示
   actionGap: 0.12, // 两次出手之间的间隔
   notice: 0.4, // “技能改为普攻”“没有目标”等提示
-  run: 0.38, // 近战冲到目标面前
-  runBack: 0.34, // 跑回原位
-  hopNext: 0.22, // 顺序攻击时冲向下一个目标
-  meleeWindup: 0.2, // 近战举刀
-  meleeStrike: 0.1, // 近战挥下
-  bowDraw: 0.34, // 拉弓
-  bowRelease: 0.08, // 松弦
   castWindup: 0.42, // 施法蓄力
   castRelease: 0.12, // 施法出手
-  recover: 0.22, // 收招
   arrowFlight: 0.24, // 箭矢飞行
   boltFlight: 0.3, // 法术光弹飞行
   pillar: 0.3, // 光柱落下/升起
@@ -32,14 +26,6 @@ export const TIMING = {
 
   // ---- 技能演出 ----
   slash: 0.22, // 斩击光弧停留
-  comboWindup: 0.15, // 连斩前两击的举刀
-  comboRecover: 0.1, // 连斩两击之间的收招
-  heavyWindup: 0.3, // 连斩第 3 击 / 旋风斩最后一击的蓄力
-  dash: 0.15, // 旋风斩冲向下一个目标
-  dashWindup: 0.07, // 旋风斩每一击的举刀
-  dashRecover: 0.05, // 旋风斩两击之间的收招
-  tripleDraw: 0.16, // 三连射第 2、3 箭的拉弓
-  rainDraw: 0.62, // 箭雨：拉满弓
   skyShot: 0.34, // 箭雨：光箭射向天空
   rainPause: 0.22, // 箭雨：升空后到第一支箭落下的间隔
   rainInterval: 0.13, // 箭雨：相邻两支箭落下的间隔
@@ -104,6 +90,8 @@ export const FX_CONFIG = {
   pillarHeight: 5.5,
   trailLife: 0.2, // 武器拖尾停留时间
   trailSamples: 22,
+  trailWidth: 0.5, // 拖尾光带的宽度：占武器发光段长度的比例（靠尖端的一段）
+  trailBrightness: 0.5, // 武器拖尾的亮度（步骤 11 起普攻也有拖尾，调低以免大弧线糊成一片）
   /** 没有武器的单位（宝宝、敌人）出手时的光效颜色 */
   sideColor: { ally: 0xcfe4ff, enemy: 0xff5a3a } satisfies Record<Side, number>,
   /** 武器拖尾：握持点到拖尾两端的距离（米，沿武器 +y） */
@@ -119,7 +107,6 @@ export const FX_CONFIG = {
 export const STAGING = {
   meleeGap: 0.35, // 近战时双方身体之间留的空隙
   unitRadius: { hero: 0.45, pet: 0.5, enemy: 0.45, boss: 1.25 }, // 冲锋时用来计算停步位置
-  runHopHeight: 0.12, // 冲锋时的小跳高度
   // 冲锋时的转身：前 lead 比例的时间转向跑动方向，最后 settle 比例的时间转为正对目标
   chargeTurn: { lead: 0.4, settle: 0.35 },
   speeds: [1, 2] as readonly number[], // 可选战斗速度

@@ -11,6 +11,18 @@ export const EASE = {
   inOut: (t: number): number => (t < 0.5 ? 2 * t * t : 1 - 2 * (1 - t) * (1 - t)),
   /** 0 → 1 → 0，用于小跳、闪白这类去了又回来的变化 */
   arc: (t: number): number => Math.sin(Math.PI * t),
+  // ---- 步骤 11：进攻动作用的曲线 ----
+  /** 起步很慢、越来越快：发力（挥下、刺出） */
+  inCubic: (t: number): number => t * t * t,
+  /** 一开始很快、到位前减速：蓄力到位、余势 */
+  outCubic: (t: number): number => 1 - (1 - t) ** 3,
+  /** 先往反方向缩一下再出去 */
+  inBack: (t: number): number => 2.70158 * t * t * t - 1.70158 * t * t,
+  /** 冲过头一点再回来（回弹） */
+  outBack: (t: number): number => 1 + 2.70158 * (t - 1) ** 3 + 1.70158 * (t - 1) ** 2,
+  /** 冲过头后来回弹几下才停住（弓身回弹） */
+  outElastic: (t: number): number =>
+    t <= 0 ? 0 : t >= 1 ? 1 : 2 ** (-10 * t) * Math.sin(((t * 10 - 0.75) * (2 * Math.PI)) / 3) + 1,
 } satisfies Record<string, Ease>;
 
 interface Task {
