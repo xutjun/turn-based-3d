@@ -57,6 +57,8 @@ export interface SkillDemoCheck {
   phase(id: string): { phase: string; move: string | null };
   /** 联系表用：以某个单位当前的位置为中心、放大 zoom 倍画一帧，返回 PNG（data URL）。不推进时间 */
   shot(id: string, zoom: number, offsetX?: number, offsetY?: number): string;
+  /** 联系表用：锁定机位（演出镜头的推近 / 平移不再移动镜头），出手者始终在画面里 */
+  lockCamera(on: boolean): void;
 }
 
 declare global {
@@ -173,6 +175,10 @@ export class SkillDemoApp {
         return { phase: m.phase, move: m.move };
       },
       shot: (id, zoom, offsetX = 0, offsetY = 0) => this.shot(id, zoom, offsetX, offsetY),
+      lockCamera: (on) => {
+        this.scene.stage.camera.locked = on;
+        if (on) this.scene.stage.camera.resetNow();
+      },
     };
     window.__skillDemo = this.check;
   }
@@ -209,8 +215,10 @@ export class SkillDemoApp {
     const camera = this.scene.battleCamera.camera;
     camera.updateMatrixWorld(); // 上一帧没有画的话，相机矩阵还是旧的
     camera.matrixWorldInverse.copy(camera.matrixWorld).invert();
-    const head = stage.unit(id).headPosition(this.tmp);
-    head.y *= 0.5; // 取身体中部
+    const unit = stage.unit(id);
+    const head = unit.headPosition(this.tmp);
+    // 取站在地面时的身体中部（不跟着跳跃升高），这样联系表里看得出跳了多高
+    head.y = (head.y - unit.airHeight) * 0.5;
     const p = this.scene.worldToScreen(head);
     const size = 1 / Math.max(1, zoom);
     const w = this.uiRoot.parentElement?.clientWidth || 1;

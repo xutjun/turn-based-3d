@@ -73,8 +73,12 @@ export const MELEE = {
 
 /** 弓的动作编号 */
 export const BOW = { shot: 0, quick: 1 } as const;
-/** 施法动作编号 */
-export const CAST = { point: 0, invoke: 1, bless: 2 } as const;
+/**
+ * 施法动作编号（步骤 11b 按法术区分挥杖轨迹）：point = 法术普攻（挑指），invoke = 群体召唤（通用），bless = 治疗 / 复活，
+ * seal = 封印（画圈前指），fire / thunder = 单体火 / 雷，groupFire / groupThunder = 群体火 / 雷。
+ * 没有这么多动作的档案（宝宝）回退到第 0 个。
+ */
+export const CAST = { point: 0, invoke: 1, bless: 2, seal: 3, fire: 4, thunder: 5, groupFire: 6, groupThunder: 7 } as const;
 
 // ---------------------------------------------------------------------------
 // 人形：刀 / 剑 / 枪的普攻
@@ -486,233 +490,324 @@ const SPIN_FINISH: MoveDef = {
 };
 
 // ---------------------------------------------------------------------------
-// 人形：弓
+// 人形：弓（步骤 11b 重做）
 // ---------------------------------------------------------------------------
+//
+// 拉弓的节奏：侧身站定 → 举弓、右手搭上弓弦 → 右手把弦拉到脸侧（弓弦被拉成 V 形，弓臂弯曲）
+// → 瞄准停顿一拍（ATTACK_ANIM.bowFullDrawPause）→ 放箭：弦向前弹回、弓身后坐上扬 → 收弓。
+// 双臂的角度由 scripts/solveBowPose.ts 在真实骨架上求出：左手持弓伸向瞄准方向，右手正好落在箭的延长线上。
+// 弓的专用通道（render/units/UnitView.ts 的 applyBowPose）：
+//   bow.aim  0~1：把弓摆正（竖直、弓背朝瞄准方向）；weapon.aimPitch 是上扬角
+//   bow.draw −1~1：弦的中点跟着右手（1 = 搭在手上）；负值 = 松弦后向前弹出
 
-/** 平射：调整站姿 → 拉弓、身体后仰 → 松弦，弓身回弹、身体后坐 */
+/** 侧身：右转约 60°，头转回来看着目标 */
+const BOW_SIDE: BodyPose = { 'root.turn': -1.0, 'spine.y': -0.15, 'head.y': 0.95, 'head.x': 0.05, 'root.side': 0.04 };
+/** 平射 · 举弓搭弦（右手离握把约 0.26 米） */
+const BOW_NOCK: BodyPose = {
+  ...BOW_SIDE,
+  'shoulderL.x': -1.0, 'shoulderL.y': -0.41, 'shoulderL.z': 0.27, 'elbowL.x': -0.6,
+  'shoulderR.x': -1.33, 'shoulderR.y': 1.17, 'shoulderR.z': 0.4, 'elbowR.x': -0.35,
+  'bow.aim': 1, 'bow.draw': 1, 'weapon.aimPitch': 0.02,
+};
+/** 平射 · 拉满：右手把弦拉到脸侧（离握把约 0.63 米） */
+const BOW_FULL: BodyPose = {
+  ...BOW_SIDE, 'spine.x': -0.08,
+  'shoulderL.x': -0.44, 'shoulderL.y': -0.23, 'shoulderL.z': 1.38, 'elbowL.x': -0.6,
+  'shoulderR.x': -1.16, 'shoulderR.y': 1.6, 'shoulderR.z': -1.38, 'elbowR.x': -1.35,
+  'bow.aim': 1, 'bow.draw': 1, 'weapon.aimPitch': 0.02,
+};
+/** 松弦的一瞬：右手向后弹开，弦向前弹过原位 */
+const BOW_LOOSE: BodyPose = {
+  ...BOW_FULL, 'shoulderR.y': 1.75, 'shoulderR.z': -1.5, 'elbowR.x': -1.1, 'bow.draw': -1,
+};
+
+/** 平射：侧身站定 → 举弓搭弦 → 拉到脸侧 → 松弦 → 弦回弹、弓身后坐 → 收弓 */
 const BOW_SHOT: MoveDef = {
   label: '弓·平射',
-  timing: { anticipation: 0.42, strike: 0.06, hold: 0.05, follow: 0.2, beat: 0.1, recover: 0.28 },
+  timing: { anticipation: 0.72, strike: 0.05, hold: 0.05, follow: 0.26, beat: 0.12, recover: 0.36 },
   ready: [
     {
-      // 站姿调整：侧身、沉重心，弓先抬到一半
-      pose: {
-        'shoulderL.x': -0.7, 'elbowL.x': 0.05, 'shoulderR.x': -0.5, 'elbowR.x': -0.5, 'spine.y': 0.25, 'head.y': -0.15,
-        'root.turn': -0.22, 'root.lift': -0.05, 'root.side': 0.04,
-      },
-      span: 0.32,
+      // 侧身站定：转身、沉重心，弓先提到身前（还没摆正）
+      pose: { ...BOW_SIDE, 'shoulderL.x': -0.55, 'shoulderL.z': 0.25, 'elbowL.x': -0.3, 'shoulderR.x': -0.35, 'elbowR.x': -0.4, 'root.lift': -0.03, 'bow.aim': 0.4 },
+      span: 0.25,
       ease: 'inOut',
     },
-    {
-      // 拉满：左手持弓前举，右手后拉，上身后仰
-      pose: {
-        'shoulderL.x': -1.25, 'elbowL.x': 0.15, 'shoulderR.x': -1.05, 'elbowR.x': -1.05, 'spine.y': 0.48, 'spine.x': -0.14, 'chest.x': -0.08, 'head.y': -0.3,
-        'root.turn': -0.3, 'root.lift': -0.03, 'root.pitch': -0.07, 'root.forward': -0.07, 'root.side': 0.04,
-      },
-      span: 0.68,
-      ease: 'outCubic',
-    },
+    { pose: BOW_NOCK, span: 0.3, ease: 'outCubic' }, // 举弓、右手搭弦
+    { pose: BOW_FULL, span: 0.45, ease: 'inOut' }, // 拉弦到脸侧
   ],
-  strike: [
-    {
-      // 松弦：右手弹开
-      pose: {
-        'shoulderL.x': -1.25, 'elbowL.x': 0.15, 'shoulderR.x': -0.85, 'elbowR.x': -0.3, 'spine.y': 0.4, 'spine.x': -0.08, 'head.y': -0.3,
-        'root.turn': -0.3, 'root.pitch': -0.02, 'root.forward': 0.02, 'root.side': 0.04, 'weapon.x': -0.12,
-      },
-      ease: 'out',
-    },
-  ],
+  strike: [{ pose: BOW_LOOSE, ease: 'out' }],
   follow: [
     {
-      // 弓身回弹：弓向前一栽再弹回，身体后坐
-      pose: {
-        'shoulderL.x': -1.12, 'elbowL.x': 0.1, 'shoulderR.x': -0.75, 'elbowR.x': -0.1, 'spine.y': 0.34, 'spine.x': -0.16, 'head.y': -0.28,
-        'root.turn': -0.28, 'root.pitch': -0.1, 'root.forward': -0.1, 'root.side': 0.04, 'weapon.x': 0.3,
-      },
-      span: 0.4,
-      ease: 'outCubic',
-    },
-    {
-      pose: {
-        'shoulderL.x': -1.2, 'elbowL.x': 0.12, 'shoulderR.x': -0.6, 'elbowR.x': -0.2, 'spine.y': 0.3, 'spine.x': -0.06, 'head.y': -0.25,
-        'root.turn': -0.26, 'root.pitch': -0.03, 'root.forward': -0.05, 'root.side': 0.04, 'weapon.x': 0,
-      },
-      span: 0.6,
-      ease: 'outElastic',
-    },
-  ],
-};
-
-/** 速射：三连射的第 2、3 箭，只有很短的再拉弓 */
-const BOW_QUICK: MoveDef = {
-  label: '弓·速射',
-  timing: { anticipation: 0.17, strike: 0.05, hold: 0.04, follow: 0.12, beat: 0.1, recover: 0.28 },
-  ready: [BOW_SHOT.ready[1]!],
-  strike: BOW_SHOT.strike,
-  follow: BOW_SHOT.follow,
-};
-
-/** 仰射（箭雨）：站姿调整 → 举弓向天、拉满 → 蓄满时身体深深后仰 → 射出，弓身回弹 */
-const BOW_SKY: MoveDef = {
-  label: '弓·仰射',
-  timing: { anticipation: 0.72, strike: 0.07, hold: 0.07, follow: 0.26, beat: 0.12, recover: 0.34 },
-  ready: [
-    {
-      pose: {
-        'shoulderL.x': -0.6, 'elbowL.x': 0.05, 'shoulderR.x': -0.4, 'elbowR.x': -0.5, 'spine.y': 0.25, 'head.y': -0.15,
-        'root.turn': -0.24, 'root.lift': -0.09, 'root.pitch': 0.06, 'root.side': 0.05,
-      },
-      span: 0.24,
-      ease: 'inOut',
-    },
-    {
-      pose: {
-        'shoulderL.x': -1.25, 'elbowL.x': 0.15, 'shoulderR.x': -1.0, 'elbowR.x': -1.0, 'spine.y': 0.45, 'spine.x': -0.12, 'head.x': -0.2, 'head.y': -0.25,
-        'root.turn': -0.3, 'root.lift': -0.03, 'root.pitch': -0.5, 'root.forward': -0.05, 'root.side': 0.05,
-      },
-      span: 0.46,
-      ease: 'outCubic',
-    },
-    {
-      // 蓄满：再后仰一点
-      pose: {
-        'shoulderL.x': -1.3, 'elbowL.x': 0.15, 'shoulderR.x': -1.1, 'elbowR.x': -1.15, 'spine.y': 0.5, 'spine.x': -0.2, 'chest.x': -0.1, 'head.x': -0.28, 'head.y': -0.25,
-        'root.turn': -0.32, 'root.lift': -0.05, 'root.pitch': -0.66, 'root.forward': -0.09, 'root.side': 0.05,
-      },
-      span: 0.3,
-      ease: 'inOut',
-    },
-  ],
-  strike: [
-    {
-      pose: {
-        'shoulderL.x': -1.3, 'elbowL.x': 0.15, 'shoulderR.x': -0.85, 'elbowR.x': -0.3, 'spine.y': 0.42, 'spine.x': -0.14, 'head.x': -0.28, 'head.y': -0.25,
-        'root.turn': -0.32, 'root.pitch': -0.6, 'root.forward': -0.04, 'root.side': 0.05, 'weapon.x': -0.15,
-      },
-      ease: 'out',
-    },
-  ],
-  follow: [
-    {
-      pose: {
-        'shoulderL.x': -1.1, 'elbowL.x': 0.1, 'shoulderR.x': -0.7, 'elbowR.x': -0.1, 'spine.y': 0.35, 'spine.x': -0.22, 'head.x': -0.3, 'head.y': -0.25,
-        'root.turn': -0.3, 'root.pitch': -0.7, 'root.forward': -0.14, 'root.lift': -0.06, 'root.side': 0.05, 'weapon.x': 0.4,
-      },
+      // 弓身后坐：弓向上一扬、左臂被震得一沉，身体微微后坐
+      pose: { ...BOW_LOOSE, 'weapon.aimPitch': 0.2, 'shoulderL.x': -0.3, 'root.forward': -0.06, 'root.pitch': -0.05, 'bow.draw': 0.0 },
       span: 0.35,
       ease: 'outCubic',
     },
-    {
-      pose: {
-        'shoulderL.x': -1.1, 'elbowL.x': 0.1, 'shoulderR.x': -0.5, 'elbowR.x': -0.2, 'spine.y': 0.3, 'spine.x': -0.08, 'head.x': -0.25, 'head.y': -0.2,
-        'root.turn': -0.26, 'root.pitch': -0.4, 'root.forward': -0.06, 'root.side': 0.05, 'weapon.x': 0,
-      },
-      span: 0.65,
-      ease: 'outElastic',
-    },
+    // 弓弦来回振一下后停住，弓身回正
+    { pose: { ...BOW_LOOSE, 'weapon.aimPitch': 0.04, 'bow.draw': 0, 'shoulderR.x': -0.8, 'elbowR.x': -0.9 }, span: 0.65, ease: 'outElastic' },
+  ],
+  recover: [
+    // 收弓：弓垂到身侧，转回正面
+    { pose: { 'shoulderL.x': -0.3, 'shoulderL.z': 0.15, 'elbowL.x': -0.2, 'shoulderR.x': -0.2, 'root.turn': -0.3, 'head.y': 0.3, 'bow.aim': 0.2 }, span: 0.55, ease: 'inOut' },
   ],
 };
 
-// ---------------------------------------------------------------------------
-// 人形：施法
-// ---------------------------------------------------------------------------
-
-/** 指向施法（法术普攻、单体法术、封印）：举杖后仰蓄力，左手起手势 → 杖向前一送 */
-const CAST_POINT: MoveDef = {
-  label: '施法·指向',
-  timing: { anticipation: 0.42, strike: 0.12, hold: 0.06, follow: 0.2, beat: 0.12, recover: 0.34 },
+/** 速射：三连射的第 2、3 箭——右手快速回到弦上、再拉满，每一箭都有完整的拉弦和放箭 */
+const BOW_QUICK: MoveDef = {
+  label: '弓·速射',
+  timing: { anticipation: 0.34, strike: 0.05, hold: 0.04, follow: 0.16, beat: 0.12, recover: 0.36 },
   ready: [
-    {
-      pose: {
-        'shoulderR.x': -1.25, 'shoulderR.z': -0.3, 'elbowR.x': -0.3, 'shoulderL.x': -0.7, 'shoulderL.z': 0.55, 'elbowL.x': -0.7,
-        'spine.x': -0.16, 'chest.x': -0.08, 'head.x': -0.12, 'root.pitch': -0.08, 'root.lift': 0.03, 'root.forward': -0.06,
-      },
-      span: 0.5,
-      ease: 'outCubic',
-    },
-    {
-      pose: {
-        'shoulderR.x': -1.75, 'shoulderR.z': -0.35, 'elbowR.x': -0.35, 'shoulderL.x': -1.0, 'shoulderL.z': 0.7, 'elbowL.x': -0.9,
-        'spine.x': -0.26, 'chest.x': -0.12, 'head.x': -0.18, 'root.pitch': -0.13, 'root.lift': 0.06, 'root.forward': -0.1,
-      },
-      span: 0.5,
-      ease: 'inOut',
-    },
+    { pose: BOW_NOCK, span: 0.4, ease: 'outCubic' },
+    { pose: BOW_FULL, span: 0.6, ease: 'inOut' },
   ],
-  strike: [
-    {
-      pose: {
-        'shoulderR.x': -1.2, 'shoulderR.z': 0.1, 'elbowR.x': 0.6, 'shoulderL.x': -1.3, 'shoulderL.z': 0.1, 'elbowL.x': 0.15,
-        'spine.x': 0.26, 'chest.x': 0.08, 'head.x': 0.06, 'root.pitch': 0.18, 'root.lift': -0.03, 'root.forward': 0.18,
-      },
-      ease: 'inCubic',
-    },
-  ],
+  strike: BOW_SHOT.strike,
   follow: [
-    {
-      pose: {
-        'shoulderR.x': -1.3, 'shoulderR.z': 0.1, 'elbowR.x': 0.65, 'shoulderL.x': -1.4, 'shoulderL.z': 0.1, 'elbowL.x': 0.2,
-        'spine.x': 0.32, 'root.pitch': 0.22, 'root.lift': -0.05, 'root.forward': 0.22,
-      },
-      span: 0.4,
-      ease: 'outCubic',
-    },
-    {
-      pose: {
-        'shoulderR.x': -1.0, 'elbowR.x': 0.3, 'shoulderL.x': -0.9, 'elbowL.x': -0.1, 'spine.x': 0.14, 'root.pitch': 0.1, 'root.forward': 0.12,
-      },
-      span: 0.6,
-      ease: 'inOut',
-    },
+    { pose: { ...BOW_LOOSE, 'weapon.aimPitch': 0.16, 'shoulderL.x': -0.32, 'root.forward': -0.05, 'bow.draw': 0 }, span: 0.4, ease: 'outCubic' },
+    { pose: { ...BOW_LOOSE, 'weapon.aimPitch': 0.04, 'bow.draw': 0 }, span: 0.6, ease: 'outElastic' },
   ],
+  recover: BOW_SHOT.recover,
 };
 
-/** 群体召唤（群体法术）：双臂高举、踮起后仰 → 杖向下一顿 */
-const CAST_INVOKE: MoveDef = {
-  label: '施法·召唤',
-  timing: { anticipation: 0.85, strike: 0.12, hold: 0.07, follow: 0.24, beat: 0.14, recover: 0.38 },
+/** 仰射（箭雨）：侧身 → 弓举向天空 → 拉满、身体深深后仰 → 放箭，弓身回弹 → 收弓 */
+const BOW_SKY_SIDE: BodyPose = { 'root.turn': -0.95, 'spine.y': -0.15, 'head.y': 0.8, 'head.x': -0.35, 'root.pitch': -0.32, 'spine.x': -0.15, 'root.side': 0.05 };
+const BOW_SKY_NOCK: BodyPose = {
+  ...BOW_SKY_SIDE,
+  'shoulderL.x': -0.71, 'shoulderL.y': -1.14, 'shoulderL.z': 1.42, 'elbowL.x': -0.6,
+  'shoulderR.x': -2.03, 'shoulderR.y': 1.26, 'shoulderR.z': 0.4, 'elbowR.x': -0.65,
+  'bow.aim': 1, 'bow.draw': 1, 'weapon.aimPitch': 0.95,
+};
+const BOW_SKY_FULL: BodyPose = {
+  ...BOW_SKY_SIDE, 'root.pitch': -0.45, 'chest.x': -0.1,
+  'shoulderL.x': -1.37, 'shoulderL.y': -0.04, 'shoulderL.z': 0.25, 'elbowL.x': -0.6,
+  'shoulderR.x': 0.33, 'shoulderR.y': 1.36, 'shoulderR.z': 0.4, 'elbowR.x': -1.41,
+  'bow.aim': 1, 'bow.draw': 1, 'weapon.aimPitch': 1.0,
+};
+const BOW_SKY_LOOSE: BodyPose = { ...BOW_SKY_FULL, 'shoulderR.y': 1.5, 'elbowR.x': -1.15, 'bow.draw': -1 };
+
+const BOW_SKY: MoveDef = {
+  label: '弓·仰射',
+  timing: { anticipation: 1.0, strike: 0.06, hold: 0.07, follow: 0.32, beat: 0.12, recover: 0.42 },
   ready: [
     {
+      pose: { ...BOW_SIDE, 'shoulderL.x': -0.6, 'shoulderL.z': 0.25, 'elbowL.x': -0.3, 'shoulderR.x': -0.4, 'elbowR.x': -0.45, 'root.lift': -0.05, 'bow.aim': 0.4 },
+      span: 0.22,
+      ease: 'inOut',
+    },
+    { pose: BOW_SKY_NOCK, span: 0.33, ease: 'outCubic' }, // 举弓朝天、搭弦
+    { pose: BOW_SKY_FULL, span: 0.45, ease: 'inOut' }, // 拉满、后仰
+  ],
+  strike: [{ pose: BOW_SKY_LOOSE, ease: 'out' }],
+  follow: [
+    { pose: { ...BOW_SKY_LOOSE, 'weapon.aimPitch': 1.2, 'shoulderL.x': -1.1, 'root.pitch': -0.52, 'root.forward': -0.08, 'bow.draw': 0 }, span: 0.35, ease: 'outCubic' },
+    { pose: { ...BOW_SKY_LOOSE, 'weapon.aimPitch': 1.0, 'root.pitch': -0.38, 'bow.draw': 0 }, span: 0.65, ease: 'outElastic' },
+  ],
+  recover: BOW_SHOT.recover,
+};
+
+// ---------------------------------------------------------------------------
+// 人形：施法（步骤 11b 重做：法杖挥舞轨迹）
+// ---------------------------------------------------------------------------
+//
+// 法杖施法的节奏：双手握杖（grip.left = 1：左手自动握到杖身上，见 UnitView 的左手 IK）
+// → 挥杖画弧 / 画圈，杖顶拖出发光轨迹（fx.trail），身体随之扭转、袍摆被带动
+// → 释放：杖向目标用力前指（weapon.aim）或向上高举，身体前倾，杖顶光芒暴涨 → 收招：杖回落到身侧。
+// 不同法术的挥杖轨迹不同：火系 = 挥弧后劈下，雷系 = 画圈后高举，封印 = 身前画圈后前指，普攻 = 短促一挑再前指。
+// 群体法术幅度最大（举杖过头），封印和单体法术较简短。
+
+/** 双手在身前握住法杖（杖竖在胸前） */
+const STAFF_GRIP: BodyPose = {
+  'shoulderR.x': -1.05, 'shoulderR.z': 0.1, 'elbowR.x': -0.55, 'spine.x': 0.04, 'grip.left': 1,
+};
+
+/**
+ * 杖尖画圈：右手在身前绕圈（左手握着杖身跟着走），杖身随之倾斜，腰随之扭转。
+ * @param center 圈心处的姿态
+ * @param size 圈的大小：arm = 肩的摆幅（弧度），tilt = 杖身的倾斜幅度，twist = 腰的扭转幅度
+ * @param turns 圈数；steps = 每圈几个关键姿态；from = 起始相位（弧度）；dir = 1 顺时针 / −1 逆时针（从出手者身后看）
+ */
+function staffOrbit(
+  center: BodyPose,
+  size: { arm: number; tilt: number; twist: number },
+  turns: number,
+  span: number,
+  options: { steps?: number; from?: number; dir?: number } = {},
+): PoseKey[] {
+  const steps = Math.max(2, Math.round((options.steps ?? 4) * turns));
+  const from = options.from ?? 0;
+  const dir = options.dir ?? 1;
+  const keys: PoseKey[] = [];
+  const c = (k: string): number => center[k] ?? 0;
+  for (let i = 1; i <= steps; i++) {
+    const phi = from + dir * ((Math.PI * 2 * turns * i) / steps);
+    const cos = Math.cos(phi);
+    const sin = Math.sin(phi);
+    keys.push({
       pose: {
-        'shoulderR.x': -1.3, 'shoulderL.x': -1.0, 'shoulderL.z': 0.5, 'elbowL.x': -0.6, 'spine.x': -0.1, 'root.lift': -0.05, 'root.pitch': 0.04,
+        ...center,
+        'shoulderR.x': c('shoulderR.x') + size.arm * sin,
+        'shoulderR.z': c('shoulderR.z') + size.arm * 0.8 * cos,
+        'weapon.x': c('weapon.x') + size.tilt * sin,
+        'weapon.z': c('weapon.z') - size.tilt * cos,
+        'spine.y': c('spine.y') + size.twist * cos,
+        'head.y': c('head.y') - size.twist * 0.5 * cos,
       },
+      span: span / steps,
+      ease: 'linear',
+    });
+  }
+  return keys;
+}
+
+/** 收招：杖回落到身侧，左手松开 */
+const STAFF_DOWN: PoseKey = {
+  pose: { 'shoulderR.x': -0.15, 'shoulderR.z': 0.05, 'elbowR.x': 0.15, 'weapon.x': 0.15, 'grip.left': 0 },
+  span: 0.5,
+  ease: 'inOut',
+};
+
+/** 释放 · 前指：杖尖指向目标（weapon.aim），身体前倾 */
+const STAFF_POINT: BodyPose = {
+  'shoulderR.x': -1.45, 'shoulderR.z': 0.12, 'elbowR.x': 0.55, 'weapon.aim': 1, 'weapon.aimPitch': 0.05, 'grip.left': 0.7,
+  'spine.x': 0.26, 'spine.y': 0.2, 'chest.x': 0.08, 'head.x': 0.05, 'root.pitch': 0.16, 'root.forward': 0.16, 'root.lift': -0.03,
+};
+const STAFF_POINT_FOLLOW: PoseKey[] = [
+  { pose: { ...STAFF_POINT, 'spine.x': 0.32, 'root.pitch': 0.2, 'root.forward': 0.2, 'shoulderR.x': -1.5 }, span: 0.4, ease: 'outCubic' },
+  { pose: { ...STAFF_POINT, 'spine.x': 0.14, 'root.pitch': 0.08, 'root.forward': 0.1, 'weapon.aim': 0.6, 'grip.left': 0.5 }, span: 0.6, ease: 'inOut' },
+];
+
+/** 法术普攻：双手握杖，杖尖短促地向右上挑一道弧，再向前一指 */
+const CAST_POINT: MoveDef = {
+  label: '施法·挑指',
+  timing: { anticipation: 0.5, strike: 0.1, hold: 0.05, follow: 0.2, beat: 0.1, recover: 0.36 },
+  ready: [
+    { pose: STAFF_GRIP, span: 0.3, ease: 'outCubic' },
+    { pose: { ...STAFF_GRIP, 'shoulderR.x': -1.25, 'shoulderR.z': 0.18, 'weapon.z': 0.5, 'spine.y': -0.55, 'head.y': 0.25, 'root.turn': -0.14 }, span: 0.35, ease: 'inOut' },
+    { pose: { ...STAFF_GRIP, 'shoulderR.x': -1.9, 'shoulderR.z': -0.2, 'weapon.x': -0.4, 'weapon.z': 0.3, 'spine.y': -0.3, 'spine.x': -0.1, 'root.pitch': -0.06 }, span: 0.35, ease: 'outCubic' },
+  ],
+  strike: [{ pose: STAFF_POINT, ease: 'inCubic' }],
+  follow: STAFF_POINT_FOLLOW,
+  recover: [STAFF_DOWN],
+  fx: { trail: true },
+};
+
+/** 封印：杖尖在身前画一个圈（锁链的形状），再向目标前指 */
+const CAST_SEAL: MoveDef = {
+  label: '施法·画圈封印',
+  timing: CAST_POINT.timing,
+  ready: [
+    { pose: STAFF_GRIP, span: 0.22, ease: 'outCubic' },
+    ...staffOrbit({ ...STAFF_GRIP, 'shoulderR.x': -1.3, 'shoulderR.z': 0.3, 'weapon.x': -0.2 }, { arm: 0.42, tilt: 0.45, twist: 0.35 }, 1, 0.62, { from: 0, dir: -1 }),
+    { pose: { ...STAFF_GRIP, 'shoulderR.x': -1.6, 'weapon.x': -0.35, 'spine.x': -0.08, 'root.pitch': -0.05 }, span: 0.16, ease: 'inOut' },
+  ],
+  strike: [{ pose: STAFF_POINT, ease: 'inCubic' }],
+  follow: STAFF_POINT_FOLLOW,
+  recover: [STAFF_DOWN],
+  fx: { trail: true },
+};
+
+/** 火系（单体）：双手握杖从右下向后上挥一道大弧，举过头顶、身体后仰 → 向前劈下，杖尖直指目标 */
+const CAST_FIRE: MoveDef = {
+  label: '施法·挥弧劈下（火）',
+  timing: { anticipation: 0.7, strike: 0.1, hold: 0.06, follow: 0.22, beat: 0.12, recover: 0.38 },
+  ready: [
+    { pose: STAFF_GRIP, span: 0.2, ease: 'outCubic' },
+    {
+      // 杖拉到身体右下后方，腰向右拧
+      pose: { ...STAFF_GRIP, 'shoulderR.x': -0.75, 'shoulderR.z': 0.12, 'elbowR.x': -0.5, 'weapon.x': 0.8, 'spine.y': -0.95, 'head.y': 0.55, 'root.turn': -0.22, 'root.lift': -0.04 },
       span: 0.3,
       ease: 'inOut',
     },
     {
+      // 挥过右侧举过头顶，身体后仰
       pose: {
-        'shoulderR.x': -2.45, 'shoulderR.z': -0.3, 'elbowR.x': 0.2, 'shoulderL.x': -2.2, 'shoulderL.z': 0.55, 'elbowL.x': -0.2,
-        'spine.x': -0.3, 'chest.x': -0.14, 'head.x': -0.3, 'root.pitch': -0.14, 'root.lift': 0.1, 'root.forward': -0.08,
+        ...STAFF_GRIP, 'shoulderR.x': -2.75, 'shoulderR.z': -0.3, 'elbowR.x': -0.25, 'weapon.x': -0.5, 'spine.y': -0.2, 'spine.x': -0.22, 'chest.x': -0.1,
+        'head.x': -0.15, 'root.pitch': -0.12, 'root.lift': 0.04,
       },
-      span: 0.7,
+      span: 0.5,
       ease: 'outCubic',
     },
   ],
-  strike: [
-    {
-      pose: {
-        'shoulderR.x': -0.75, 'elbowR.x': 0.4, 'shoulderL.x': -0.6, 'shoulderL.z': 0.3, 'elbowL.x': 0.1,
-        'spine.x': 0.36, 'chest.x': 0.1, 'head.x': 0.1, 'root.pitch': 0.2, 'root.lift': -0.09, 'root.forward': 0.1,
-      },
-      ease: 'inCubic',
-    },
+  strike: [{ pose: { ...STAFF_POINT, 'weapon.aimPitch': -0.12, 'spine.x': 0.36, 'root.pitch': 0.24, 'root.forward': 0.22 }, ease: 'inCubic' }],
+  follow: STAFF_POINT_FOLLOW,
+  recover: [STAFF_DOWN],
+  fx: { trail: true },
+};
+
+/** 释放 · 高举：双手把杖举过头顶、杖身竖直，身体略前倾、踮起 */
+const STAFF_RAISE: BodyPose = {
+  'shoulderR.x': -2.75, 'shoulderR.z': 0.4, 'elbowR.x': 0.45, 'weapon.x': 0.25, 'grip.left': 1,
+  'spine.x': 0.1, 'chest.x': -0.05, 'head.x': -0.25, 'root.pitch': 0.08, 'root.lift': 0.08, 'root.forward': 0.06,
+};
+
+/** 雷系（单体）：双手握杖在身前画一圈，压低 → 向上高举 */
+const CAST_THUNDER: MoveDef = {
+  label: '施法·画圈高举（雷）',
+  timing: { anticipation: 0.7, strike: 0.1, hold: 0.06, follow: 0.24, beat: 0.12, recover: 0.4 },
+  ready: [
+    { pose: STAFF_GRIP, span: 0.18, ease: 'outCubic' },
+    ...staffOrbit({ ...STAFF_GRIP, 'shoulderR.x': -1.35, 'shoulderR.z': 0.38 }, { arm: 0.38, tilt: 0.45, twist: 0.45 }, 1, 0.6, { from: Math.PI / 2 }),
+    { pose: { ...STAFF_GRIP, 'shoulderR.x': -0.85, 'elbowR.x': -0.7, 'root.lift': -0.06, 'spine.x': 0.15, 'root.pitch': 0.06 }, span: 0.22, ease: 'inOut' },
   ],
+  strike: [{ pose: STAFF_RAISE, ease: 'inCubic' }],
   follow: [
+    { pose: { ...STAFF_RAISE, 'root.lift': 0.1, 'spine.x': 0.14 }, span: 0.4, ease: 'outCubic' },
+    { pose: { ...STAFF_RAISE, 'shoulderR.x': -2.6, 'root.lift': 0.03, 'spine.x': 0.06 }, span: 0.6, ease: 'inOut' },
+  ],
+  recover: [STAFF_DOWN],
+  fx: { trail: true },
+};
+
+/** 群体·火：幅度最大——杖在身侧抡一整圈、举过头顶深深后仰 → 全力向前劈下 */
+const CAST_GROUP_FIRE: MoveDef = {
+  label: '施法·抡圈劈下（群体火）',
+  timing: { anticipation: 1.2, strike: 0.12, hold: 0.07, follow: 0.28, beat: 0.14, recover: 0.42 },
+  ready: [
+    { pose: STAFF_GRIP, span: 0.12, ease: 'outCubic' },
+    ...staffOrbit({ ...STAFF_GRIP, 'shoulderR.x': -1.6, 'shoulderR.z': 0.38 }, { arm: 0.5, tilt: 0.55, twist: 0.65 }, 1, 0.5, { from: Math.PI, steps: 6 }),
     {
       pose: {
-        'shoulderR.x': -0.6, 'elbowR.x': 0.45, 'shoulderL.x': -0.45, 'shoulderL.z': 0.3, 'spine.x': 0.44, 'root.pitch': 0.25, 'root.lift': -0.13, 'root.forward': 0.12,
+        ...STAFF_GRIP, 'shoulderR.x': -2.9, 'shoulderR.z': -0.2, 'elbowR.x': -0.2, 'weapon.x': -0.6, 'spine.x': -0.3, 'chest.x': -0.14, 'head.x': -0.3,
+        'root.pitch': -0.18, 'root.lift': 0.08, 'root.forward': -0.08,
       },
-      span: 0.4,
+      span: 0.38,
       ease: 'outCubic',
     },
+  ],
+  strike: [{ pose: { ...STAFF_POINT, 'weapon.aimPitch': -0.25, 'spine.x': 0.42, 'root.pitch': 0.28, 'root.forward': 0.24, 'root.lift': -0.08 }, ease: 'inCubic' }],
+  follow: STAFF_POINT_FOLLOW,
+  recover: [STAFF_DOWN],
+  fx: { trail: true },
+};
+
+/** 群体·雷：幅度最大——在头顶上方画两圈、举杖过头后仰蓄满 → 向上高举，符文阵亮起 */
+const CAST_GROUP_THUNDER: MoveDef = {
+  label: '施法·双圈高举（群体雷）',
+  timing: { anticipation: 1.2, strike: 0.12, hold: 0.07, follow: 0.3, beat: 0.14, recover: 0.42 },
+  ready: [
+    { pose: STAFF_GRIP, span: 0.1, ease: 'outCubic' },
+    ...staffOrbit({ ...STAFF_GRIP, 'shoulderR.x': -1.9, 'shoulderR.z': 0.4, 'spine.x': -0.08 }, { arm: 0.45, tilt: 0.5, twist: 0.5 }, 2, 0.62, { from: Math.PI / 2, steps: 5 }),
     {
       pose: {
-        'shoulderR.x': -0.65, 'elbowR.x': 0.3, 'shoulderL.x': -0.4, 'shoulderL.z': 0.2, 'spine.x': 0.26, 'root.pitch': 0.14, 'root.lift': -0.07, 'root.forward': 0.08,
+        ...STAFF_GRIP, 'shoulderR.x': -2.7, 'elbowR.x': -0.2, 'weapon.x': -0.1, 'spine.x': -0.3, 'chest.x': -0.14, 'head.x': -0.35,
+        'root.pitch': -0.16, 'root.lift': 0.04, 'root.forward': -0.06,
       },
-      span: 0.6,
-      ease: 'inOut',
+      span: 0.28,
+      ease: 'outCubic',
     },
   ],
+  strike: [{ pose: { ...STAFF_RAISE, 'root.lift': 0.12, 'root.pitch': 0.12 }, ease: 'inCubic' }],
+  follow: [
+    { pose: { ...STAFF_RAISE, 'root.lift': 0.14, 'spine.x': 0.16, 'root.pitch': 0.14 }, span: 0.4, ease: 'outCubic' },
+    { pose: { ...STAFF_RAISE, 'shoulderR.x': -2.6, 'root.lift': 0.04, 'spine.x': 0.06 }, span: 0.6, ease: 'inOut' },
+  ],
+  recover: [STAFF_DOWN],
+  fx: { trail: true },
+};
+
+/** 群体召唤（没有专门轨迹的群体法术）：双臂高举、踮起后仰 → 杖向下一顿 */
+const CAST_INVOKE: MoveDef = {
+  ...CAST_GROUP_FIRE,
+  label: '施法·召唤',
 };
 
 /** 祝祷（治疗、复活）：双臂向两侧展开上举、仰头 → 双手向前下方轻送 */
@@ -750,13 +845,6 @@ const CAST_BLESS: MoveDef = {
 // ---------------------------------------------------------------------------
 // 宝宝：狼
 // ---------------------------------------------------------------------------
-
-/** 狼 · 出发前蓄势：前爪下伏、后腿收到身下，身体压低 */
-const WOLF_CROUCH: BodyPose = {
-  'root.lift': -0.1, 'root.pitch': 0.16, 'root.forward': -0.16, 'root.squash': 0.1,
-  'foreLegL.x': -0.51, 'foreLegR.x': -0.51, 'hindLegL.x': -0.33, 'hindLegR.x': -0.33,
-  'neck.x': -0.35, 'head.x': -0.1, 'tail.x': 0.5, 'jaw.x': 0.1,
-};
 
 /** 狼 · 撕咬：张嘴扑咬 → 咬住甩头 → 松口后撤 */
 const WOLF_BITE: MoveDef = {
@@ -860,12 +948,6 @@ const WOLF_CLAW: MoveDef = {
 // ---------------------------------------------------------------------------
 // 宝宝：魔偶
 // ---------------------------------------------------------------------------
-
-/** 魔偶 · 出发前蓄势：双臂举过头顶，上身后仰 */
-const GOLEM_RAISE: BodyPose = {
-  'shoulderL.x': -2.75, 'shoulderR.x': -2.75, 'shoulderL.z': -0.3, 'shoulderR.z': 0.3,
-  'torso.x': -0.22, 'head.x': -0.2, 'root.pitch': -0.06, 'root.lift': 0.03,
-};
 
 /** 魔偶 · 砸拳：双拳自头顶砸向地面，冲击波环 */
 const GOLEM_SLAM: MoveDef = {
@@ -1082,8 +1164,13 @@ const BEAST_CAST: MoveDef = {
 // 步态：离开站位 / 回到站位时怎么移动
 // ---------------------------------------------------------------------------
 
-export type GaitId = 'run' | 'runBack' | 'hop' | 'leap' | 'pounce' | 'pounceBack' | 'stomp' | 'stompBack';
+export type GaitId = 'jump' | 'jumpBack' | 'hop' | 'whirlHop' | 'pounce' | 'pounceBack' | 'slamJump' | 'slamJumpBack';
 
+/**
+ * 步态。步骤 11b 起近战全部改为“大跳跃”：原地下蹲蓄力（crouch）→ 高抛物线腾空（hop = 最高点）
+ * → 落地（尘土 + 轻微震屏）→ 落地缓冲（land）。总时长 = 编排给的移动时长（MotionProfile.approach / retreat.duration），
+ * 其中 crouch、land 各占配置的秒数，剩下的是腾空时间。
+ */
 export interface GaitDef {
   accel: number; // 起步加速占全程时间的比例
   brake: number; // 到位前刹车减速占的比例
@@ -1100,36 +1187,118 @@ export interface GaitDef {
   sparks: boolean; // 落脚时带几点火星（金属靴）
   shake: number; // 每一步的镜头轻震（米）：魔偶的沉重踏步
   legs?: { joints: readonly [string, string]; swing: number }; // 随步伐前后摆动的两条腿（关节名）
-  poses?: readonly { at: number; pose: BodyPose; ease?: EaseName }[]; // 途中依次摆出的姿态（at = 全程进度 0~1）
+  poses?: readonly { at: number; pose: BodyPose; ease?: EaseName }[]; // 腾空途中依次摆出的姿态（at = 腾空进度 0~1）
+  /** 起跳前原地下蹲蓄力：duration 秒内摆到 pose（步骤 11b） */
+  crouch?: { duration: number; pose: BodyPose; ease?: EaseName };
+  /** 落地缓冲：先在前 35% 的时间压到 pose，再平滑回到站姿（步骤 11b） */
+  land?: { duration: number; pose: BodyPose };
 }
 
 const NO_SPIN: readonly [number, number] = [0, 1];
 
-export const GAITS: Record<GaitId, GaitDef> = {
-  // 人形冲刺：身体前倾、每步有起伏和重心摆动，到位前刹车后仰，脚下带尘土和火星
-  run: {
-    accel: 0.16, brake: 0.36, lean: 0.34, brakeLean: 0.28, stride: 1.15, bob: 0.09, sway: 0.07, hop: 0, arc: 0, spin: 0, spinWindow: NO_SPIN,
-    dust: { start: 0.9, step: 0.45, end: 1.1 }, sparks: true, shake: 0,
+// ---- 跳跃用到的姿态（相对站姿的偏移量）----
+
+/** 人形 · 起跳前下蹲蓄力：身体压低（整体压扁，人形的腿没有关节）、前倾，双臂后摆，武器后收 */
+const HUMAN_CROUCH: BodyPose = {
+  'root.squash': 0.16, 'root.lift': -0.04, 'root.pitch': 0.2, 'spine.x': 0.28, 'chest.x': 0.1, 'head.x': -0.18,
+  'shoulderR.x': 0.65, 'elbowR.x': -0.35, 'shoulderL.x': 0.6, 'elbowL.x': -0.3, 'weapon.x': 0.35,
+};
+/** 人形 · 落地缓冲：膝下沉（整体压扁）、身体前压，左臂外张保持平衡 */
+const HUMAN_LAND: BodyPose = {
+  'root.squash': 0.18, 'root.lift': -0.05, 'root.pitch': 0.24, 'spine.x': 0.32, 'chest.x': 0.08, 'head.x': -0.12,
+  'shoulderR.x': -0.45, 'shoulderL.x': 0.15, 'shoulderL.z': 0.5, 'elbowL.x': -0.4,
+};
+/** 人形 · 腾空途中：蹬地伸展 → 最高点举起武器 → 落地前前送 */
+const HUMAN_AIR: GaitDef['poses'] = [
+  {
+    at: 0.18,
+    pose: {
+      'root.squash': -0.08, 'root.pitch': -0.04, 'spine.x': -0.12, 'shoulderR.x': -1.5, 'elbowR.x': -0.3, 'shoulderL.x': -1.1, 'elbowL.x': -0.2,
+      'head.x': 0.05, 'weapon.x': -0.2,
+    },
+    ease: 'out',
   },
-  // 跑回原位：面朝对手后撤，幅度小一些
-  runBack: {
-    accel: 0.2, brake: 0.4, lean: 0.2, brakeLean: 0.08, stride: 1.2, bob: 0.07, sway: 0.05, hop: 0, arc: 0, spin: 0, spinWindow: NO_SPIN,
-    dust: { start: 0.6, step: 0.3, end: 0.7 }, sparks: false, shake: 0,
+  {
+    at: 0.55,
+    pose: {
+      'root.squash': -0.03, 'spine.x': -0.18, 'chest.x': -0.1, 'shoulderR.x': -2.25, 'shoulderR.z': -0.2, 'elbowR.x': -0.45,
+      'shoulderL.x': -0.75, 'shoulderL.z': 0.35, 'elbowL.x': -0.3, 'head.x': 0.1, 'weapon.x': 0.3,
+    },
+    ease: 'inOut',
+  },
+  {
+    at: 1,
+    pose: {
+      'spine.x': 0.12, 'shoulderR.x': -1.2, 'elbowR.x': -0.3, 'shoulderL.x': -0.5, 'shoulderL.z': 0.4, 'elbowL.x': -0.3, 'head.x': -0.05,
+    },
+    ease: 'inOut',
+  },
+];
+/** 人形 · 跳回：面朝对手向后跃起，双臂前伸保持平衡 */
+const HUMAN_AIR_BACK: GaitDef['poses'] = [
+  { at: 0.2, pose: { 'root.squash': -0.06, 'spine.x': -0.1, 'shoulderR.x': -1.0, 'shoulderL.x': -1.1, 'elbowL.x': -0.2, 'weapon.x': -0.2 }, ease: 'out' },
+  { at: 0.6, pose: { 'spine.x': 0.1, 'shoulderR.x': -0.9, 'shoulderL.x': -0.8, 'shoulderL.z': 0.4, 'elbowL.x': -0.3 }, ease: 'inOut' },
+  { at: 1, pose: { 'spine.x': 0.15, 'shoulderR.x': -0.6, 'shoulderL.x': -0.3, 'shoulderL.z': 0.45 }, ease: 'inOut' },
+];
+
+/** 狼 · 起跳前蓄势：前爪下伏、后腿收到身下，身体压低 */
+const WOLF_CROUCH: BodyPose = {
+  'root.lift': -0.1, 'root.pitch': 0.16, 'root.forward': -0.16, 'root.squash': 0.1,
+  'foreLegL.x': -0.51, 'foreLegR.x': -0.51, 'hindLegL.x': -0.33, 'hindLegR.x': -0.33,
+  'neck.x': -0.35, 'head.x': -0.1, 'tail.x': 0.5, 'jaw.x': 0.1,
+};
+
+/** 魔偶 · 起跳前蓄力：双臂举过头顶、上身后仰，整个身子往下一沉 */
+const GOLEM_CROUCH: BodyPose = {
+  'shoulderL.x': -2.75, 'shoulderR.x': -2.75, 'shoulderL.z': -0.3, 'shoulderR.z': 0.3,
+  'torso.x': -0.22, 'head.x': -0.2, 'root.pitch': -0.06, 'root.squash': 0.16, 'root.lift': -0.05,
+};
+/** 魔偶 · 落地：重重砸进地面，身体压扁，双臂仍举着 */
+const GOLEM_LAND: BodyPose = {
+  'shoulderL.x': -2.5, 'shoulderR.x': -2.5, 'shoulderL.z': -0.4, 'shoulderR.z': 0.4,
+  'torso.x': 0.18, 'head.x': 0.1, 'root.pitch': 0.12, 'root.squash': 0.22, 'root.lift': -0.06, 'legL.z': 0.12, 'legR.z': -0.12,
+};
+
+/** 跳跃的水平位移基本匀速（加速、刹车的比例很小），竖直方向是抛物线 */
+const JUMP_FLOW = { accel: 0.03, brake: 0.03, stride: 99, bob: 0, sway: 0, arc: 0, spin: 0, spinWindow: NO_SPIN } as const;
+
+export const GAITS: Record<GaitId, GaitDef> = {
+  // 人形大跳跃：下蹲蓄力 → 高抛物线、腾空时身体略前倾 → 落在目标面前（尘土、火星、轻微震屏）→ 落地缓冲
+  jump: {
+    ...JUMP_FLOW, lean: 0.2, brakeLean: 0, hop: 1.35,
+    dust: { start: 1.0, step: 0, end: 1.3 }, sparks: true, shake: 0.03,
+    crouch: { duration: 0.22, pose: HUMAN_CROUCH, ease: 'outCubic' },
+    land: { duration: 0.22, pose: HUMAN_LAND },
+    poses: HUMAN_AIR,
+  },
+  // 人形跳回原位：面朝对手向后的大跳跃（略低），落地缓冲后恢复待机
+  jumpBack: {
+    ...JUMP_FLOW, lean: 0.12, brakeLean: 0, hop: 1.1,
+    dust: { start: 0.8, step: 0, end: 1.1 }, sparks: false, shake: 0.02,
+    crouch: { duration: 0.2, pose: HUMAN_CROUCH, ease: 'outCubic' },
+    land: { duration: 0.24, pose: HUMAN_LAND },
+    poses: HUMAN_AIR_BACK,
   },
   // 换目标的小跳（普通的多目标近战）
   hop: {
     accel: 0.15, brake: 0.3, lean: 0.2, brakeLean: 0.1, stride: 9, bob: 0, sway: 0, hop: 0.22, arc: 0, spin: 0, spinWindow: NO_SPIN,
     dust: { start: 0.6, step: 0, end: 0.8 }, sparks: false, shake: 0,
   },
-  // 旋风斩：蹬地跃起，沿弧线切向下一个目标，途中旋身一圈
-  leap: {
-    accel: 0.12, brake: 0.22, lean: 0.26, brakeLean: 0.12, stride: 9, bob: 0, sway: 0, hop: 0.42, arc: 0.22, spin: 1, spinWindow: [0.12, 0.96],
-    dust: { start: 1.0, step: 0, end: 1.2 }, sparks: true, shake: 0,
+  // 旋风斩：在目标之间连续的短跳跃——短促下蹲、蹬地，沿弧线切向下一个目标，途中旋身一圈（高度比大跳跃低）
+  whirlHop: {
+    accel: 0.05, brake: 0.12, lean: 0.24, brakeLean: 0.08, stride: 99, bob: 0, sway: 0, hop: 0.7, arc: 0.22, spin: 1, spinWindow: [0.1, 0.95],
+    dust: { start: 1.0, step: 0, end: 1.2 }, sparks: true, shake: 0.015,
+    crouch: { duration: 0.1, pose: { 'root.squash': 0.12, 'root.pitch': 0.16, 'spine.x': 0.2, 'shoulderR.z': -0.6, 'shoulderL.z': 0.5 }, ease: 'out' },
   },
-  // 狼：扑跃——蹬地、腾空拉长身体、落在目标面前
+  // 狼：轻快的扑跃——下伏蓄势、蹬地、腾空拉长身体、落在目标面前
   pounce: {
-    accel: 0.1, brake: 0.2, lean: 0, brakeLean: 0, stride: 9, bob: 0, sway: 0, hop: 0.75, arc: 0, spin: 0, spinWindow: NO_SPIN,
-    dust: { start: 1.1, step: 0, end: 1.0 }, sparks: false, shake: 0,
+    ...JUMP_FLOW, lean: 0, brakeLean: 0, hop: 1.0,
+    dust: { start: 1.1, step: 0, end: 1.0 }, sparks: false, shake: 0.012,
+    crouch: { duration: 0.3, pose: WOLF_CROUCH, ease: 'outCubic' },
+    land: {
+      duration: 0.12,
+      pose: { 'root.squash': 0.08, 'root.pitch': 0.12, 'foreLegL.x': -0.3, 'foreLegR.x': -0.3, 'hindLegL.x': -0.1, 'hindLegR.x': -0.1, 'neck.x': -0.3, 'jaw.x': 0.6 },
+    },
     poses: [
       {
         at: 0.16,
@@ -1140,7 +1309,7 @@ export const GAITS: Record<GaitId, GaitDef> = {
         ease: 'out',
       },
       {
-        at: 0.62,
+        at: 0.6,
         pose: {
           'root.pitch': -0.06, 'root.stretch': 0.24, 'foreLegL.x': -0.69, 'foreLegR.x': -0.69, 'hindLegL.x': 0.72, 'hindLegR.x': 0.72,
           'neck.x': 0.1, 'jaw.x': 0.5, 'tail.x': -0.6,
@@ -1157,25 +1326,46 @@ export const GAITS: Record<GaitId, GaitDef> = {
       },
     ],
   },
-  // 狼：跳回原位
+  // 狼：下伏、一跃跳回原位
   pounceBack: {
-    accel: 0.12, brake: 0.25, lean: 0, brakeLean: 0, stride: 9, bob: 0, sway: 0, hop: 0.5, arc: 0, spin: 0, spinWindow: NO_SPIN,
-    dust: { start: 0.8, step: 0, end: 0.9 }, sparks: false, shake: 0,
+    ...JUMP_FLOW, lean: 0, brakeLean: 0, hop: 0.8,
+    dust: { start: 0.8, step: 0, end: 0.9 }, sparks: false, shake: 0.01,
+    crouch: {
+      duration: 0.16,
+      pose: { 'root.squash': 0.08, 'root.lift': -0.06, 'root.pitch': -0.1, 'foreLegL.x': -0.2, 'foreLegR.x': -0.2, 'hindLegL.x': -0.3, 'hindLegR.x': -0.3, 'tail.x': 0.4 },
+      ease: 'out',
+    },
+    land: { duration: 0.16, pose: { 'root.squash': 0.08, 'root.lift': -0.05, 'foreLegL.x': -0.18, 'foreLegR.x': -0.18, 'hindLegL.x': -0.12, 'hindLegR.x': -0.12 } },
     poses: [
       { at: 0.2, pose: { 'root.pitch': 0.22, 'root.stretch': 0.1, 'foreLegL.x': 0.3, 'foreLegR.x': 0.3, 'hindLegL.x': -0.3, 'hindLegR.x': -0.3, 'tail.x': 0.5 }, ease: 'out' },
       { at: 0.7, pose: { 'root.pitch': -0.1, 'root.stretch': 0.14, 'foreLegL.x': 0.18, 'foreLegR.x': 0.18, 'hindLegL.x': -0.42, 'hindLegR.x': -0.42, 'tail.x': 0.3 }, ease: 'inOut' },
-      { at: 1, pose: { 'root.squash': 0.08, 'root.lift': -0.05, 'foreLegL.x': -0.18, 'foreLegR.x': -0.18, 'hindLegL.x': -0.12, 'hindLegR.x': -0.12 }, ease: 'inOut' },
+      { at: 1, pose: { 'root.squash': 0.04, 'foreLegL.x': -0.2, 'foreLegR.x': -0.2, 'hindLegL.x': -0.1, 'hindLegR.x': -0.1 }, ease: 'inOut' },
     ],
   },
-  // 魔偶：沉重的踏步，每一步落地带尘土和镜头轻震
-  stomp: {
-    accel: 0.2, brake: 0.25, lean: 0.08, brakeLean: 0.04, stride: 0.95, bob: 0.13, sway: 0.13, hop: 0, arc: 0, spin: 0, spinWindow: NO_SPIN,
-    dust: { start: 0.5, step: 1.1, end: 1.2 }, sparks: false, shake: 0.045, legs: { joints: ['legL', 'legR'], swing: 0.55 },
+  // 魔偶：沉重的跳跃——双臂举过头顶下沉蓄力，跳得低、腾空慢，落地地面震动、尘土大
+  slamJump: {
+    ...JUMP_FLOW, lean: 0.08, brakeLean: 0, hop: 0.6,
+    dust: { start: 1.2, step: 0, end: 2.0 }, sparks: false, shake: 0.09,
+    crouch: { duration: 0.5, pose: GOLEM_CROUCH, ease: 'inOut' },
+    land: { duration: 0.3, pose: GOLEM_LAND },
+    poses: [
+      { at: 0.3, pose: { ...GOLEM_CROUCH, 'root.squash': -0.06, 'root.lift': 0, 'torso.x': -0.3, 'legL.x': -0.3, 'legR.x': 0.15 }, ease: 'out' },
+      { at: 1, pose: { ...GOLEM_CROUCH, 'root.squash': 0, 'root.lift': 0, 'torso.x': -0.1, 'legL.x': -0.1, 'legR.x': -0.1 }, ease: 'inOut' },
+    ],
   },
-  // 魔偶：缓慢沉稳地退回
-  stompBack: {
-    accel: 0.25, brake: 0.3, lean: 0.05, brakeLean: 0.02, stride: 0.85, bob: 0.1, sway: 0.11, hop: 0, arc: 0, spin: 0, spinWindow: NO_SPIN,
-    dust: { start: 0.4, step: 0.8, end: 0.9 }, sparks: false, shake: 0.03, legs: { joints: ['legL', 'legR'], swing: 0.45 },
+  // 魔偶：缓慢沉稳地跳回
+  slamJumpBack: {
+    ...JUMP_FLOW, lean: 0.05, brakeLean: 0, hop: 0.45,
+    dust: { start: 0.9, step: 0, end: 1.6 }, sparks: false, shake: 0.065,
+    crouch: { duration: 0.36, pose: { 'root.squash': 0.16, 'root.lift': -0.05, 'torso.x': 0.2, 'shoulderL.x': 0.4, 'shoulderR.x': 0.4 }, ease: 'inOut' },
+    land: {
+      duration: 0.32,
+      pose: { 'root.squash': 0.2, 'root.lift': -0.06, 'torso.x': 0.2, 'shoulderL.z': -0.5, 'shoulderR.z': 0.5, 'legL.z': 0.12, 'legR.z': -0.12 },
+    },
+    poses: [
+      { at: 0.35, pose: { 'root.squash': -0.05, 'torso.x': -0.1, 'shoulderL.x': -0.6, 'shoulderR.x': -0.6, 'legL.x': 0.2, 'legR.x': -0.1 }, ease: 'out' },
+      { at: 1, pose: { 'torso.x': 0.05, 'shoulderL.x': -0.3, 'shoulderR.x': -0.3, 'legL.x': 0, 'legR.x': 0 }, ease: 'inOut' },
+    ],
   },
 };
 
@@ -1208,9 +1398,10 @@ const HUMAN_MELEE_SHARED = [CROSS_SLASH, HEAVY_CHOP, SPIN_SLASH, SPIN_FINISH] as
 const HUMAN_BASE = {
   bow: [BOW_SHOT, BOW_QUICK],
   bowUp: [BOW_SKY],
-  cast: [CAST_POINT, CAST_INVOKE, CAST_BLESS],
-  approach: { gait: 'run', duration: 0.42 },
-  retreat: { gait: 'runBack', duration: 0.42 },
+  cast: [CAST_POINT, CAST_INVOKE, CAST_BLESS, CAST_SEAL, CAST_FIRE, CAST_THUNDER, CAST_GROUP_FIRE, CAST_GROUP_THUNDER],
+  // 大跳跃（步骤 11b）：总时长 = 下蹲 0.22 + 腾空 + 落地缓冲 0.22（各段见 GAITS.jump / jumpBack）
+  approach: { gait: 'jump', duration: 1.04 },
+  retreat: { gait: 'jumpBack', duration: 1.02 },
   next: { gait: 'hop', duration: 0.24 },
   gather: 0,
 } satisfies Omit<MotionProfile, 'melee'>;
@@ -1233,16 +1424,16 @@ export const MOTION_PROFILES: Record<MotionId, MotionProfile> = {
   wolf: {
     ...BEAST_BASE,
     melee: [WOLF_BITE, WOLF_CLAW],
-    brace: { pose: WOLF_CROUCH, duration: 0.32, ease: 'outCubic' },
-    approach: { gait: 'pounce', duration: 0.42 },
-    retreat: { gait: 'pounceBack', duration: 0.44 },
+    // 轻快：下伏 0.3 + 腾空 0.42 + 落地 0.12；跳回 0.16 + 0.5 + 0.16
+    approach: { gait: 'pounce', duration: 0.84 },
+    retreat: { gait: 'pounceBack', duration: 0.82 },
   },
   golem: {
     ...BEAST_BASE,
     melee: [GOLEM_SLAM, GOLEM_SWEEP],
-    brace: { pose: GOLEM_RAISE, duration: 0.5, ease: 'inOut' },
-    approach: { gait: 'stomp', duration: 0.9 },
-    retreat: { gait: 'stompBack', duration: 0.85 },
+    // 沉重：举臂下沉 0.5 + 腾空 0.62 + 落地 0.3；跳回 0.36 + 0.6 + 0.32
+    approach: { gait: 'slamJump', duration: 1.42 },
+    retreat: { gait: 'slamJumpBack', duration: 1.28 },
   },
   dragon: { ...BEAST_BASE, melee: [BEAST_LUNGE, BEAST_SWIPE], cast: [DRAGON_BREATH], gather: 0.55, muzzle: { joint: 'head', forward: 0.34, up: -0.03 } },
   ghost: { ...BEAST_BASE, melee: [BEAST_LUNGE, BEAST_SWIPE], cast: [GHOST_INVOKE], gather: 0.6, muzzle: { forward: 0.46, up: 0.8 } },
@@ -1256,6 +1447,24 @@ export const MOTION_OF_TEMPLATE: Record<string, MotionId> = {
   pet_golem: 'golem',
   pet_bone_dragon: 'dragon',
   pet_ghost: 'ghost',
+  // 敌方的法杖施法者（杖长在模型上，不是装备的武器）：用法杖的挥杖动作
+  enemy_demon_priest: 'staff',
+  enemy_necromancer: 'staff',
+};
+
+/**
+ * 左手握杖的位置（步骤 11b，grip.left 用）：沿右手武器 +y 方向离握持点多远（米，武器的局部坐标）。
+ * 装备了武器的人物按武器取；没有装备武器、杖长在模型上的（敌方祭司、亡灵法师）按 mount 取，坐标是右手武器挂点的局部坐标。
+ */
+export const LEFT_GRIP: { weapon: Record<string, number>; mount: number } = {
+  weapon: { staff: 0.3, sword: -0.12, spear: 0.4, blade: -0.1 },
+  mount: 0.32,
+};
+
+/** 杖长在模型上的施法者：拖尾取样的两端、杖顶（施法光芒暴涨处）离右手武器挂点多远（米，挂点局部 +y） */
+export const MOUNTED_STAFF: Record<string, { trail: readonly [number, number]; tip: number }> = {
+  enemy_demon_priest: { trail: [0.55, 1.0], tip: 0.95 },
+  enemy_necromancer: { trail: [0.55, 1.0], tip: 0.95 },
 };
 
 /** 取某个动作；编号越界时回退到第 0 个 */
@@ -1273,9 +1482,16 @@ export const ATTACK_ANIM = {
   whirlwind: {
     /** 每一击的节奏倍率（乘在跃进和出手各阶段的时长上）：前几下快，越往后越沉；最后一击用 MELEE.spinFinish 自己的时长 */
     tempo: [0.9, 0.8, 0.8, 0.85, 0.95, 1.1, 1.25],
-    leap: { gait: 'leap' as GaitId, duration: 0.24 }, // 跃向下一个目标
-    landPause: 0.03, // 落地后到出手之间的一点停顿
-    finisherPause: 0.1, // 最后一击出手前的蓄势停顿（配合慢镜头）
+    /**
+     * 整体放慢倍率（步骤 11b）：乘在旋风斩途中所有时长上（短跳、落地停顿、每一击的预备 / 发力 / 顿住 / 余势、
+     * 击后停顿、最后一击）。1 = v0.4 的速度；想再快一点就调小。
+     */
+    pace: 1.2,
+    /** 跃向下一个目标：连续的短跳跃（含 0.1 秒的短促下蹲，见 GAITS.whirlHop），乘 tempo 和 pace */
+    leap: { gait: 'whirlHop' as GaitId, duration: 0.34 },
+    landPause: 0.05, // 落地后到出手之间的一点停顿（乘 pace）
+    hitPause: 0.06, // 每一击的余势之后、跳向下一个目标之前的停顿（乘 pace），让每一下都看得清
+    finisherPause: 0.12, // 最后一击出手前的蓄势停顿（配合慢镜头，乘 pace）
     shockwaveTime: 0.6, // 冲击波环持续时间
   },
   /** 连击（被动）的第二击：出手各阶段的时长倍率 */
@@ -1286,8 +1502,15 @@ export const ATTACK_ANIM = {
   sparkColor: 0xffb060, // 落脚火星的颜色
   /** 命中顿住时出手者身体的轻微震颤（米 / 弧度），让“顿住”不是死的 */
   holdShudder: 0.012,
-  /** 弓：拉满后到松弦之间的停顿 */
-  bowFullDrawPause: 0.08,
+  /** 弓：拉满后瞄准停顿一拍，再松弦（步骤 11b 加长，拉弓过程更清楚） */
+  bowFullDrawPause: 0.22,
+  /**
+   * 弓弦（步骤 11b）：maxPull = 弦的中点最远拉开多少（米，弓的局部坐标，拉满时弓臂弯到最大）；
+   * snap = 松弦回弹时弦向前弹出的距离（米，乘 bow.draw 的负值）
+   */
+  bow: { maxPull: 0.62, snap: 0.08 },
+  /** 双手握杖：默认握点（LEFT_GRIP）够不着时，左手可以沿杖身滑动的范围（米，相对默认握点：向下 / 向上） */
+  gripSlide: [-0.95, 0.4] as const,
   /** 低画质：关闭次级运动（披风惯性），尘土等粒子按 QUALITY_CONFIG.low.particleScale 减少；主要动作不变 */
   lowQuality: { secondary: false },
 };
@@ -1307,4 +1530,9 @@ export const SECONDARY_MOTION = {
   flutterMax: 0.07, // 飘动幅度的增量上限（米）
   tailGain: 2.2, // 尾巴：偏移量 → 关节转角的比例
   tailMax: 0.8, // 尾巴甩动的转角上限（弧度）
+  /**
+   * 收尾（步骤 11b）：身体停下后，甩动在这么多秒内平滑衰减到 0 并清空弹簧，演出结束时精确回到基准姿态。
+   * 要短于镜头复位的时长（TIMING.cameraOut），这样一次出手演完时所有单位都已静止。
+   */
+  settle: 0.28,
 };

@@ -9,13 +9,14 @@
 
 import { Color, Matrix4, Quaternion, Vector3, type Mesh, type MeshBasicMaterial, type MeshStandardMaterial, type Object3D } from 'three';
 import { getRig, type HumanoidRig } from '../../assets/models/characters/rig';
-import { getEquippedWeapon, getWeaponGlow, getWeaponHold, setBowArrowVisible } from '../../assets/models/weapons';
+import { bowStringDepth, getEquippedWeapon, getWeaponGlow, getWeaponHold, setBowArrowVisible, setBowDraw } from '../../assets/models/weapons';
 import { GLOW_BASE_KEY } from '../../assets/materials';
 import type { UnitTemplate } from '../../core/types';
 import type { SoundPlayer } from '../../assets/audio/SoundEngine';
 import type { SoundName } from '../../data/audioConfig';
 import { animatedJointsOf, extraJointsOf } from './animatedJoints';
-import { ATTACK_ANIM, MOTION_OF_TEMPLATE, MOTION_PROFILES, SECONDARY_MOTION, moveOf, type MotionId } from '../../data/attackAnimConfig';
+import { ATTACK_ANIM, LEFT_GRIP, MOTION_OF_TEMPLATE, MOTION_PROFILES, MOUNTED_STAFF, SECONDARY_MOTION, moveOf, type MotionId } from '../../data/attackAnimConfig';
+import { solveArmIK } from './armIK';
 import { IdleAnimator } from './IdleAnimator';
 import { UnitMotion, type Footfall, type MotionPhase } from './UnitMotion';
 import { seedOf } from './idleMotion';
@@ -80,16 +81,24 @@ export class UnitView implements StageUnit {
   private readonly rest: Record<string, JointRest> = {};
   /** 人形骨架之外的关节（宝宝的头、颈、腿、翅 …）：待机先摆好，动作姿态再加上去 */
   private readonly extras: { joint: Object3D; keys: readonly [string, string, string] }[] = [];
+  /**
+   * 基准姿态（步骤 11b）：建模时所有会动的关节的站姿转角。每帧开头先把它们全部写回基准，
+   * 再叠加待机、出手、受击；任何一层只做“加法”也不会跨帧累积（旧 bug：狼的腿每帧被累加，跳回后四脚朝天）。
+   */
+  private readonly basePose: { joint: Object3D; x: number; y: number; z: number }[] = [];
   private readonly tail: Object3D | undefined;
   private readonly muzzleJoint: Object3D | undefined;
   private readonly weapon: Object3D | undefined;
   private readonly weaponRest = { x: 0, y: 0, z: 0 };
   private readonly weaponLeft: boolean;
+  /** 手里的弓（可以拉弦时）：弓弦到握把的距离 */
+  private readonly bow: { depth: number } | undefined;
   private readonly hpAnchor: Object3D | undefined;
   private readonly flashMaterials: MeshStandardMaterial[] = [];
   private readonly tmp = new Vector3();
   private readonly tmp2 = new Vector3();
   private readonly tmp3 = new Vector3();
+  private readonly tmp4 = new Vector3();
   private readonly quat = new Quaternion();
   private readonly quat2 = new Quaternion();
   private readonly basis = new Matrix4();
@@ -99,6 +108,8 @@ export class UnitView implements StageUnit {
   readonly fxColor: number;
   private readonly weaponColors: { color: number; accentColor: number } | undefined;
   private readonly trailSpan: readonly [number, number];
+  /** 右手的“杖”：装备的武器，或长在模型上的法杖（右手武器挂点）；左手握杖、杖顶光芒、拖尾用 */
+  private readonly staff: { holder: Object3D; grip: number; tip: number; trail: readonly [number, number] } | undefined;
   private trail: TrailHandle | null = null;
   private glowScale = 1;
   private glowMove = 0;
@@ -142,6 +153,9 @@ export class UnitView implements StageUnit {
     }
     const extra = extraJointsOf(model, this.rig);
     for (const [name, joint] of Object.entries(extra)) this.extras.push({ joint, keys: channelKeys(name) });
+    for (const joint of [...Object.values(this.rest).map((r) => r.joint), ...this.extras.map((e) => e.joint)]) {
+      this.basePose.push({ joint, x: joint.rotation.x, y: joint.rotation.y, z: joint.rotation.z });
+    }
     this.tail = this.rig ? undefined : extra['tail'];
     // 动作档案：人物按武器，其余按模板；没指定的人形用刀的动作，非人形用通用的扑击
     this.motion = template.weaponId ?? MOTION_OF_TEMPLATE[template.templateId] ?? (this.rig ? 'blade' : 'beast');
@@ -155,10 +169,18 @@ export class UnitView implements StageUnit {
       this.weaponRest.z = this.weapon.rotation.z;
     }
     this.weaponLeft = this.weapon !== undefined && getWeaponHold(this.weapon)?.hand === 'left';
+    const depth = this.weapon ? bowStringDepth(this.weapon) : undefined;
+    this.bow = depth === undefined ? undefined : { depth };
     const glow = this.weapon ? getWeaponGlow(this.weapon) : undefined;
     this.weaponColors = glow?.currentColors;
     this.fxColor = this.weaponColors?.color ?? FX_CONFIG.sideColor[template.side];
     this.trailSpan = (template.weaponId && FX_CONFIG.trailSpan[template.weaponId]) || [0, 0];
+    const mounted = MOUNTED_STAFF[template.templateId];
+    if (this.weapon && !this.weaponLeft && template.weaponId) {
+      this.staff = { holder: this.weapon, grip: LEFT_GRIP.weapon[template.weaponId] ?? 0.3, tip: this.trailSpan[1], trail: this.trailSpan };
+    } else if (!this.weapon && mounted && this.rig) {
+      this.staff = { holder: this.rig.weaponMount, grip: LEFT_GRIP.mount, tip: mounted.tip, trail: mounted.trail };
+    }
 
     // 受击闪白只作用在不发光的表面材质上（发光材质由武器/目光自己控制）
     model.traverse((o) => {
@@ -174,8 +196,31 @@ export class UnitView implements StageUnit {
     });
 
     this.idle = new IdleAnimator(model, UNIT_MODELS[template.templateId]?.idle ?? 'stiff', seedOf(template.id));
+    this.restoreBase();
     this.idle.update(0, 1);
     this.applyPose();
+  }
+
+  /** 把所有会动的关节写回基准姿态（每帧最先调用；之后各层在此基础上叠加） */
+  private restoreBase(): void {
+    for (const b of this.basePose) b.joint.rotation.set(b.x, b.y, b.z);
+  }
+
+  /**
+   * 调试 / 测试：当前是否处于防御姿态（防御到回合结束才解除，姿态复位检查要排除它）。
+   */
+  get guarding(): boolean {
+    return this.pose.guard > 0;
+  }
+
+  /** 当前离地高度（米）：跳跃途中大于 0；联系表取景用 */
+  get airHeight(): number {
+    return this.act.gait.hop;
+  }
+
+  /** 调试 / 测试：倒地程度（0 = 站着）；存活单位必须为 0 */
+  get fallen(): number {
+    return this.pose.fall;
   }
 
   // ------------------------------------------------------------------
@@ -183,6 +228,13 @@ export class UnitView implements StageUnit {
   // ------------------------------------------------------------------
 
   anchor(name: AnchorName): Point3 {
+    if (name === 'weapon' && this.staff && (this.motion === 'staff' || !this.weapon)) {
+      // 法杖：杖顶（光弹、锁链从这里射出）
+      const h = this.staff.holder;
+      h.updateWorldMatrix(true, false);
+      const p = this.tmp.set(0, this.staff.tip, 0).applyMatrix4(h.matrixWorld);
+      return { x: p.x, y: p.y, z: p.z };
+    }
     if (name === 'weapon' && this.weapon) {
       const p = this.weapon.getWorldPosition(this.tmp);
       return { x: p.x, y: p.y, z: p.z };
@@ -374,6 +426,7 @@ export class UnitView implements StageUnit {
     this.setWeaponColor(null);
     this.model.visible = true;
     this.idleWeight = 1;
+    this.restoreBase();
     this.idle.update(this.lastIdleTime, 1);
     this.idle.setSecondary(0, 0, 0, 0);
     this.applyPose();
@@ -431,6 +484,15 @@ export class UnitView implements StageUnit {
 
   /** 拖尾两端的世界坐标：有武器取武器上的两点，没有武器取身体前方的一条竖线 */
   private sampleTrail(base: Vector3, tip: Vector3): void {
+    if (!this.weapon && this.staff) {
+      // 长在模型上的法杖：沿右手武器挂点取样
+      const h = this.staff.holder;
+      h.updateWorldMatrix(true, false);
+      base.set(0, this.staff.trail[0], 0).applyMatrix4(h.matrixWorld);
+      tip.set(0, this.staff.trail[1], 0).applyMatrix4(h.matrixWorld);
+      base.lerpVectors(tip, base, FX_CONFIG.trailWidth);
+      return;
+    }
     if (this.weapon) {
       this.weapon.updateWorldMatrix(true, false);
       base.set(0, this.trailSpan[0], 0).applyMatrix4(this.weapon.matrixWorld);
@@ -483,6 +545,7 @@ export class UnitView implements StageUnit {
     this.idleWeight += (target - this.idleWeight) * (1 - Math.exp(-IDLE_CONFIG.blendRate * dt));
     // 倒地后只保留极轻微的变化；消失的单位不动
     const down = (1 - (1 - IDLE_CONFIG.fallenScale) * p.fall) * (1 - p.shrink);
+    this.restoreBase();
     this.idle.update(idleTime, this.idleWeight * down);
     this.applyPose(time);
     this.updateSecondary();
@@ -504,12 +567,17 @@ export class UnitView implements StageUnit {
     const back = c.backOffset * this.baseScale;
     const yaw = m.rotation.y;
     const enabled = ATTACK_RUNTIME.secondary && !this.dead;
+    const p = this.pose;
+    // 身体还在动（出手、受击后仰、闪避、站起）时甩动照常；停下后由 UnitMotion 收尾归零
+    // （后仰、闪避用正弦曲线，结束时是 1e-17 量级而不是精确的 0，所以用阈值判断）
+    const active = this.act.busy || Math.abs(p.lean) > 1e-4 || Math.abs(p.side) > 1e-4 || p.fall > 1e-4;
     this.act.updateSecondary(
       this.scheduler.delta,
       m.position.x - Math.sin(yaw) * back,
       m.position.y,
       m.position.z - Math.cos(yaw) * back,
       enabled,
+      active,
     );
     const push = this.act.push;
     this.idle.setSecondary(push.x, push.y, push.z, this.act.flutter);
@@ -574,6 +642,7 @@ export class UnitView implements StageUnit {
     }
     this.applyExtraJoints();
     this.applyWeaponPose();
+    this.applyLeftGrip();
 
     // 闪白
     if (p.flash > 0 || this.flashWasOn) {
@@ -641,6 +710,10 @@ export class UnitView implements StageUnit {
       x -= (a['shoulderL.x'] ?? 0) + (a['elbowL.x'] ?? 0) - 2.2 * guard;
     }
     w.rotation.set(x, r.y + (a['weapon.y'] ?? 0), r.z + (a['weapon.z'] ?? 0));
+    if (this.bow) {
+      this.applyBowPose(w);
+      return;
+    }
     const aim = a['weapon.aim'] ?? 0;
     if (aim <= 0 || !w.parent) return;
     // 目标姿态（世界坐标）：武器 +y（尖端）指向正前方并按 aimPitch 上扬，+z（刃口）朝下
@@ -655,5 +728,81 @@ export class UnitView implements StageUnit {
     const parent = w.parent.getWorldQuaternion(this.quat2);
     want.premultiply(parent.invert());
     w.quaternion.slerp(want, Math.min(1, aim));
+  }
+
+  /**
+   * 弓（步骤 11b）：
+   *   bow.aim 0~1   把弓摆正：弓身竖直（略带 bow.cant 的倾角），弓背（箭的方向）指向朝向 + weapon.aimYaw、上扬 weapon.aimPitch；
+   *   bow.draw −1~1 拉弦：0 = 未拉；> 0 时弦的中点向拉弦手（右手）靠拢，1 = 正好搭在手上（V 形，弓臂按拉开的距离弯曲）；
+   *                 < 0 = 松弦后弦向前弹出的回弹（配合 outElastic 缓动来回振一下）。
+   */
+  private applyBowPose(w: Object3D): void {
+    const a = this.act.pose;
+    const depth = this.bow?.depth ?? 0;
+    const aim = a['bow.aim'] ?? 0;
+    if (aim > 0 && w.parent) {
+      const yaw = this.act.yaw + (a['weapon.aimYaw'] ?? 0);
+      const up = a['weapon.aimPitch'] ?? 0;
+      // 弓的 +z（箭的方向）指向目标，+y（上弓臂）竖直向上并垂直于箭；cant 让弓身绕箭轴略微倾斜
+      const fwd = this.tmp.set(Math.sin(yaw) * Math.cos(up), Math.sin(up), Math.cos(yaw) * Math.cos(up));
+      const top = this.tmp2.set(0, 1, 0).addScaledVector(fwd, -fwd.y).normalize();
+      const cant = a['bow.cant'] ?? 0;
+      if (cant !== 0) top.applyAxisAngle(fwd, cant);
+      const side = this.tmp3.crossVectors(top, fwd);
+      this.basis.makeBasis(side, top, fwd);
+      const want = this.quat.setFromRotationMatrix(this.basis);
+      w.parent.updateWorldMatrix(true, false);
+      want.premultiply(w.parent.getWorldQuaternion(this.quat2).invert());
+      w.quaternion.slerp(want, Math.min(1, aim));
+    }
+    const draw = a['bow.draw'] ?? 0;
+    if (draw === 0) {
+      if (this.bowDrawn) setBowDraw(w, null, ATTACK_ANIM.bow.maxPull);
+      this.bowDrawn = false;
+      return;
+    }
+    this.bowDrawn = true;
+    w.updateWorldMatrix(true, false);
+    const rest = this.tmp2.set(0, 0, -depth);
+    let nock: Vector3;
+    if (draw > 0 && this.rig) {
+      // 拉弦手在弓的局部坐标里的位置；弦的中点从原位向它靠拢
+      const hand = this.rig.armR.hand;
+      hand.updateWorldMatrix(true, false);
+      const local = w.worldToLocal(hand.getWorldPosition(this.tmp));
+      nock = rest.lerp(local, Math.min(1, draw));
+    } else {
+      // 松弦回弹：弦的中点向前弹过原位
+      nock = rest.setZ(-depth - draw * ATTACK_ANIM.bow.snap);
+    }
+    setBowDraw(w, nock, ATTACK_ANIM.bow.maxPull);
+  }
+
+  private bowDrawn = false;
+
+  /**
+   * 双手握杖（步骤 11b）：grip.left 0~1 时，左手按两段骨骼 IK 握到右手武器的杖身上（LEFT_GRIP 处），
+   * 按权重和原来的左臂姿态混合。在武器摆好之后调用，所以杖怎么挥，左手都跟着。
+   */
+  private applyLeftGrip(): void {
+    const w = this.act.pose['grip.left'] ?? 0;
+    if (w <= 0 || !this.rig || !this.staff) return;
+    const h = this.staff.holder;
+    h.updateWorldMatrix(true, false);
+    const target = this.tmp.set(0, this.staff.grip, 0).applyMatrix4(h.matrixWorld);
+    // 默认握点够不着时（杖挥到了身体另一侧），左手沿杖身滑到离左肩最近、够得着的地方
+    const arm = this.rig.armL;
+    const shoulder = arm.shoulder.getWorldPosition(this.tmp2);
+    const s = this.model.scale.y;
+    const reach = (arm.elbow.position.length() + arm.hand.position.length()) * s * 0.97;
+    if (shoulder.distanceTo(target) > reach) {
+      const base = this.tmp3.set(0, 0, 0).applyMatrix4(h.matrixWorld);
+      const dir = this.tmp4.set(0, 1, 0).transformDirection(h.matrixWorld);
+      const scale = h.matrixWorld.getMaxScaleOnAxis();
+      const [lo, hi] = ATTACK_ANIM.gripSlide;
+      const along = Math.max((this.staff.grip + lo) * scale, Math.min((this.staff.grip + hi) * scale, shoulder.sub(base).dot(dir)));
+      target.copy(base).addScaledVector(dir, along);
+    }
+    solveArmIK(arm, target, Math.min(1, w), 1);
   }
 }

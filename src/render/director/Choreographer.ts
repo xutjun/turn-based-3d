@@ -24,7 +24,7 @@ import type {
   UnitRevivedEvent,
 } from '../../core/events';
 import type { UnitId } from '../../core/types';
-import { ATTACK_ANIM, BOW, CAST, MELEE, MOTION_PROFILES, moveOf, type MoveDef, type MoveTiming } from '../../data/attackAnimConfig';
+import { ATTACK_ANIM, BOW, CAST, MELEE, MOTION_PROFILES, moveOf, type MoveTiming } from '../../data/attackAnimConfig';
 import { CAMERA_FX, ELEMENT_COLORS, FX_COLORS, FX_CONFIG, GLOW_FX, SMALL_SPELL, STAGING, TIMING } from '../../data/presentationConfig';
 import type { Scheduler } from './Scheduler';
 import type { DirectorHud, GroundPoint, Point3, Stage, StageUnit } from './types';
@@ -42,16 +42,19 @@ export interface Step {
 /** 这一击的分量：heavy = 连斩第 3 击、旋风斩最后一击、魔偶的砸拳、爆炸这类重击 */
 type Weight = 'normal' | 'heavy';
 
-/** 按节奏倍率缩放一个动作各阶段的时长（倍率越小越快） */
-function scaleTiming(t: MoveTiming, k: number): MoveTiming {
-  if (k === 1) return t;
+/**
+ * 按节奏倍率缩放一个动作各阶段的时长（倍率越小越快）。
+ * tempo 只缩放预备、发力、余势（顿住的帧数、停一拍、收招不随节奏变）；pace 是整体放慢倍率，所有阶段都乘（旋风斩用）。
+ */
+function scaleTiming(t: MoveTiming, tempo: number, pace = 1): MoveTiming {
+  if (tempo === 1 && pace === 1) return t;
   return {
-    anticipation: t.anticipation * k,
-    strike: t.strike * k,
-    hold: t.hold, // 顿住的帧数不随节奏变
-    follow: t.follow * k,
-    beat: t.beat,
-    recover: t.recover,
+    anticipation: t.anticipation * tempo * pace,
+    strike: t.strike * tempo * pace,
+    hold: t.hold * pace,
+    follow: t.follow * tempo * pace,
+    beat: t.beat * pace,
+    recover: t.recover * pace,
   };
 }
 
@@ -101,7 +104,8 @@ export class Choreographer {
    * 近战：（原地蓄势 →）冲到目标面前 → 预备 → 发力 → 命中顿住 → 余势 → （下一段 / 下一个目标 …）→ 停一拍 → 收招 → 回到原位。
    * - 普攻：各武器自己的招式（刀斜劈收刀、剑横斩、枪蓄力突刺），发力时拖出武器光轨。
    * - 连斩：对同一目标 3 击，方向和身体姿态各不相同，前一击的余势直接接下一击的预备；武器越来越亮，第 3 击是跃起重劈。
-   * - 旋风斩：沿弧线跃向每个目标，途中旋身、落地横扫，镜头跟随；节奏先快后慢，最后一击大幅度旋转砸地，带冲击波和慢镜头。
+   * - 旋风斩：大跳跃落到第一个目标面前，之后连续短跳跃（沿弧线、途中旋身）切向每个目标、落地横扫，镜头跟随；
+   *   节奏先快后慢，整体乘 ATTACK_ANIM.whirlwind.pace 放慢，最后一击大幅度旋转砸地，带冲击波和慢镜头；打完一个大跳跃回原位。
    * - 连击（被动）：第一击后不返回，换一个动作再打一次。
    * 逻辑层没有发出结算事件的段数 / 目标不会演，所以目标死亡或不足时不会出现空挥。
    */
@@ -111,10 +115,11 @@ export class Choreographer {
     const combo = cast.animation === 'comboSlash';
     const whirl = cast.animation === 'whirlwind';
     const W = ATTACK_ANIM.whirlwind;
+    const pace = whirl ? W.pace : 1;
     let away = false;
     let lastTarget: UnitId | null = null;
     let lastImpact: Promise<void> = Promise.resolve();
-    let lastMove: MoveDef | null = null;
+    let lastTiming: MoveTiming | null = null;
     let leaps = 0;
     if (whirl) actor.setWeaponGlow(GLOW_FX.whirlwind, 0.2);
 
@@ -147,7 +152,7 @@ export class Choreographer {
         tempo = finisher ? 1 : (W.tempo[Math.min(i, W.tempo.length - 1)] ?? 1);
       }
       const move = moveOf(actor.motion, 'melee', variant);
-      const t = scaleTiming(move.timing, tempo);
+      const t = scaleTiming(move.timing, tempo, pace);
       const weight: Weight = finisher || move.fx?.heavy ? 'heavy' : 'normal';
       // 旋风斩途中：预备动作在跃进的空中就摆好，落地即出手
       const airborneWindup = whirl && away && !finisher && targetId !== lastTarget;
@@ -166,14 +171,18 @@ export class Choreographer {
           }
           await actor.moveTo(point, profile.approach.duration, target.home);
         } else if (whirl) {
-          // 蹬地跃向下一个目标：沿弧线切入，途中旋身，拖着光轨，镜头快速平移跟上
-          const leap = W.leap.duration * tempo;
+          // 短促下蹲、蹬地，短跳跃沿弧线切向下一个目标，途中旋身，拖着光轨，镜头快速平移跟上；
+          // 离地的一瞬间开始摆横扫的预备姿态，落地即出手
+          const leap = W.leap.duration * tempo * pace;
           actor.setTrail(true);
           void stage.camera.focus(point, CAMERA_FX.followZoom, CAMERA_FX.followPan, Math.max(leap, TIMING.cameraFollow));
-          if (airborneWindup) void actor.windup('melee', leap * 0.7, variant);
-          await actor.moveTo(point, leap, target.home, { gait: W.leap.gait, side: leaps % 2 === 0 ? 1 : -1 });
+          await actor.moveTo(point, leap, target.home, {
+            gait: W.leap.gait,
+            side: leaps % 2 === 0 ? 1 : -1,
+            onAirborne: airborneWindup ? () => void actor.windup('melee', leap * 0.6, variant) : undefined,
+          });
           leaps += 1;
-          await scheduler.wait(W.landPause * tempo);
+          await scheduler.wait(W.landPause * tempo * pace);
         } else {
           await actor.moveTo(point, profile.next.duration, target.home, { gait: profile.next.gait });
         }
@@ -191,7 +200,7 @@ export class Choreographer {
       if (!airborneWindup) await actor.windup('melee', t.anticipation, variant);
       if (whirl && finisher) {
         // 最后一击：蓄势停一下，短暂慢镜头
-        await scheduler.wait(W.finisherPause);
+        await scheduler.wait(W.finisherPause * pace);
         scheduler.warp(CAMERA_FX.slowMo.factor, CAMERA_FX.slowMo.duration);
       }
 
@@ -219,15 +228,17 @@ export class Choreographer {
       // 余势：顺着力道过冲、回弹
       await actor.follow(t.follow);
       if (!whirl) actor.setTrail(false);
-      lastMove = move;
+      // 旋风斩：每一击之后停一下再跳向下一个目标（最后一击之后有自己的“停一拍”）
+      else if (!lastStep) await scheduler.wait(W.hitPause * pace);
+      lastTiming = t;
     }
 
     // 收尾：停一拍，再平滑收招，然后回到原位
     actor.setTrail(false);
     actor.setWeaponGlow(1, 0.3);
-    if (lastMove) {
-      await scheduler.wait(lastMove.timing.beat);
-      await Promise.all([lastImpact, actor.recover(lastMove.timing.recover)]);
+    if (lastTiming) {
+      await scheduler.wait(lastTiming.beat);
+      await Promise.all([lastImpact, actor.recover(lastTiming.recover)]);
     }
     if (away) {
       if (whirl) void stage.camera.focus(actor.home, CAMERA_FX.focusZoom, CAMERA_FX.focusPan, profile.retreat.duration);
@@ -255,7 +266,8 @@ export class Choreographer {
       const t = moveOf(actor.motion, 'bow', variant).timing;
       await settle;
       await actor.windup('bow', t.anticipation, variant);
-      if (i === 0) await scheduler.wait(ATTACK_ANIM.bowFullDrawPause);
+      // 拉满后瞄准停顿一拍；三连射的后两箭停得短一些
+      await scheduler.wait(ATTACK_ANIM.bowFullDrawPause * (i === 0 ? 1 : 0.4));
       await actor.release('bow', t.strike, variant);
       const from = actor.anchor('weapon');
       const flights = targets.map((id) =>
@@ -338,9 +350,16 @@ export class Choreographer {
     const size = small ? SMALL_SPELL.scale : 1;
     // 法杖按施法元素变色
     actor.setWeaponColor(color);
-    // 施法动作：群体法术 = 高举召唤，治疗 / 复活 = 祝祷，其余 = 指向目标
-    const variant = kind === 'group' ? CAST.invoke : kind === 'heal' || kind === 'revive' ? CAST.bless : CAST.point;
-    const timing = moveOf(actor.motion, 'cast', variant).timing;
+    // 施法动作（步骤 11b）：按法术种类和元素选挥杖轨迹——火系挥弧劈下、雷系画圈高举、封印画圈前指、普攻挑指，
+    // 群体法术幅度最大；治疗 / 复活 = 祝祷
+    const variant = castVariant(kind, cast.element);
+    const move = moveOf(actor.motion, 'cast', variant);
+    const timing = move.timing;
+    // 蓄力至少要有动作配置的预备时长，挥杖的轨迹才看得清
+    const chargeOf = (base: number): number => Math.max(base, timing.anticipation);
+    // 法杖类动作：蓄力时杖顶拖出发光轨迹
+    const staffTrail = move.fx?.trail === true;
+    if (staffTrail) actor.setTrail(true);
     // 没有法杖的施法者（骨龙、幽灵）：蓄力时光点向“施法点”汇聚成一团
     const gather = (charge: number): void => {
       const g = MOTION_PROFILES[actor.motion].gather;
@@ -353,7 +372,7 @@ export class Choreographer {
       const grounds = stepTargets(first!).map((id) => stage.unit(id).home);
       const center = centroid(grounds)!;
       const radius = (Math.max(1.6, ...grounds.map((g) => Math.hypot(g.x - center.x, g.z - center.z))) + 1.1) * size;
-      const charge = TIMING.spellCharge * (small ? SMALL_SPELL.charge : 1);
+      const charge = chargeOf(TIMING.spellCharge * (small ? SMALL_SPELL.charge : 1));
       actor.setWeaponGlow(GLOW_FX.spellCharge * (small ? SMALL_SPELL.glow : 1), charge);
       void stage.aura('charge', feet, color, charge + TIMING.castRelease, 1.3 * size);
       void stage.aura('runeCircle', { x: center.x, y: 0, z: center.z }, color, charge + TIMING.strike + 0.35, radius);
@@ -361,16 +380,23 @@ export class Choreographer {
       gather(charge);
       await actor.windup('cast', charge, variant);
     } else if (kind === 'fireball') {
-      actor.setWeaponGlow(GLOW_FX.singleCharge, TIMING.singleCharge);
-      void stage.aura('charge', feet, color, TIMING.singleCharge + TIMING.castRelease, 1.1);
-      gather(TIMING.singleCharge);
-      await actor.windup('cast', TIMING.singleCharge, variant);
+      const charge = chargeOf(TIMING.singleCharge);
+      actor.setWeaponGlow(GLOW_FX.singleCharge, charge);
+      void stage.aura('charge', feet, color, charge + TIMING.castRelease, 1.1);
+      gather(charge);
+      await actor.windup('cast', charge, variant);
     } else {
-      actor.setWeaponGlow(GLOW_FX.cast, TIMING.castWindup);
-      gather(TIMING.castWindup);
-      await actor.windup('cast', TIMING.castWindup, variant);
+      const charge = chargeOf(TIMING.castWindup);
+      actor.setWeaponGlow(GLOW_FX.cast, charge);
+      gather(charge);
+      await actor.windup('cast', charge, variant);
     }
     await actor.release('cast', TIMING.castRelease, variant);
+    if (staffTrail) {
+      // 释放：杖顶光芒暴涨（一团光爆），拖尾随即收起
+      void stage.burst('impact', actor.anchor('weapon'), color, TIMING.hit, kind === 'group' ? 1.4 : 1);
+      void scheduler.wait(timing.hold + timing.follow * 0.5).then(() => actor.setTrail(false));
+    }
     // 出手之后：顿一下 → 余势 → 停一拍 → 收招（和法术光效同时进行）
     const recover = (async () => {
       await actor.hold(timing.hold);
@@ -539,6 +565,23 @@ export class Choreographer {
     if (first === undefined) return actor.home;
     const target = this.stage.unit(first).home;
     return { x: actor.home.x * 0.65 + target.x * 0.35, z: actor.home.z * 0.65 + target.z * 0.35 };
+  }
+}
+
+/** 施法动作编号：按演出种类和元素选（见 data/attackAnimConfig.ts 的 CAST） */
+function castVariant(kind: CastKind, element: SkillCastEvent['element']): number {
+  switch (kind) {
+    case 'group':
+      return element === 'thunder' ? CAST.groupThunder : element === 'fire' ? CAST.groupFire : CAST.invoke;
+    case 'heal':
+    case 'revive':
+      return CAST.bless;
+    case 'seal':
+      return CAST.seal;
+    case 'fireball':
+      return element === 'thunder' ? CAST.thunder : CAST.fire;
+    default:
+      return CAST.point;
   }
 }
 

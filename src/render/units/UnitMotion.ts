@@ -34,8 +34,22 @@ const TAU = Math.PI * 2;
 const TURN = 'root.turn';
 const REST: readonly PoseKey[] = [{ pose: {} }];
 
-/** 出手者当前处于哪个阶段（联系表和测试用它标注关键帧） */
-export type MotionPhase = 'idle' | 'brace' | 'approach' | 'anticipation' | 'strike' | 'hold' | 'follow' | 'recover' | 'return';
+/**
+ * 出手者当前处于哪个阶段（联系表和测试用它标注关键帧）。
+ * 近战的来回（步骤 11b）：crouch 下蹲蓄力 → approach / return 腾空 → land 落地缓冲。
+ */
+export type MotionPhase =
+  | 'idle'
+  | 'brace'
+  | 'crouch'
+  | 'approach'
+  | 'land'
+  | 'anticipation'
+  | 'strike'
+  | 'hold'
+  | 'follow'
+  | 'recover'
+  | 'return';
 
 /** 落脚事件：起步蹬地 / 途中每一步 / 到位（刹车或落地） */
 export interface Footfall {
@@ -264,9 +278,14 @@ export class UnitMotion {
   // 位移
   // ------------------------------------------------------------------
 
-  /** 离开站位移动到某点；到位时正对 face */
-  moveTo(point: GroundPoint, duration: number, face?: GroundPoint, options: MoveOptions = {}): Promise<void> {
+  /**
+   * 离开站位移动到某点；到位时正对 face。
+   * 带下蹲 / 落地缓冲的步态（大跳跃）：duration 是总时长，先下蹲蓄力、再腾空、落地后缓冲回到站姿。
+   */
+  async moveTo(point: GroundPoint, duration: number, face?: GroundPoint, options: MoveOptions = {}): Promise<void> {
     this.away = true;
+    const gaitId = options.gait ?? MOTION_PROFILES[this.motion].approach.gait;
+    const { air, land } = await this.takeOff(gaitId, duration, options);
     this.phase = 'approach';
     const dx = point.x - this.ground.x;
     const dz = point.z - this.ground.z;
@@ -274,27 +293,68 @@ export class UnitMotion {
     // 几乎没有位移时不转向跑动方向（避免方向抖动）
     const travel = Math.hypot(dx, dz) > 0.05 ? Math.atan2(dx, dz) : fromYaw;
     const faceYaw = face ? Math.atan2(face.x - point.x, face.z - point.z) : travel;
-    const gait = options.gait ?? MOTION_PROFILES[this.motion].approach.gait;
-    return this.travel(point, duration, gait, options.side ?? 1, (t) => chargeYaw(t, fromYaw, travel, faceYaw, STAGING.chargeTurn));
+    await this.travel(point, air, gaitId, options.side ?? 1, (t) => chargeYaw(t, fromYaw, travel, faceYaw, STAGING.chargeTurn));
+    await this.landing(gaitId, land, false);
   }
 
-  /** 回到站位：面朝对手退回，途中平滑转回原来的朝向；落定后回到站姿 */
+  /**
+   * 回到站位：面朝对手向后跳回（大跳跃：下蹲 → 腾空 → 落地缓冲），途中平滑转回原来的朝向；
+   * 落定后位置、朝向、姿态全部按基准写回（不靠反向抵消）。
+   */
   async returnHome(duration: number, options: MoveOptions = {}): Promise<void> {
+    const gaitId = options.gait ?? MOTION_PROFILES[this.motion].retreat.gait;
+    const { air, land } = await this.takeOff(gaitId, duration, options);
     this.phase = 'return';
     const fromYaw = this.yaw;
-    const gait = options.gait ?? MOTION_PROFILES[this.motion].retreat.gait;
-    await this.travel(this.home, duration, gait, options.side ?? 1, (t) => turnToward(fromYaw, this.baseYaw, t));
+    await this.travel(this.home, air, gaitId, options.side ?? 1, (t) => turnToward(fromYaw, this.baseYaw, t));
     this.yaw = this.baseYaw;
     this.ground.x = this.home.x;
     this.ground.z = this.home.z;
-    // 落地姿态（狼跳回后的缓冲）平滑回到站姿
-    if (Object.keys(this.pose).length > 0) {
-      const token = this.poseToken + 1;
-      await this.playKeys(REST, Math.min(0.2, duration * 0.5), 'inOut');
-      if (token === this.poseToken) this.clearPose();
-    }
+    await this.landing(gaitId, land, true);
+    // 以基准为准：落定后原位、原朝向、站姿
+    this.yaw = this.baseYaw;
+    this.ground.x = this.home.x;
+    this.ground.z = this.home.z;
+    this.poseToken += 1;
+    this.clearPose();
     this.away = false;
     this.phase = 'idle';
+  }
+
+  /**
+   * 起跳前的下蹲蓄力（步态有 crouch 时）；返回腾空和落地缓冲各占的时间（三段加起来 = duration）。
+   * 离地的一瞬间调用 options.onAirborne。
+   */
+  private async takeOff(gaitId: GaitId, duration: number, options: MoveOptions): Promise<{ air: number; land: number }> {
+    const g = GAITS[gaitId];
+    const crouch = g.crouch ? Math.min(g.crouch.duration, duration * 0.4) : 0;
+    const land = g.land ? Math.min(g.land.duration, duration * 0.4) : 0;
+    if (g.crouch && crouch > 0) {
+      this.phase = 'crouch';
+      await this.playKeys([{ pose: g.crouch.pose }], crouch, g.crouch.ease ?? 'outCubic');
+    }
+    options.onAirborne?.();
+    return { air: Math.max(0.05, duration - crouch - land), land };
+  }
+
+  /** 落地缓冲（步态有 land 时）：先压到落地姿态，再平滑回到站姿；home = 跳回原位（结束后清空姿态） */
+  private async landing(gaitId: GaitId, duration: number, home: boolean): Promise<void> {
+    const g = GAITS[gaitId];
+    if (!g.land || duration <= 0) {
+      if (home && Object.keys(this.pose).length > 0) await this.playKeys(REST, 0.15, 'inOut');
+      return;
+    }
+    this.phase = 'land';
+    const token = this.poseToken + 1;
+    await this.playKeys(
+      [
+        { pose: g.land.pose, span: 0.35, ease: 'out' },
+        { pose: {}, span: 0.65, ease: 'inOut' },
+      ],
+      duration,
+      'inOut',
+    );
+    if (token === this.poseToken) this.clearPose();
   }
 
   private travel(to: GroundPoint, duration: number, gaitId: GaitId, side: number, yawAt: (t: number) => number): Promise<void> {
@@ -389,10 +449,15 @@ export class UnitMotion {
    * @param ax 身体后方挂点的世界坐标（披风大致所在的位置）
    * @param enabled 关闭（低画质）或跳过动画时质点直接贴回挂点，没有任何残留的甩动
    */
-  updateSecondary(dt: number, ax: number, ay: number, az: number, enabled: boolean): void {
+  updateSecondary(dt: number, ax: number, ay: number, az: number, enabled: boolean, active = this.busy): void {
     const c = SECONDARY_MOTION;
     const s = this.spring;
-    if (!enabled || !s.ready || dt <= 0 || this.scheduler.skip) {
+    // 收尾（步骤 11b）：身体停下后，甩动在 settle 秒内平滑衰减到 0 并清空弹簧，
+    // 保证每次演出结束时披风、尾巴精确回到基准姿态，不留余摆
+    if (active) this.settleTime = 0;
+    else if (dt > 0) this.settleTime += dt;
+    const settled = !active && this.settleTime >= c.settle;
+    if (!enabled || !s.ready || dt <= 0 || this.scheduler.skip || settled) {
       s.ready = enabled;
       s.qx = s.px = ax;
       s.qy = s.py = ay;
@@ -435,12 +500,16 @@ export class UnitMotion {
       s.qy = ay + oy / c.liftFactor;
       s.qz = az + oz;
     }
-    this.push.x = ox;
-    this.push.y = oy;
-    this.push.z = oz;
+    const gain = active ? 1 : 1 - smooth(this.settleTime / c.settle);
+    this.push.x = ox * gain;
+    this.push.y = oy * gain;
+    this.push.z = oz * gain;
     const relSpeed = Math.hypot(s.vx, s.vy, s.vz);
-    this.flutter = Math.min(c.flutterMax, c.flutterGain * (bodySpeed * 0.5 + relSpeed * 0.5));
+    this.flutter = gain * Math.min(c.flutterMax, c.flutterGain * (bodySpeed * 0.5 + relSpeed * 0.5));
   }
+
+  /** 身体停下后已经过了多久（演出时间，秒）；次级运动的收尾用 */
+  private settleTime = 0;
 
   // ------------------------------------------------------------------
 

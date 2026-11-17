@@ -3,6 +3,7 @@ import { EventBus, type BattleEvent, type BattleEventInput, type UnitSnapshot } 
 import type { Side, UnitId } from '../../src/core/types';
 import {
   ATTACK_ANIM,
+  CAST,
   GAITS,
   MELEE,
   MOTION_OF_TEMPLATE,
@@ -22,7 +23,7 @@ import { EXTRA_JOINT_NAMES } from '../../src/render/units/animatedJoints';
 import { dashProgress, dashSpeed, UnitMotion, wrapAngle, type Footfall, type MotionPhase } from '../../src/render/units/UnitMotion';
 import { createFakes, pump } from './directorFakes';
 
-// 步骤 11：进攻动画。这里测三件事——
+// 步骤 11 / 11b：进攻动画。这里测三件事——
 //   1. 配置本身自洽（每个动作都有完整的节奏、用到的关节都登记过）；
 //   2. UnitMotion（纯计算）：位移曲线、姿态补间、跳过动画后的最终状态、倍速缩放、次级运动；
 //   3. 编排（Choreographer）：各阶段的先后顺序和时长与配置一致。
@@ -45,11 +46,10 @@ async function runFor(scheduler: Scheduler, promise: Promise<unknown>, dt = 1 / 
   return real;
 }
 
-/** 一次完整的近战普攻：蓄势 → 冲刺 → 预备 → 发力 → 顿住 → 余势 → 停一拍 → 收招 → 回位 */
+/** 一次完整的近战普攻：（下蹲 → 大跳跃 → 落地缓冲）→ 预备 → 发力 → 顿住 → 余势 → 停一拍 → 收招 →（下蹲 → 跳回 → 落地缓冲） */
 async function fullAttack(m: UnitMotion, scheduler: Scheduler, motion: MotionId, variant = 0): Promise<void> {
   const profile = MOTION_PROFILES[motion];
   const t = moveOf(motion, 'melee', variant).timing;
-  if (profile.brace) await m.brace(profile.brace.duration);
   await m.moveTo(TARGET, profile.approach.duration, { x: -3, z: -2 });
   await m.windup('melee', t.anticipation, variant);
   await m.release('melee', t.strike, variant);
@@ -111,20 +111,101 @@ describe('进攻动画配置', () => {
     expect(Math.abs(finish.strike.at(-1)!.pose['root.turn']!)).toBeGreaterThan(Math.PI * 2);
   });
 
-  it('狼和魔偶：出发前有蓄势，连击的第二击换一个动作；魔偶的每一击都是重击并带地面震动', () => {
-    for (const m of ['wolf', 'golem'] as const) {
-      expect(MOTION_PROFILES[m].brace, m).toBeDefined();
-      expect(moveOf(m, 'melee', MELEE.second), m).not.toBe(moveOf(m, 'melee', MELEE.basic));
+  it('近战物理攻击全部是大跳跃：原地下蹲蓄力 → 高抛物线 → 落地有尘土和震屏 → 落地缓冲；来回都是', () => {
+    for (const m of ['blade', 'sword', 'spear', 'wolf', 'golem'] as const) {
+      for (const leg of ['approach', 'retreat'] as const) {
+        const g = GAITS[MOTION_PROFILES[m][leg].gait];
+        expect(g.crouch, `${m}.${leg} 下蹲`).toBeDefined();
+        expect(g.land, `${m}.${leg} 落地缓冲`).toBeDefined();
+        expect(g.hop, `${m}.${leg} 腾空`).toBeGreaterThanOrEqual(0.45);
+        expect(g.stride, `${m}.${leg} 没有小碎步`).toBeGreaterThan(20);
+        expect(g.bob, m).toBe(0);
+        expect(g.dust.end, `${m}.${leg} 落地尘土`).toBeGreaterThan(0);
+        expect(g.shake, `${m}.${leg} 落地震屏`).toBeGreaterThan(0);
+        // 下蹲 + 落地缓冲之外还留有足够的腾空时间
+        expect(MOTION_PROFILES[m][leg].duration - g.crouch!.duration - g.land!.duration, m).toBeGreaterThan(0.35);
+      }
     }
-    expect(GAITS[MOTION_PROFILES.wolf.approach.gait].hop).toBeGreaterThan(0.4); // 扑跃有腾空弧线
-    expect(GAITS[MOTION_PROFILES.wolf.approach.gait].poses?.some((k) => (k.pose['root.stretch'] ?? 0) > 0.1)).toBe(true); // 身体拉长
+    // 人形跳得高，腾空时身体略前倾
+    expect(GAITS.jump.hop).toBeGreaterThan(1.0);
+    expect(GAITS.jump.lean).toBeGreaterThan(0);
+    // 魔偶更沉重：跳得最低、落地震动最大、下蹲最久；狼更轻快：腾空时间最短
+    const air = (m: MotionId): number => {
+      const leg = MOTION_PROFILES[m].approach;
+      const g = GAITS[leg.gait];
+      return leg.duration - g.crouch!.duration - g.land!.duration;
+    };
+    const golem = GAITS[MOTION_PROFILES.golem.approach.gait];
+    const wolf = GAITS[MOTION_PROFILES.wolf.approach.gait];
+    expect(golem.hop).toBeLessThan(wolf.hop);
+    expect(golem.hop).toBeLessThan(GAITS.jump.hop);
+    expect(golem.shake).toBeGreaterThan(GAITS.jump.shake * 2);
+    expect(golem.shake).toBeGreaterThan(wolf.shake * 2);
+    expect(golem.crouch!.duration).toBeGreaterThan(GAITS.jump.crouch!.duration);
+    expect(air('wolf')).toBeLessThan(air('blade'));
+    expect(air('wolf')).toBeLessThan(air('golem'));
+    // 狼：下伏蓄力、腾空时身体拉长；魔偶：下蹲时双臂举过头顶
+    expect(wolf.crouch!.pose['foreLegL.x']).toBeLessThan(-0.3);
+    expect(wolf.poses?.some((k) => (k.pose['root.stretch'] ?? 0) > 0.1)).toBe(true);
+    expect(golem.crouch!.pose['shoulderL.x']).toBeLessThan(-2.5);
+    // 连击的第二击换一个动作；魔偶的每一击都是重击并带地面震动
+    for (const m of ['wolf', 'golem'] as const) expect(moveOf(m, 'melee', MELEE.second), m).not.toBe(moveOf(m, 'melee', MELEE.basic));
     const slam = moveOf('golem', 'melee', MELEE.basic);
     expect(slam.fx?.heavy).toBe(true);
     expect(slam.fx?.shockwave).toBeGreaterThan(0);
-    expect(GAITS[MOTION_PROFILES.golem.approach.gait].shake).toBeGreaterThan(0);
-    // 魔偶来回都比人形慢
-    expect(MOTION_PROFILES.golem.approach.duration).toBeGreaterThan(MOTION_PROFILES.blade.approach.duration * 1.5);
-    expect(MOTION_PROFILES.golem.retreat.duration).toBeGreaterThan(MOTION_PROFILES.blade.retreat.duration * 1.5);
+  });
+
+  it('弓：拉弦（弦的中点跟着右手）→ 拉满 → 松弦回弹；三连射每一箭都重新拉弦；箭雨举弓朝天、后仰', () => {
+    for (const [style, variant] of [['bow', 0], ['bow', 1], ['bowUp', 0]] as const) {
+      const move = moveOf('bow', style, variant);
+      const full = move.ready.at(-1)!.pose;
+      expect(full['bow.draw'], move.label).toBe(1); // 拉满：弦搭在右手上
+      expect(full['bow.aim'], move.label).toBe(1); // 弓摆正
+      // 先搭弦（右手离弓近），再拉到脸侧
+      expect(move.ready.length, move.label).toBeGreaterThanOrEqual(2);
+      expect(move.strike.at(-1)!.pose['bow.draw'], move.label).toBeLessThan(0); // 松弦：弦向前弹出
+      expect(move.follow.at(-1)!.pose['bow.draw'], move.label).toBe(0); // 回弹后停住
+      expect(move.follow.at(-1)!.ease, move.label).toBe('outElastic');
+    }
+    const shot = moveOf('bow', 'bow', 0);
+    expect(shot.ready[0]!.pose['root.turn']).toBeLessThan(-0.6); // 侧身站定
+    expect(ATTACK_ANIM.bowFullDrawPause).toBeGreaterThanOrEqual(0.15); // 瞄准停顿一拍
+    const sky = moveOf('bow', 'bowUp', 0).ready.at(-1)!.pose;
+    expect(sky['weapon.aimPitch']).toBeGreaterThan(0.7); // 举弓朝天
+    expect(sky['root.pitch']).toBeLessThan(-0.3); // 蓄满时身体后仰
+  });
+
+  it('法杖施法：双手握杖、挥杖画弧 / 画圈、杖顶拖光轨；群体法术幅度最大，封印和单体较简短；不同法术轨迹不同', () => {
+    const cast = (v: number): MoveDef => moveOf('staff', 'cast', v);
+    const staffMoves = [CAST.point, CAST.seal, CAST.fire, CAST.thunder, CAST.groupFire, CAST.groupThunder].map(cast);
+    expect(new Set(staffMoves).size).toBe(staffMoves.length);
+    for (const move of staffMoves) {
+      expect(move.fx?.trail, move.label).toBe(true);
+      expect(move.ready.some((k) => k.pose['grip.left'] === 1), `${move.label} 双手握杖`).toBe(true);
+      expect(move.recover?.at(-1)!.pose['grip.left'], `${move.label} 收招松手`).toBe(0);
+    }
+    const span = (move: MoveDef): number => {
+      const xs = move.ready.map((k) => k.pose['shoulderR.x'] ?? 0);
+      return Math.max(...xs) - Math.min(...xs);
+    };
+    // 群体法术：蓄力最久、举杖过头
+    for (const g of [cast(CAST.groupFire), cast(CAST.groupThunder)]) {
+      for (const small of [cast(CAST.seal), cast(CAST.fire), cast(CAST.thunder)]) {
+        expect(g.timing.anticipation, g.label).toBeGreaterThan(small.timing.anticipation);
+      }
+      expect(Math.min(...g.ready.map((k) => k.pose['shoulderR.x'] ?? 0)), g.label).toBeLessThan(-2.6);
+      expect(span(g), g.label).toBeGreaterThan(span(cast(CAST.seal)));
+    }
+    // 火系劈下（释放时杖尖指向目标、略向下），雷系高举（释放时手臂举过头顶）
+    expect(cast(CAST.fire).strike.at(-1)!.pose['weapon.aim']).toBe(1);
+    expect(cast(CAST.fire).strike.at(-1)!.pose['weapon.aimPitch']).toBeLessThan(0);
+    expect(cast(CAST.thunder).strike.at(-1)!.pose['shoulderR.x']).toBeLessThan(-2.6);
+    // 封印画圈：预备里转过一整圈（右肩的前后摆动先增后减再回来）
+    const sealXs = cast(CAST.seal).ready.map((k) => k.pose['shoulderR.x'] ?? 0);
+    expect(Math.max(...sealXs) - Math.min(...sealXs)).toBeGreaterThan(0.6);
+    // 敌方的祭司、亡灵法师也用法杖动作
+    expect(MOTION_OF_TEMPLATE['enemy_demon_priest']).toBe('staff');
+    expect(MOTION_OF_TEMPLATE['enemy_necromancer']).toBe('staff');
   });
 
   it('法术型宝宝（骨龙、幽灵）有自己的施法动作和汇聚的光团', () => {
@@ -146,10 +227,12 @@ describe('进攻动画配置', () => {
     const joints = new Set<string>(['shoulderR', 'elbowR', 'shoulderL', 'elbowL', 'spine', 'chest', 'head', ...EXTRA_JOINT_NAMES]);
     const root = new Set(['forward', 'side', 'lift', 'pitch', 'roll', 'turn', 'stretch', 'squash']);
     const weapon = new Set(['x', 'y', 'z', 'aim', 'aimPitch', 'aimYaw']);
+    const extra: Record<string, Set<string>> = { bow: new Set(['aim', 'draw', 'cant']), grip: new Set(['left']) };
     const check = (pose: Record<string, number>, where: string): void => {
       for (const [channel, value] of Object.entries(pose)) {
         const [node, axis] = channel.split('.') as [string, string];
-        const ok = node === 'root' ? root.has(axis) : node === 'weapon' ? weapon.has(axis) : joints.has(node) && ['x', 'y', 'z'].includes(axis);
+        const ok =
+          node === 'root' ? root.has(axis) : node === 'weapon' ? weapon.has(axis) : extra[node] ? extra[node]!.has(axis) : joints.has(node) && ['x', 'y', 'z'].includes(axis);
         expect(ok, `${where}: ${channel}`).toBe(true);
         expect(Number.isFinite(value), `${where}: ${channel}`).toBe(true);
       }
@@ -159,6 +242,8 @@ describe('进攻动画配置', () => {
     }
     for (const [id, gait] of Object.entries(GAITS)) {
       for (const key of gait.poses ?? []) check(key.pose, id);
+      if (gait.crouch) check(gait.crouch.pose, `${id}.crouch`);
+      if (gait.land) check(gait.land.pose, `${id}.land`);
       if (gait.legs) for (const j of gait.legs.joints) expect(joints.has(j), `${id}: ${j}`).toBe(true);
     }
     for (const [id, profile] of Object.entries(MOTION_PROFILES)) if (profile.brace) check(profile.brace.pose, id);
@@ -184,8 +269,8 @@ describe('进攻动画配置', () => {
   });
 });
 
-describe('冲刺的位移曲线', () => {
-  it('起点 0、终点 1、单调不减；起步加速、到位刹车（速度降到 0）', () => {
+describe('位移曲线', () => {
+  it('起点 0、终点 1、单调不减；贴地 / 短跳的步态到位前减速，大跳跃的水平速度基本不变（抛物线）', () => {
     for (const id of Object.keys(GAITS) as GaitId[]) {
       const g = GAITS[id];
       expect(dashProgress(0, g.accel, g.brake)).toBe(0);
@@ -196,12 +281,17 @@ describe('冲刺的位移曲线', () => {
         expect(s, id).toBeGreaterThanOrEqual(prev - 1e-9);
         prev = s;
       }
-      // 最后 5% 的时间走的路程，比中段 5% 的时间少得多：到位前在减速
-      const tail = 1 - dashProgress(0.95, g.accel, g.brake);
-      const mid = dashProgress(0.55, g.accel, g.brake) - dashProgress(0.5, g.accel, g.brake);
-      expect(tail, id).toBeLessThan(mid * 0.5);
       expect(dashSpeed(0.999, g.accel, g.brake), id).toBeLessThan(0.05);
       expect(dashSpeed(0.5, g.accel, g.brake), id).toBe(1);
+      if (g.land) {
+        // 大跳跃：水平方向接近匀速
+        for (const t of [0.25, 0.5, 0.75]) expect(Math.abs(dashProgress(t, g.accel, g.brake) - t), id).toBeLessThan(0.03);
+      } else {
+        // 最后 5% 的时间走的路程，比中段 5% 的时间少得多：到位前在减速
+        const tail = 1 - dashProgress(0.95, g.accel, g.brake);
+        const mid = dashProgress(0.55, g.accel, g.brake) - dashProgress(0.5, g.accel, g.brake);
+        expect(tail, id).toBeLessThan(mid * 0.5);
+      }
     }
   });
 
@@ -213,45 +303,85 @@ describe('冲刺的位移曲线', () => {
 });
 
 describe('UnitMotion：一次出手的动作状态', () => {
-  it('人形冲刺：身体前倾、有起伏和重心摆动，起步 / 落脚 / 刹车各有尘土；到位时正对目标且步态归零', async () => {
+  it('人形大跳跃：原地下蹲蓄力 → 高抛物线腾空、身体略前倾 → 落地（尘土、震屏）→ 落地缓冲；总时长不变，到位时正对目标且步态归零', async () => {
     const scheduler = new Scheduler();
     const falls: Footfall[] = [];
     const m = new UnitMotion(scheduler, HOME, YAW, 'blade', (f) => falls.push(f));
+    const g = GAITS.jump;
+    const duration = MOTION_PROFILES.blade.approach.duration;
     let maxPitch = 0;
-    let minPitch = 0;
     let maxHop = 0;
-    let maxRoll = 0;
-    const done = m.moveTo(TARGET, 0.42, { x: -3, z: -2 });
+    let maxSquash = 0;
+    let airborne = 0;
+    let movedDuringCrouch = false;
+    const phases: MotionPhase[] = [];
+    const done = m.moveTo(TARGET, duration, { x: -3, z: -2 }, { onAirborne: () => (airborne += 1) });
     let finished = false;
     void done.then(() => (finished = true));
-    for (let i = 0; i < 1000 && !finished; i++) {
-      scheduler.update(1 / 240);
-      maxPitch = Math.max(maxPitch, m.gait.pitch);
-      minPitch = Math.min(minPitch, m.gait.pitch);
-      maxHop = Math.max(maxHop, m.gait.hop);
-      maxRoll = Math.max(maxRoll, Math.abs(m.gait.roll));
-      await new Promise((r) => setImmediate(r));
-    }
-    expect(maxPitch).toBeGreaterThan(0.2); // 前倾
-    expect(minPitch).toBeLessThan(-0.05); // 刹车时后仰
-    expect(maxHop).toBeGreaterThan(0.04); // 起伏
-    expect(maxRoll).toBeGreaterThan(0.03); // 重心摆动
-    expect(falls[0]!.kind).toBe('start');
-    expect(falls.some((f) => f.kind === 'step')).toBe(true);
-    expect(falls.filter((f) => f.kind === 'end')).toHaveLength(1);
+    const real = await (async () => {
+      let t = 0;
+      for (let i = 0; i < 2000 && !finished; i++) {
+        scheduler.update(1 / 240);
+        t += 1 / 240;
+        if (phases.at(-1) !== m.phase) phases.push(m.phase);
+        if (m.phase === 'crouch') {
+          maxSquash = Math.max(maxSquash, m.pose['root.squash'] ?? 0);
+          if (m.ground.x !== HOME.x || m.ground.z !== HOME.z) movedDuringCrouch = true;
+        }
+        maxPitch = Math.max(maxPitch, m.gait.pitch);
+        maxHop = Math.max(maxHop, m.gait.hop);
+        await new Promise((r) => setImmediate(r));
+      }
+      return t;
+    })();
+    expect(real).toBeCloseTo(duration, 1);
+    expect(phases).toEqual(['crouch', 'approach', 'land']);
+    expect(movedDuringCrouch).toBe(false); // 原地下蹲
+    expect(maxSquash).toBeGreaterThan(0.1);
+    expect(airborne).toBe(1); // 离地的一瞬间通知一次
+    expect(maxHop).toBeGreaterThan(g.hop * 0.95); // 高抛物线
+    expect(maxPitch).toBeGreaterThan(0.1); // 腾空时前倾
+    expect(falls.map((f) => f.kind)).toEqual(['start', 'end']); // 蹬地、落地，没有小碎步
+    expect(falls[1]!.shake).toBeGreaterThan(0); // 落地轻微震屏
+    expect(falls[1]!.dust).toBeGreaterThan(0);
     expect(m.ground).toEqual(TARGET);
     expect(wrapAngle(m.yaw - Math.atan2(-1, -1))).toBeCloseTo(0, 6); // 正对 face
     expect(m.gait).toEqual({ pitch: 0, roll: 0, hop: 0, spin: 0 });
+    expect(m.atRest).toBe(true); // 落地缓冲后回到站姿
     expect(m.away).toBe(true);
   });
 
-  it('旋风斩的跃进：走弧线（中途偏离直线）、腾空、途中旋身一整圈，落地时旋身归零', async () => {
+  it('跳回原位：面朝对手向后跳，落地缓冲后精确回到原位、原朝向、站姿', async () => {
+    const scheduler = new Scheduler();
+    const m = new UnitMotion(scheduler, HOME, YAW, 'golem');
+    await runFor(scheduler, m.moveTo(TARGET, MOTION_PROFILES.golem.approach.duration, { x: -3, z: -2 }));
+    const phases: MotionPhase[] = [];
+    let maxHop = 0;
+    let finished = false;
+    void m.returnHome(MOTION_PROFILES.golem.retreat.duration).then(() => (finished = true));
+    for (let i = 0; i < 2000 && !finished; i++) {
+      scheduler.update(1 / 240);
+      if (phases.at(-1) !== m.phase) phases.push(m.phase);
+      maxHop = Math.max(maxHop, m.gait.hop);
+      await new Promise((r) => setImmediate(r));
+    }
+    if (phases.at(-1) !== m.phase) phases.push(m.phase);
+    expect(phases).toEqual(['crouch', 'return', 'land', 'idle']);
+    expect(maxHop).toBeGreaterThan(GAITS.slamJumpBack.hop * 0.95);
+    expect(m.ground).toEqual(HOME);
+    expect(m.yaw).toBe(YAW);
+    expect(m.away).toBe(false);
+    expect(m.atRest).toBe(true);
+    expect(Object.keys(m.pose)).toEqual([]);
+  });
+
+  it('旋风斩的短跳跃：短促下蹲、沿弧线（中途偏离直线）腾空、途中旋身一整圈，落地时旋身归零', async () => {
     const scheduler = new Scheduler();
     const m = new UnitMotion(scheduler, HOME, YAW, 'blade');
     let maxOff = 0;
     let maxSpin = 0;
     let maxHop = 0;
-    const done = m.moveTo(TARGET, 0.24, undefined, { gait: 'leap', side: 1 });
+    const done = m.moveTo(TARGET, ATTACK_ANIM.whirlwind.leap.duration, undefined, { gait: 'whirlHop', side: 1 });
     let finished = false;
     void done.then(() => (finished = true));
     const len = Math.hypot(TARGET.x - HOME.x, TARGET.z - HOME.z);
@@ -264,9 +394,11 @@ describe('UnitMotion：一次出手的动作状态', () => {
       maxHop = Math.max(maxHop, m.gait.hop);
       await new Promise((r) => setImmediate(r));
     }
-    expect(maxOff).toBeGreaterThan(len * GAITS.leap.arc * 0.9);
+    expect(maxOff).toBeGreaterThan(len * GAITS.whirlHop.arc * 0.9);
     expect(maxSpin).toBeGreaterThan(Math.PI * 1.8);
-    expect(maxHop).toBeGreaterThan(GAITS.leap.hop * 0.9);
+    expect(maxHop).toBeGreaterThan(GAITS.whirlHop.hop * 0.9);
+    expect(GAITS.whirlHop.hop).toBeLessThan(GAITS.jump.hop); // 比大跳跃低
+    expect(GAITS.whirlHop.crouch!.duration).toBeLessThan(GAITS.jump.crouch!.duration); // 下蹲更短促
     expect(m.gait.spin).toBe(0);
     expect(m.ground).toEqual(TARGET);
   });
@@ -396,10 +528,9 @@ describe('UnitMotion：一次出手的动作状态', () => {
     const fast = await time(2);
     const profile = MOTION_PROFILES.golem;
     const t = moveOf('golem', 'melee', 0).timing;
-    const expected =
-      profile.brace!.duration + profile.approach.duration + t.anticipation + t.strike + t.hold + t.follow + t.beat + t.recover + profile.retreat.duration;
+    const expected = profile.approach.duration + t.anticipation + t.strike + t.hold + t.follow + t.beat + t.recover + profile.retreat.duration;
     expect(normal).toBeGreaterThan(expected - 0.05);
-    expect(normal).toBeLessThan(expected + 0.35); // 跳回后的落地缓冲等
+    expect(normal).toBeLessThan(expected + 0.1); // 下蹲、落地缓冲都算在来回的时长里
     expect(fast / normal).toBeGreaterThan(0.46);
     expect(fast / normal).toBeLessThan(0.54);
   });
@@ -424,9 +555,9 @@ describe('UnitMotion：一次出手的动作状态', () => {
 });
 
 describe('次级运动：披风、袍摆、链条的惯性', () => {
-  const step = (m: UnitMotion, scheduler: Scheduler, x: number, enabled = true): void => {
+  const step = (m: UnitMotion, scheduler: Scheduler, x: number, enabled = true, active = true): void => {
     scheduler.update(1 / 60);
-    m.updateSecondary(scheduler.delta, x, 1, 0, enabled);
+    m.updateSecondary(scheduler.delta, x, 1, 0, enabled, active);
   };
 
   it('身体向前冲时偏移量指向后方；停下后先向前甩出再回落到 0；偏移量不超过上限', () => {
@@ -444,13 +575,22 @@ describe('次级运动：披风、袍摆、链条的惯性', () => {
     expect(minPush).toBeLessThan(-0.2); // 被甩在身后
     expect(m.flutter).toBeGreaterThan(0);
     let maxPush = -1;
-    for (let i = 0; i < 240; i++) {
-      step(m, scheduler, x);
+    for (let i = 0; i < 12; i++) {
+      step(m, scheduler, x); // 刚停下的一小段（演出还没结束）
       maxPush = Math.max(maxPush, m.push.x);
     }
     expect(maxPush).toBeGreaterThan(0.03); // 停下后惯性向前甩出
-    expect(Math.abs(m.push.x)).toBeLessThan(0.005); // 最后回落
-    expect(m.flutter).toBeLessThan(0.002);
+    // 演出结束（身体不再动）后，甩动在 settle 秒内平滑归零，不留余摆
+    let prev = Math.abs(m.push.x);
+    const frames = Math.ceil(SECONDARY_MOTION.settle * 60) + 1;
+    for (let i = 0; i < frames; i++) {
+      step(m, scheduler, x, true, false);
+      if (i < frames - 2) expect(Math.abs(Math.abs(m.push.x) - prev)).toBeLessThan(0.12); // 平滑，没有一帧跳变
+      prev = Math.abs(m.push.x);
+    }
+    expect(m.push).toEqual({ x: 0, y: 0, z: 0 });
+    expect(m.flutter).toBe(0);
+    expect(SECONDARY_MOTION.settle).toBeLessThan(0.32); // 比镜头复位快，出手演完时已经静止
   });
 
   it('跳过动画或关闭次级运动（低画质）时没有任何残留', () => {
@@ -575,14 +715,14 @@ describe('编排：进攻的节奏', () => {
     }
   });
 
-  it('狼 / 魔偶：出发前先蓄势；魔偶的砸拳带冲击波、重击反馈，来回都更慢', async () => {
+  it('狼 / 魔偶：起跳的下蹲蓄力包含在跳跃里；魔偶的砸拳带冲击波、重击反馈，来回都更慢', async () => {
     const wolf = await playTimed(act([cast(), hit('E0', 0)]), { motion: 'wolf' });
-    expect(names(wolf.marks).slice(0, 3)).toEqual(['brace', 'moveTo', 'windup']);
-    expect(wolf.marks[0]!.duration).toBe(MOTION_PROFILES.wolf.brace!.duration);
+    expect(names(wolf.marks).slice(0, 2)).toEqual(['moveTo', 'windup']);
+    expect(wolf.marks[0]!.duration).toBe(MOTION_PROFILES.wolf.approach.duration);
     expect(wolf.fakes.log.some((l) => l.startsWith('burst-shockwave'))).toBe(false);
 
     const golem = await playTimed(act([cast(), hit('E0', 0)]), { motion: 'golem' });
-    expect(names(golem.marks).slice(0, 2)).toEqual(['brace', 'moveTo']);
+    expect(names(golem.marks).slice(0, 2)).toEqual(['moveTo', 'windup']);
     const slam = moveOf('golem', 'melee', 0);
     expect(golem.fakes.log).toContain(`burst-shockwave@${slam.fx!.shockwave}`);
     expect(golem.fakes.log).toContain('burst-heavyImpact'); // 目标受击反馈更重
@@ -600,7 +740,7 @@ describe('编排：进攻的节奏', () => {
       ]),
       { motion: 'wolf' },
     );
-    expect(names(marks)).toEqual(['brace', 'moveTo', 'windup', 'release', 'hold', 'follow', 'windup', 'release', 'hold', 'follow', 'recover', 'returnHome']);
+    expect(names(marks)).toEqual(['moveTo', 'windup', 'release', 'hold', 'follow', 'windup', 'release', 'hold', 'follow', 'recover', 'returnHome']);
     expect(fakes.log.filter((l) => l.startsWith('variant:A0:'))).toEqual([`variant:A0:${MELEE.basic}`, `variant:A0:${MELEE.second}`]);
     expect(moveOf('wolf', 'melee', MELEE.basic).label).toContain('撕咬');
     expect(moveOf('wolf', 'melee', MELEE.second).label).toContain('爪击');
@@ -623,7 +763,7 @@ describe('编排：进攻的节奏', () => {
     expect(windups[2]).toBeGreaterThan(windups[1]!);
   });
 
-  it('旋风斩：7 次攻击节奏有变化——前几下快，越往后越沉，最后一击最慢；途中每次都是弧线跃进', async () => {
+  it('旋风斩：7 次攻击节奏有变化——前几下快，越往后越沉，最后一击最慢；目标之间是连续的短跳跃，整体按 pace 放慢', async () => {
     const { marks, fakes } = await playTimed(act([cast({ animation: 'whirlwind', targets: [...ENEMIES] }), ...ENEMIES.map((id, i) => hit(id, i))]));
     const strikes = marks.filter((m) => m.name === 'release');
     expect(strikes).toHaveLength(7);
@@ -636,7 +776,13 @@ describe('编排：进攻的节奏', () => {
     const leaps = marks.filter((m) => m.name === 'moveTo').slice(1);
     expect(leaps).toHaveLength(6);
     const W = ATTACK_ANIM.whirlwind;
-    expect(leaps[0]!.duration).toBeCloseTo(W.leap.duration * W.tempo[1]!, 9);
+    expect(leaps[0]!.duration).toBeCloseTo(W.leap.duration * W.tempo[1]! * W.pace, 9);
+    expect(W.pace).toBeGreaterThan(1); // 比 v0.4 慢
+    // 每一击之后都停一下再跳（最后一击之前的 6 次）：相邻两次命中的间隔不小于 跳跃 + 停顿
+    for (let i = 1; i < 6; i++) {
+      const gap = strikes[i]!.at - strikes[i - 1]!.at;
+      expect(gap, `第 ${i} 个间隔`).toBeGreaterThanOrEqual(leaps[i - 1]!.duration + W.hitPause * W.pace - 1e-6);
+    }
     expect(leaps[4]!.duration).toBeGreaterThan(leaps[0]!.duration);
     // 最后一击：冲击波 + 重击；打完才收招、回位
     expect(fakes.log.filter((l) => l.startsWith('burst-shockwave'))).toHaveLength(1);
@@ -705,7 +851,7 @@ describe('编排：进攻的节奏', () => {
 });
 
 // 阶段名在联系表里要用到：保证类型里的每个阶段都有
-const PHASES: MotionPhase[] = ['idle', 'brace', 'approach', 'anticipation', 'strike', 'hold', 'follow', 'recover', 'return'];
+const PHASES: MotionPhase[] = ['idle', 'crouch', 'approach', 'land', 'anticipation', 'strike', 'hold', 'follow', 'recover', 'crouch', 'return', 'land'];
 describe('阶段', () => {
   it('一次近战出手依次经过全部阶段', async () => {
     const scheduler = new Scheduler();

@@ -15,6 +15,8 @@ export class CameraRig implements StageCamera {
   private clock = 0;
   private move = 0; // 最近一次镜头移动的编号：新的移动开始后，旧的不再生效
   private applied = false;
+  /** 调试（联系表）：锁定机位，推近 / 平移 / 复位只占用时间、不移动镜头；抖动照常 */
+  locked = false;
 
   constructor(
     private readonly battleCamera: BattleCamera,
@@ -23,12 +25,14 @@ export class CameraRig implements StageCamera {
 
   /** 朝地面上的某点平移 pan 比例，并推近到 zoom 倍 */
   focus(point: GroundPoint, zoom: number, pan: number, duration: number): Promise<void> {
+    if (this.locked) return this.scheduler.wait(duration);
     const base = this.battleCamera.target;
     return this.glide((point.x - base.x) * pan, (point.z - base.z) * pan, zoom, duration);
   }
 
   /** 回到原始机位 */
   reset(duration: number): Promise<void> {
+    if (this.locked) return this.scheduler.wait(duration);
     return this.glide(0, 0, 1, duration);
   }
 
