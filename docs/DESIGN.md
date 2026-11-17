@@ -974,8 +974,8 @@ weight(T) = baseWeight × repeatDecay ^ n(T) × 加权(T)
 
 ---
 
-### 9.10 步骤 13：探索模式设计中的歧义与处理（待用户确认）
-- **F1 骑士是谁**：现有 5 人里只有烬刃（A1，刀，模型 `heroKnight`）是“重甲骑士”，取他为队长；对话里的称呼默认写“骑士”，可在 `dialogues.ts` 改成“烬刃”。
+### 9.10 步骤 13：探索模式设计中的歧义与处理（2026-11-17 用户确认全部同意）
+- **F1 骑士是谁**：现有 5 人里只有烬刃（A1，刀，模型 `heroKnight`）是“重甲骑士”，取他为队长；对话框里说话人名字显示“烬刃”（用户补充），台词内容不变。
 - **F2 新阵型的列分配**：烬刃 col 1 → col 2，与雷咒（A2）对调，其余人物和宝宝跟随主人。副作用：指令阶段的下指令顺序按 col（`listCommandableUnits`），会变成 夜隼 → 雷咒 → 烬刃 → 缚魂 → 守誓；自动战斗中友方 AI 消耗随机数的顺序随之变化，同种子的战斗结果会变，胜率统计需重跑核对（规则代码不改）。
 - **F3 新阵型的生效范围**：所有入口（探索进入的战斗、`?auto=1`、技能演示、演出样例）统一用新阵型；不保留旧阵型开关。
 - **F4 战败后的“满状态”**：探索模式不显示也不使用气血 / 魔法；每次开战都用配置表重新生成满状态单位，所以“复活满状态”= 战败过场中倒地的人物站起来。胜利时倒地的队友同样站起来（探索中 5 人必须都能走）。
@@ -1183,7 +1183,7 @@ export type DialogueAction = 'startBattle' | 'close';
 
 export interface DialogueLine {
   speaker: DialogueSpeaker;
-  name?: string;          // 显示名，省略时用单位名（leader 默认“骑士”，见 §9.10 F1）
+  name?: string;          // 显示名，省略时用单位名（leader 为“烬刃”，见 §9.10 F1）
   text: string;
   aside?: string;         // 括号里的神态说明，如“狂笑”，显示为斜体并可触发对应动作
   emote?: 'laugh' | 'roar' | 'point' | 'none';  // 说话人做的小动作（复用待机 / 施法姿态）
@@ -1205,7 +1205,7 @@ export const DIALOGUES: Record<string, DialogueDef> = {
   bossChallenge: {
     id: 'bossChallenge',
     lines: [
-      { speaker: 'leader', name: '骑士', text: '深渊魔将，你的末日到了，准备受死吧！', emote: 'point' },
+      { speaker: 'leader', text: '深渊魔将，你的末日到了，准备受死吧！', emote: 'point' },
       { speaker: 'boss', text: '就凭你们几个凡人，也想来挑战我？', aside: '狂笑', emote: 'laugh' },
     ],
     choices: [
