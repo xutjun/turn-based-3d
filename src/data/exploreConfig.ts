@@ -81,6 +81,15 @@ export const EXPLORE_CONFIG = {
     margin: 4, // 注视点离可走区域边界至少这么远（米），相机看不到地面以外
     height: 1.2, // 注视点离地高度（米）
   },
+  /** 与 Boss 对话（步骤 16，SPEC §14.2） */
+  dialog: {
+    arriveTolerance: 1.0, // 跑到离交谈点这么近才开始对话（被挡住停在半路时取消，米）
+    faceTolerance: 0.04, // 面向 Boss 的误差小于这个角度（弧度）才弹出对话框
+    typeSpeed: 24, // 逐字显示的速度（字/秒）
+    /** 对话中的镜头：注视点移到队长与 Boss 之间（bossBias = 0 在队长身上，1 在 Boss 身上），距离略微拉近 */
+    camera: { distance: 17, bossBias: 0.5, smoothTime: 0.6 },
+    gestureFade: 0.25, // 说话动作淡入 / 淡出（秒）
+  },
 };
 
 /**

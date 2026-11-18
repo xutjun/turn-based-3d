@@ -24,6 +24,7 @@ import { IdleAnimator, type LegReach } from './IdleAnimator';
 import { UnitMotion, type Footfall, type MotionPhase } from './UnitMotion';
 import { seedOf } from './idleMotion';
 import { IDLE_CONFIG } from '../../data/idleConfig';
+import type { EmotePose } from '../../data/dialogues';
 import { UNIT_MODELS } from '../../data/unitModels';
 import { releaseSound, windupSound } from './soundCues';
 import { facingOf, facingYawOf, slotPosition } from '../../data/formation';
@@ -139,6 +140,17 @@ export class UnitView implements StageUnit {
   };
   /** 探索模式里这一帧走过的距离（世界坐标，米），update 时交给步态 */
   private pendingWalk = 0;
+  /**
+   * 说话动作（步骤 16，对话中骑士举刀指向 Boss、Boss 仰头张翼狂笑）：一层叠加在动作姿态上的关节偏移，
+   * 按权重淡入淡出（场景时间，暂停时停住）。不经过 UnitMotion，战斗的出手 / 受击状态不受影响。
+   */
+  private gesture: EmotePose | null = null;
+  private gestureTarget = 0;
+  private gestureWeight = 0;
+  private gestureTime = 0;
+  /** 这一帧实际使用的动作姿态：没有说话动作时就是 act.pose，有时是两者之和（复用同一个对象） */
+  private livePose: Record<string, number>;
+  private readonly mixPose: Record<string, number> = {};
 
   constructor(
     template: UnitTemplate,
@@ -181,6 +193,7 @@ export class UnitView implements StageUnit {
     const muzzle = MOTION_PROFILES[this.motion].muzzle;
     this.muzzleJoint = muzzle?.joint ? extra[muzzle.joint] : undefined;
     this.act = new UnitMotion(scheduler, this.home, this.baseYaw, this.motion, (f) => this.footfall(f));
+    this.livePose = this.act.pose;
     this.weapon = getEquippedWeapon(model);
     if (this.weapon) {
       this.weaponRest.x = this.weapon.rotation.x;
@@ -296,6 +309,58 @@ export class UnitView implements StageUnit {
     this.act.yaw = yaw;
     this.pendingWalk = 0;
     this.legs?.walk.reset();
+  }
+
+  // ------------------------------------------------------------------
+  // 说话动作（步骤 16）
+  // ------------------------------------------------------------------
+
+  /**
+   * 开始 / 结束说话动作：传入姿态则淡入并保持（换一个姿态时从当前权重接着淡入新的），传 null 淡出。
+   * 淡入淡出时长见 EXPLORE_CONFIG.dialog.gestureFade。
+   */
+  setGesture(pose: EmotePose | null): void {
+    if (pose) {
+      if (pose !== this.gesture) this.gestureTime = 0;
+      this.gesture = pose;
+      this.gestureTarget = 1;
+    } else {
+      this.gestureTarget = 0;
+    }
+  }
+
+  /** 说话动作的权重 0~1（调试 / 测试） */
+  get gestureLevel(): number {
+    return this.gestureWeight;
+  }
+
+  private updateGesture(dt: number): void {
+    const g = this.gesture;
+    if (!g) {
+      this.livePose = this.act.pose;
+      return;
+    }
+    const step = dt / Math.max(1e-3, EXPLORE_CONFIG.dialog.gestureFade);
+    const d = this.gestureTarget - this.gestureWeight;
+    this.gestureWeight = Math.abs(d) <= step ? this.gestureTarget : this.gestureWeight + Math.sign(d) * step;
+    this.gestureTime += dt;
+    if (this.gestureWeight <= 0 && this.gestureTarget === 0) {
+      this.gesture = null;
+      this.livePose = this.act.pose;
+      return;
+    }
+    // 平滑的权重曲线（起止没有突变）
+    const t = this.gestureWeight;
+    const w = t * t * (3 - 2 * t);
+    const mix = this.mixPose;
+    for (const k of Object.keys(mix)) delete mix[k];
+    Object.assign(mix, this.act.pose);
+    for (const [k, v] of Object.entries(g.pose)) mix[k] = (mix[k] ?? 0) + v * w;
+    if (g.wobble) {
+      const s = Math.sin(2 * Math.PI * g.wobble.hz * this.gestureTime) * w;
+      for (const [k, v] of Object.entries(g.wobble.pose)) mix[k] = (mix[k] ?? 0) + v * s;
+    }
+    this.livePose = mix;
   }
 
   // ------------------------------------------------------------------
@@ -559,6 +624,9 @@ export class UnitView implements StageUnit {
     this.idleWeight = 1;
     this.pendingWalk = 0;
     this.legs?.walk.reset();
+    this.gesture = null;
+    this.gestureTarget = this.gestureWeight = this.gestureTime = 0;
+    this.livePose = this.act.pose;
     this.highlightTarget = this.highlightLevel = 0;
     this.applyHighlight();
     this.restoreBase();
@@ -674,6 +742,7 @@ export class UnitView implements StageUnit {
     const dt = Math.min(0.1, Math.max(0, idleTime - this.lastIdleTime));
     this.lastIdleTime = idleTime;
     this.updateHighlight(dt);
+    this.updateGesture(dt);
     // 行走：这一帧走过的距离（换成模型坐标）推进步态相位
     if (this.legs) {
       if (dt > 0) {
@@ -685,7 +754,7 @@ export class UnitView implements StageUnit {
     // 走路时待机让位（只留一点呼吸）
     const p = this.pose;
     const walking = (this.legs?.walk.weight ?? 0) * 0.85;
-    const busy = Math.min(1, Math.max(this.act.busy ? 1 : 0, p.lean * 3, p.side * 4, walking));
+    const busy = Math.min(1, Math.max(this.act.busy ? 1 : 0, p.lean * 3, p.side * 4, walking, this.gestureWeight * 0.6));
     const target = (1 - busy) * (1 - (1 - IDLE_CONFIG.guardScale) * p.guard);
     this.idleWeight += (target - this.idleWeight) * (1 - Math.exp(-IDLE_CONFIG.blendRate * dt));
     // 倒地后只保留极轻微的变化；消失的单位不动
@@ -744,7 +813,7 @@ export class UnitView implements StageUnit {
   private applyPose(time = 0): void {
     const p = this.pose;
     const m = this.model;
-    const a = this.act.pose;
+    const a = this.livePose;
     const g = this.act.gait;
     const ch = (c: string): number => a[c] ?? 0;
     // 待机：整体的起伏、漂浮、重心转移（都已乘过待机权重，出手和倒地时自然归零）
@@ -815,7 +884,7 @@ export class UnitView implements StageUnit {
   /** 人形角色：驱动手臂、腰、胸、头的关节 = 站姿 + 动作姿态 + 防御 / 受击 */
   private applyRigPose(): void {
     const p = this.pose;
-    const a = this.act.pose;
+    const a = this.livePose;
     for (const j of Object.values(this.rest)) {
       j.joint.rotation.set(j.x + (a[j.keys[0]] ?? 0), j.y + (a[j.keys[1]] ?? 0), j.z + (a[j.keys[2]] ?? 0));
     }
@@ -913,7 +982,7 @@ export class UnitView implements StageUnit {
 
   /** 人形骨架之外的关节（宝宝的头、颈、下颌、腿、翅、臂 …）：待机已经摆好，这里把动作姿态和步态加上去 */
   private applyExtraJoints(): void {
-    const a = this.act.pose;
+    const a = this.livePose;
     const gj = this.act.gaitJoints;
     for (const e of this.extras) {
       const dx = (a[e.keys[0]] ?? 0) + (gj[e.keys[0]] ?? 0);
@@ -932,7 +1001,7 @@ export class UnitView implements StageUnit {
   private applyWeaponPose(): void {
     const w = this.weapon;
     if (!w) return;
-    const a = this.act.pose;
+    const a = this.livePose;
     const r = this.weaponRest;
     let x = r.x + (a['weapon.x'] ?? 0);
     if (this.weaponLeft) {
@@ -971,7 +1040,7 @@ export class UnitView implements StageUnit {
    *                 < 0 = 松弦后弦向前弹出的回弹（配合 outElastic 缓动来回振一下）。
    */
   private applyBowPose(w: Object3D): void {
-    const a = this.act.pose;
+    const a = this.livePose;
     const depth = this.bow?.depth ?? 0;
     const aim = a['bow.aim'] ?? 0;
     if (aim > 0 && w.parent) {
@@ -1019,7 +1088,7 @@ export class UnitView implements StageUnit {
    * 按权重和原来的左臂姿态混合。在武器摆好之后调用，所以杖怎么挥，左手都跟着。
    */
   private applyLeftGrip(): void {
-    const w = this.act.pose['grip.left'] ?? 0;
+    const w = this.livePose['grip.left'] ?? 0;
     if (w <= 0 || !this.rig || !this.staff) return;
     const h = this.staff.holder;
     h.updateWorldMatrix(true, false);

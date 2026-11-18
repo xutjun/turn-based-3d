@@ -217,6 +217,34 @@ const CSS = `
 .dk-title-menu { display:flex; flex-direction:column; gap:14px; width:240px; }
 .dk-title-menu .dk-btn { padding:11px 0; font-size:20px; letter-spacing:10px; text-indent:10px; }
 .dk-title-hint { position:absolute; bottom:22px; font-size:12px; letter-spacing:2px; color:#6f6650; }
+
+/* ---------- 对话框（步骤 16）：盖住游戏画面的透明层，点任意处推进；石质面板 + 金属铭牌 ---------- */
+.dk-dialog-layer { position:absolute; inset:0; pointer-events:auto; z-index:12; cursor:pointer; user-select:none;
+  font-family:${SERIF_FONT}; color:#d8c690;
+  background:linear-gradient(to top, rgba(0,0,0,.55), rgba(0,0,0,0) 38%); animation:dk-fade .25s ease-out; }
+.dk-dialog-layer.is-hidden { display:none; }
+.dk-dialog { left:50%; bottom:34px; width:820px; min-height:150px; transform:translateX(-50%); padding:30px 34px 22px;
+  cursor:pointer; animation:dk-dialog-in .3s ease-out; }
+@keyframes dk-dialog-in { from { opacity:0; transform:translate(-50%, 14px); } to { opacity:1; transform:translate(-50%, 0); } }
+/* 内圈的暗金细线：第二道金属包边 */
+.dk-dialog::after { content:""; position:absolute; inset:8px; pointer-events:none; border:1px solid rgba(122,99,56,.45);
+  box-shadow:inset 0 0 0 1px rgba(0,0,0,.6); }
+.dk-dialog-name { position:absolute; left:26px; top:-17px; min-width:120px; padding:5px 22px 6px; text-align:center;
+  font-size:19px; letter-spacing:5px; text-indent:5px; color:#ffe08a; text-shadow:0 0 8px rgba(201,150,44,.7), 0 1px 2px #000;
+  background:linear-gradient(#4a4238, #2a2520 48%, #1c1916 52%, #26221d); border:1px solid #0b0a09;
+  box-shadow:0 0 0 1px #8a6f3c, 0 0 0 3px #1a1714, 0 0 0 4px #43361f, inset 0 1px 0 rgba(255,235,180,.2), 0 4px 10px rgba(0,0,0,.7); }
+.dk-dialog-name.is-boss { color:#ff9a7a; text-shadow:0 0 10px rgba(200,40,20,.8), 0 1px 2px #000;
+  box-shadow:0 0 0 1px #8a3a2c, 0 0 0 3px #1a1714, 0 0 0 4px #4a2018, inset 0 1px 0 rgba(255,200,180,.18), 0 4px 10px rgba(0,0,0,.7); }
+.dk-dialog-text { position:relative; min-height:62px; font-size:22px; line-height:1.6; letter-spacing:2px; color:#eadcb4;
+  text-shadow:0 1px 2px #000; white-space:pre-wrap; }
+.dk-dialog-aside { margin-right:6px; font-style:italic; color:#b9a77a; }
+.dk-dialog-more { position:absolute; right:30px; bottom:14px; font-size:14px; color:#c9a85a; animation:dk-dialog-blink 1s ease-in-out infinite; }
+.dk-dialog-more.is-hidden { visibility:hidden; }
+@keyframes dk-dialog-blink { 0%,100% { opacity:.25; transform:translateY(0); } 50% { opacity:1; transform:translateY(3px); } }
+.dk-dialog-choices { display:flex; justify-content:center; gap:22px; margin-top:16px; }
+.dk-dialog-choices.is-hidden { display:none; }
+.dk-dialog-choices .dk-btn { min-width:200px; padding:10px 18px; font-size:18px; letter-spacing:4px; }
+.dk-dialog-hint { position:absolute; right:34px; top:-14px; font-size:12px; letter-spacing:1px; color:#8f8468; text-shadow:0 1px 2px #000; }
 `;
 
 /** 把主题样式注入页面（重复调用只注入一次） */

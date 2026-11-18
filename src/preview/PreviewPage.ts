@@ -8,6 +8,7 @@
 //   silhouette=1 剪影测试（模型纯黑、背景浅灰）   idle=0 关闭待机动画（看静止站姿）
 //   walk=速度（米/秒）  步骤 14：会走路的人物沿地台上的圆圈行走（与探索模式同一套步态和腿部 IK）；
 //                       步骤 15：速度高于 3.2 时是跑步步态（6.4 = 探索中的跑速），圆圈放大到 RUN_RADIUS
+//   emote=point|laugh|roar  步骤 16：对话中的说话动作（data/dialogues.ts 的 DIALOGUE_EMOTES），原地站着做，便于调姿态
 
 import {
   Box3,
@@ -46,6 +47,8 @@ import { IdleAnimator } from '../render/units/IdleAnimator';
 import { seedOf } from '../render/units/idleMotion';
 import { idleStyleOfAsset, UNIT_MODELS, walksOfAsset } from '../data/unitModels';
 import { ALLY_TEMPLATES } from '../data/heroes';
+import { ENEMY_TEMPLATES } from '../data/enemies';
+import { DIALOGUE_EMOTES, type EmotePose } from '../data/dialogues';
 import { enableLegJoints } from '../render/units/animatedJoints';
 import { UnitView } from '../render/units/UnitView';
 import { Scheduler } from '../render/director/Scheduler';
@@ -113,6 +116,8 @@ export class PreviewPage {
   private walkAngle = 0;
   private walkView: UnitView | null = null;
   private readonly walkScheduler = new Scheduler();
+  /** 说话动作演示（步骤 16）：原地站着做这个动作 */
+  private emote: EmotePose | null = null;
 
   constructor(private readonly container: HTMLElement) {
     const query = new URLSearchParams(location.search);
@@ -201,6 +206,11 @@ export class PreviewPage {
     const element = query.get('element') as StaffElement | null;
     if (element && STAFF_ELEMENTS.includes(element)) this.element = element;
     const walk = Number(query.get('walk'));
+    const emote = query.get('emote');
+    if (emote && emote in DIALOGUE_EMOTES) {
+      this.emote = DIALOGUE_EMOTES[emote as keyof typeof DIALOGUE_EMOTES];
+      this.spin = false;
+    }
     if (query.has('walk') && Number.isFinite(walk) && walk > 0) {
       this.walkSpeed = walk;
       this.spin = false;
@@ -280,7 +290,7 @@ export class PreviewPage {
     // 待机动画：与战场里同一套（预览页不合并网格，所以这里看到的就是各关节原本的动作）
     const idleStyle = idleStyleOfAsset(entry.key);
     this.idle = idleStyle ? new IdleAnimator(this.model, idleStyle, seedOf(entry.key)) : null;
-    if (this.walkSpeed > 0) this.startWalk(entry);
+    if (this.walkSpeed > 0 || this.emote) this.startWalk(entry);
     // 调试：地址加 ?silhouette=1 做剪影测试
     if (silhouetteRequested()) applySilhouette(this.scene, this.turntable);
     this.renderPanel();
@@ -299,9 +309,15 @@ export class PreviewPage {
 
   /** 用战场里的 UnitView 驱动当前模型行走（同一套步态、腿部 IK、袍摆跟随） */
   private startWalk(entry: AssetEntry): void {
-    const template = ALLY_TEMPLATES.find((t) => UNIT_MODELS[t.templateId]?.assetKey === entry.key);
+    const template = [...ALLY_TEMPLATES, ...ENEMY_TEMPLATES].find((t) => UNIT_MODELS[t.templateId]?.assetKey === entry.key);
     if (!template || !this.model) return;
     this.walkView = new UnitView(template, this.model, this.walkScheduler, NO_FX);
+    if (this.walkSpeed <= 0) {
+      // 说话动作演示：站在转台中央、面朝相机
+      this.walkView.placeAt(0, 0, 0);
+      this.walkView.setGesture(this.emote);
+      return;
+    }
     const p = this.walkPoint();
     this.walkView.placeAt(p.x, p.z, p.yaw);
   }
@@ -500,9 +516,11 @@ export class PreviewPage {
     if (this.walkView) {
       // 行走演示：沿圆圈前进，UnitView 按走过的距离迈步（它自带待机动画）
       this.walkScheduler.update(dt);
-      this.walkAngle += (this.walkSpeed * dt) / this.walkRadius;
-      const p = this.walkPoint();
-      this.walkView.locomote(p.x, p.z, p.yaw);
+      if (this.walkSpeed > 0) {
+        this.walkAngle += (this.walkSpeed * dt) / this.walkRadius;
+        const p = this.walkPoint();
+        this.walkView.locomote(p.x, p.z, p.yaw);
+      }
       this.walkView.update(this.time, this.time);
     } else if (this.idle && this.model) {
       const idle = this.idle;

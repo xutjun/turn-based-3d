@@ -42,6 +42,8 @@ export class LeaderAgent {
   private readonly manual = { x: 0, z: 0 };
   private stuckTime = 0;
   private stuckCount = 0;
+  /** 站定后要转向的朝向（步骤 16：到达交谈点后面向 Boss）；null = 不转。移动、放置时清除 */
+  private faceGoal: number | null = null;
 
   constructor(
     private readonly world: NavWorld,
@@ -58,6 +60,17 @@ export class LeaderAgent {
     this.goalPt = null;
     this.manual.x = this.manual.z = 0;
     this.stuckTime = this.stuckCount = 0;
+    this.faceGoal = null;
+  }
+
+  /** 站定后平滑转向 yaw（按 turnRate；有点击目标或方向键时不生效，开始移动即取消） */
+  faceTo(yaw: number): void {
+    this.faceGoal = wrapAngle(yaw);
+  }
+
+  /** 还要转多少才面向 faceTo 的朝向（弧度，绝对值）；没有转向目标为 0 */
+  get faceRemaining(): number {
+    return this.faceGoal === null ? 0 : Math.abs(wrapAngle(this.faceGoal - this.yaw));
   }
 
   /** 是否正在去某个点击目标 */
@@ -89,6 +102,7 @@ export class LeaderAgent {
     const r = findPath(this.world.grid, { x: this.x, z: this.z }, { x, z }, this.world.unitRadius);
     this.manual.x = this.manual.z = 0;
     this.stuckTime = 0;
+    this.faceGoal = null;
     if (!r) {
       this.path = null;
       this.goalPt = null;
@@ -111,7 +125,10 @@ export class LeaderAgent {
   setManual(x: number, z: number): void {
     this.manual.x = x;
     this.manual.z = z;
-    if (x !== 0 || z !== 0) this.stop();
+    if (x !== 0 || z !== 0) {
+      this.stop();
+      this.faceGoal = null;
+    }
   }
 
   /** 推进一帧 */
@@ -173,6 +190,7 @@ export class LeaderAgent {
     // 身体朝向：跟着实际移动方向（贴边滑动时面朝滑动方向，不会横着跑）；慢下来后朝跑动方向
     if (actual > 0.8) this.yaw = turnToward(this.yaw, yawOf(this.vx, this.vz), c.turnRate * dt);
     else if (desired) this.yaw = turnToward(this.yaw, this.heading, c.turnRate * dt);
+    else if (this.faceGoal !== null && actual < 0.05) this.yaw = turnToward(this.yaw, this.faceGoal, c.turnRate * dt);
 
     this.checkStuck(dt, face, actual);
   }

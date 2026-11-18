@@ -15,6 +15,14 @@
 // - 设置菜单在探索中同样暂停，“重新开始”改为“回到起点”。
 // - 探索还不能进入战斗（对话、过场在步骤 16、17）；地址加 start=1 仍可跳过标题直接开战（自检用）。
 //
+// 步骤 16：
+// - 点击 Boss：队长跑到 Boss 正前方的交谈点（exploreConfig.talkDistance），停下后面向 Boss，弹出对话框（ui/dialog/DialogBox）；
+//   跑过去的途中点地面 = 取消。对话内容在 data/dialogues.ts，进度在 explore/dialogueSession.ts。
+// - 对话中禁止点击移动和方向键；镜头注视点移到队长与 Boss 之间并略微拉近；说话人做小动作（骑士举刀指向 Boss、Boss 仰头张翼狂笑）。
+// - 点击 / 空格：先显示整句，再下一句；最后显示选项（热键 1 / 2）。Esc = “再等等”。设置菜单（齿轮）照常可开，打开时对话停住。
+// - “我准备好了”：关闭对话框，发出“进入战斗”信号——本步直接进入现有的战斗流程（入场过场在步骤 17、18）；
+//   “再等等”：关闭对话框，回到自由移动。
+//
 // 地址参数：
 //   seed=数字   随机种子（相同种子、相同指令战斗过程完全相同）；不填则用当前时间
 //   speed=2     初始战斗速度
@@ -58,9 +66,25 @@ import type { Bounds } from '../explore/walker';
 import { ALLY_TEMPLATES } from '../data/heroes';
 import { ENEMY_TEMPLATES } from '../data/enemies';
 import type { MenuContext } from './settings/SettingsMenu';
+import { BOSS_DIALOGUE_ID, DIALOGUE_EMOTES, DIALOGUES, type DialogueAction } from '../data/dialogues';
+import { EXPLORE_CONFIG } from '../data/exploreConfig';
+import { DialogueSession } from '../explore/dialogueSession';
+import { DialogBox } from './dialog/DialogBox';
 
 /** 页面处在哪个界面 */
-export type AppScreen = 'title' | 'explore' | 'battle';
+export type AppScreen = 'title' | 'explore' | 'dialog' | 'battle';
+
+/** 调试：对话的状态（window.__app.dialog()） */
+export interface DialogSnapshot {
+  open: boolean;
+  line: number;
+  speaker: string;
+  name: string;
+  aside: string;
+  text: string;
+  complete: boolean;
+  choices: string[] | null;
+}
 
 /** 调试 / 自检用（window.__player） */
 export interface PlayerDebug {
@@ -99,6 +123,11 @@ export interface AppDebug {
   groundClient(x: number, z: number): { x: number; y: number };
   /** 自检 / 路线图：探索的障碍物（碰撞用的圆和胶囊）、可走边界、单位碰撞半径 */
   exploreWorld(): { obstacles: readonly Obstacle[]; bounds: Bounds; unitRadius: number };
+  /** 对话（步骤 16）：当前状态；代替点击推进；代替点选项；代替点 Boss（返回要去的交谈点，没有返回 null） */
+  dialog(): DialogSnapshot;
+  dialogAdvance(): void;
+  dialogChoose(index: number): void;
+  clickBoss(): { x: number; z: number } | null;
   /** 演出时间（暂停时不变） */
   clock(): number;
   /** 某单位身体中部在窗口里的坐标（鼠标选目标自检用：已含黑边和缩放） */
@@ -149,6 +178,9 @@ export class PlayerBattleApp {
   private readonly exploreInput: ExploreInput;
   private readonly explorePointer: ExplorePointer;
   private readonly exploreHint: HTMLDivElement;
+  /** 与 Boss 的对话（步骤 16）：对话框与当前进度（没在对话为 null） */
+  private readonly dialogBox: DialogBox;
+  private dialogue: DialogueSession | null = null;
   private readonly unsubscribeStore: () => void;
   private match: Match | null = null;
   private seed: number;
@@ -264,18 +296,28 @@ export class PlayerBattleApp {
       groundAt: (x, y) => this.scene.groundAt(x, y),
       bossBox: () => this.bossScreenBox(),
       onGround: (x, z) => void this.explore.clickGround(x, z),
-      onBoss: () => {
-        const g = this.explore.bossGround;
-        this.explore.clickGround(g.x, g.z);
-      },
+      onBoss: () => void this.explore.clickBoss(), // 跑到交谈点，到了弹出对话框（步骤 16）
       onBossHover: (on) => this.explore.setBossHover(on),
     });
-    this.exploreHint = el('div', 'dk-explore-hint', '左键：移动　方向键 / WASD：移动（调试）　Esc：设置');
+    this.exploreHint = el('div', 'dk-explore-hint', '左键：移动　点击 Boss：对话　方向键 / WASD：移动（调试）　Esc：设置');
     this.exploreHint.style.cssText =
       'position:absolute;left:50%;bottom:22px;transform:translateX(-50%);padding:6px 16px;pointer-events:none;' +
       'font-size:15px;letter-spacing:1px;color:rgba(222,206,170,0.82);background:rgba(10,8,8,0.55);' +
       'border:1px solid rgba(150,120,70,0.35);border-radius:3px;white-space:nowrap;display:none;';
     stageEl.insertBefore(this.exploreHint, this.menuLayer); // 在菜单层下面
+
+    // 对话（步骤 16）：到达交谈点后弹出；逐字显示用场景时间（设置菜单打开时暂停，台词也停住）
+    this.dialogBox = new DialogBox({
+      root: stageEl,
+      onAdvance: () => this.advanceDialog(),
+      onChoose: (i) => this.chooseDialog(i),
+    });
+    this.explore.onTalk = () => this.openDialog();
+    this.scene.onUpdate((dt) => {
+      if (!this.dialogue) return;
+      this.dialogue.update(dt);
+      this.dialogBox.render();
+    });
 
     addEventListener('keydown', this.onKeyCapture, true);
     addEventListener('keyup', this.onKeyUpCapture, true);
@@ -295,6 +337,7 @@ export class PlayerBattleApp {
     removeEventListener('keyup', this.onKeyUpCapture, true);
     removeEventListener('blur', this.onBlur);
     this.explorePointer.dispose();
+    this.dialogBox.dispose();
     this.explore.dispose();
     this.exploreHint.remove();
     this.unsubscribeStore();
@@ -332,6 +375,7 @@ export class PlayerBattleApp {
 
   /** 标题界面：背景是探索模式的初始布置（队长在出生点，Boss 待机），不能操作 */
   private showTitle(): void {
+    this.dismissDialog();
     this.screen = 'title';
     this.exploreInput.clear();
     this.explorePointer.clear();
@@ -345,6 +389,8 @@ export class PlayerBattleApp {
 
   /** 设置菜单从哪里打开（决定有没有“重新开始 / 回到起点”“退出游戏”） */
   private menuContext(): MenuContext {
+    // 对话中与探索相同（“回到起点”“退出游戏”，DESIGN §9.10 F7）
+    if (this.screen === 'dialog') return 'explore';
     return this.screen === 'title' ? 'title' : this.screen;
   }
 
@@ -365,6 +411,7 @@ export class PlayerBattleApp {
   /** 跳过标题和探索，直接开战（地址参数 start=1、自检用；正式流程在步骤 16、17 由对话和入场过场进入） */
   async startBattle(): Promise<void> {
     if (this.busy || this.screen === 'battle') return;
+    this.dismissDialog();
     this.scene.sound.unlock();
     this.menu.close();
     this.title.hide();
@@ -381,6 +428,12 @@ export class PlayerBattleApp {
 
   /** 设置里“重新开始”：战斗中放弃当前战斗、状态完全重置后重开一局（同“再战一次”）；探索中回到起点 */
   async restart(): Promise<void> {
+    if (this.screen === 'dialog') {
+      // 对话中“回到起点”：关掉对话框，回到探索再回到起点
+      this.dismissDialog();
+      this.screen = 'explore';
+      this.exploreHint.style.display = '';
+    }
     if (this.screen === 'explore') {
       this.exploreInput.clear();
       this.explorePointer.clear();
@@ -415,6 +468,79 @@ export class PlayerBattleApp {
     } finally {
       this.busy = false;
     }
+  }
+
+  // ------------------------------------------------------------------
+  // 与 Boss 对话（步骤 16）
+  // ------------------------------------------------------------------
+
+  /** 队长到达交谈点、面向 Boss 后：弹出对话框（探索的移动已被锁定） */
+  private openDialog(): void {
+    if (this.screen !== 'explore' || this.dialogue) return;
+    const def = DIALOGUES[BOSS_DIALOGUE_ID];
+    if (!def) throw new Error(`没有对话 ${BOSS_DIALOGUE_ID}`);
+    const names = {
+      leader: ALLY_TEMPLATES.find((t) => t.id === this.explore.leaderId)?.name ?? '队长',
+      boss: ENEMY_TEMPLATES.find((t) => t.id === this.explore.bossId)?.name ?? 'Boss',
+    };
+    this.screen = 'dialog';
+    this.exploreInput.clear();
+    this.explorePointer.clear();
+    this.exploreHint.style.display = 'none';
+    this.dialogue = new DialogueSession(def, names, EXPLORE_CONFIG.dialog.typeSpeed);
+    this.dialogBox.open(this.dialogue);
+    this.applyEmote();
+  }
+
+  /** 点击 / 空格：先显示整句，再下一句，最后显示选项（菜单打开、切换中无效） */
+  private advanceDialog(): void {
+    const d = this.dialogue;
+    if (!d || this.menu.isOpen || this.busy) return;
+    if (d.advance() === 'next') this.applyEmote();
+    this.dialogBox.render();
+  }
+
+  /** 选第 i 个选项 */
+  private chooseDialog(i: number): void {
+    const d = this.dialogue;
+    if (!d || this.menu.isOpen || this.busy) return;
+    const action = d.choose(i);
+    if (action) this.finishDialog(action);
+  }
+
+  /** 当前这句的说话人做小动作，另一方的动作淡出 */
+  private applyEmote(): void {
+    const line = this.dialogue?.line;
+    if (!line) return;
+    const pose = line.emote === 'none' ? null : DIALOGUE_EMOTES[line.emote];
+    this.explore.setGesture(line.speaker, pose);
+    this.explore.setGesture(line.speaker === 'leader' ? 'boss' : 'leader', null);
+  }
+
+  /**
+   * 对话结束：关闭对话框，按选项走——
+   * 'startBattle'（我准备好了）= “进入战斗”信号：本步直接进入现有的战斗流程（步骤 17 换成入场过场）；
+   * 'close'（再等等）= 回到自由移动。
+   */
+  private finishDialog(action: DialogueAction): void {
+    this.dialogue?.cancel(action);
+    this.dialogue = null;
+    this.dialogBox.close();
+    const next = this.explore.endDialog(action);
+    this.screen = 'explore';
+    if (next === 'battle') {
+      void this.startBattle();
+      return;
+    }
+    this.exploreHint.style.display = '';
+  }
+
+  /** 不经选项直接关掉对话（回到起点、退出游戏、自检直接开战）：等同“再等等”，但不改界面状态 */
+  private dismissDialog(): void {
+    if (!this.dialogue) return;
+    this.dialogue = null;
+    this.dialogBox.close();
+    this.explore.endDialog('close');
   }
 
   // ------------------------------------------------------------------
@@ -469,6 +595,13 @@ export class PlayerBattleApp {
         return;
       }
       if (this.busy) return;
+      if (this.screen === 'dialog') {
+        // 对话中 Esc = “再等等”（DESIGN §11.1）；设置菜单用右上角齿轮打开
+        this.finishDialog('close');
+        e.stopImmediatePropagation();
+        e.preventDefault();
+        return;
+      }
       const mode = this.match?.controller.session.mode;
       if (this.screen === 'battle' && (mode === 'target' || mode === 'skills')) return;
       this.menu.open(this.menuContext());
@@ -478,6 +611,19 @@ export class PlayerBattleApp {
     }
     if (this.menu.isOpen || this.screen === 'title' || this.busy) {
       e.stopImmediatePropagation();
+      return;
+    }
+    if (this.screen === 'dialog') {
+      // 对话：空格 / 回车推进，1 / 2 选选项；方向键等其余按键一律不生效（禁止移动），M 静音照常
+      const d = this.dialogue;
+      if (d && (e.key === ' ' || e.key === 'Enter')) {
+        e.preventDefault(); // 不让空格“按下”获得焦点的按钮（齿轮）
+        if (!e.repeat) this.advanceDialog();
+      } else if (d && d.showingChoices && !e.repeat) {
+        const action = d.chooseHotkey(e.key);
+        if (action) this.finishDialog(action);
+      }
+      if (e.key !== 'm' && e.key !== 'M') e.stopImmediatePropagation();
       return;
     }
     if (this.screen === 'explore') {
@@ -637,6 +783,27 @@ export class PlayerBattleApp {
         return { x: l.left + p.x * l.scale, y: l.top + p.y * l.scale };
       },
       exit: () => this.exitToTitle(),
+      dialog: () => {
+        const d = this.dialogue;
+        if (!d) return { open: false, line: -1, speaker: '', name: '', aside: '', text: '', complete: false, choices: null };
+        return {
+          open: this.dialogBox.visible,
+          line: d.lineIndex,
+          speaker: d.line.speaker,
+          name: d.line.name,
+          aside: d.line.aside,
+          text: d.visibleText,
+          complete: d.lineComplete,
+          choices: d.showingChoices ? d.choices.map((c) => c.label) : null,
+        };
+      },
+      dialogAdvance: () => this.advanceDialog(),
+      dialogChoose: (i) => this.chooseDialog(i),
+      clickBoss: () => {
+        if (this.screen !== 'explore' || this.menu.isOpen || this.busy) return null;
+        const r = this.explore.clickBoss();
+        return r ? { x: r.goal.x, z: r.goal.z } : null;
+      },
       clock: () => this.scene.scheduler.time,
       unitClient: (id) => {
         const unit = this.scene.stage.unit(id);

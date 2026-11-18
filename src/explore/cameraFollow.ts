@@ -31,8 +31,12 @@ export function cameraBounds(bounds: Bounds, margin: number): Bounds {
 export class CameraFollow {
   x = 0;
   z = 0;
+  /** 相机到注视点的距离（步骤 16：对话中略微拉近，平滑过渡） */
+  distance: number;
+  private distanceGoal: number;
   private readonly vx = { v: 0 };
   private readonly vz = { v: 0 };
+  private readonly vd = { v: 0 };
   private readonly limits: Bounds;
 
   constructor(
@@ -40,6 +44,12 @@ export class CameraFollow {
     bounds: Bounds = EXPLORE_CONFIG.bounds,
   ) {
     this.limits = cameraBounds(bounds, cfg.margin);
+    this.distance = this.distanceGoal = cfg.distance;
+  }
+
+  /** 想要的相机距离（不传 = 探索的默认距离）；之后的 update 平滑靠过去 */
+  setDistance(goal: number = this.cfg.distance): void {
+    this.distanceGoal = goal;
   }
 
   /** 想看的点：跟随对象的位置沿行进方向前移一点，再夹进范围 */
@@ -58,15 +68,17 @@ export class CameraFollow {
     const g = this.goal(x, z, vx, vz);
     this.x = g.x;
     this.z = g.z;
-    this.vx.v = this.vz.v = 0;
+    this.distance = this.distanceGoal;
+    this.vx.v = this.vz.v = this.vd.v = 0;
   }
 
-  /** 推进一帧，平滑地靠近目标 */
-  update(x: number, z: number, vx: number, vz: number, dt: number): void {
+  /** 推进一帧，平滑地靠近目标（smoothTime 不传时用配置的跟随平滑时间） */
+  update(x: number, z: number, vx: number, vz: number, dt: number, smoothTime: number = this.cfg.smoothTime): void {
     if (dt <= 0) return;
     const g = this.goal(x, z, vx, vz);
-    this.x = smoothDamp(this.x, g.x, this.vx, this.cfg.smoothTime, dt);
-    this.z = smoothDamp(this.z, g.z, this.vz, this.cfg.smoothTime, dt);
+    this.x = smoothDamp(this.x, g.x, this.vx, smoothTime, dt);
+    this.z = smoothDamp(this.z, g.z, this.vz, smoothTime, dt);
+    this.distance = smoothDamp(this.distance, this.distanceGoal, this.vd, smoothTime, dt);
     // 弹簧的过冲也不能越界
     const l = this.limits;
     this.x = Math.max(l.minX, Math.min(l.maxX, this.x));
