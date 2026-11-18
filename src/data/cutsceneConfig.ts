@@ -338,3 +338,59 @@ export const SUMMON_POSES = {
     'shoulderR.z': -0.6,
   } as Record<string, number>,
 };
+
+// ----------------------------------------------------------------------
+// 战后过场（步骤 19，SPEC §14.4，DESIGN §11.4、§11.8）
+// ----------------------------------------------------------------------
+
+/**
+ * 战后过场：玩家在胜负提示上点“继续”之后播放。时间单位秒（1 倍速），全部走 Scheduler（倍速、跳过动画、暂停自动生效）。
+ * 胜利：倒地的队员站起 → 宝宝跳回主人身后淡出、4 名队员化入暗影（同时）→ 相机回到探索视角，只留队长。
+ * 失败：黑场淡出 → 黑场中复位（队长到离 Boss respawnDistance 米的复位点，队员、宝宝、小怪隐藏，Boss 回原位）→ 淡入 → 相机回到探索视角。
+ */
+export const OUTRO_CONFIG = {
+  victory: {
+    stand: 0.8, // 倒地的队员用复活动画站起（没人倒地时跳过这一段）
+    after: 0.15, // 站起后多久开始隐去
+    /** 相机回到探索视角：相对隐去开始的时刻、时长 */
+    camera: { at: 0.55, duration: 1.6 },
+  },
+  /** 4 名队员化入暗影（入场显形的反向：实体 → 幽影 → 沉入地面），颜色与显形相同 */
+  vanish: {
+    stagger: 0.08, // 队员之间的间隔
+    spread: 0.25, // 脚下的暗影池展开
+    duration: 0.7, // 化入暗影、沉入地面
+    sink: 0.6, // 最后沉到地下多深（米）
+    poolFade: 0.3, // 暗影池收缩消失
+    poolRadius: 1.0,
+    poolOpacity: 0.85,
+    tint: INTRO_CONFIG.reveal.tint,
+    glow: INTRO_CONFIG.reveal.glow,
+    rimGlow: INTRO_CONFIG.reveal.rimGlow,
+    glowStrength: INTRO_CONFIG.reveal.glowStrength,
+    runeSpin: INTRO_CONFIG.reveal.runeSpin,
+  },
+  /** 宝宝沿入场路线倒着跳回主人身后，然后淡出（幽影外观，不透明度到 0 后隐藏） */
+  pets: {
+    turn: 0.2, // 先转身朝向主人身后
+    speed: 1.0, // 路线时长 × speed（1 = 与入场相同）
+    fade: 0.35,
+    look: { tint: 0x1c1428, glow: 0x4a2c80, glowStrength: 0.6 },
+  },
+  defeat: {
+    fadeOut: 0.5, // 黑场淡出
+    hold: 0.1, // 全黑停留（期间复位）
+    fadeIn: 0.5,
+    camera: 1.6, // 相机从战斗视角回到探索视角
+  },
+  /** “再挑战一次”：Boss 在原位以灵魂显现、凝成实体的方式重新出现（与堕落骑士的召唤同一套参数，略慢） */
+  bossReturn: {
+    ...SUMMON_CONFIG.soul,
+    duration: 1.8,
+    condense: 1.35,
+    rise: 0.5,
+    poolRadius: 2.2,
+  },
+};
+
+export type OutroConfig = typeof OUTRO_CONFIG;

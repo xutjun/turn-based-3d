@@ -181,6 +181,11 @@ export class IntroCutscene {
     return v.home.x * ROW_DIRECTION.x + v.home.z * ROW_DIRECTION.z;
   }
 
+  /** 某个单位的显形材质工具（第一次用时创建并复用；战后过场的化入暗影共用同一份，步骤 19） */
+  shadeOf(v: UnitView): ShadeReveal {
+    return this.shade(v);
+  }
+
   private shade(v: UnitView): ShadeReveal {
     let s = this.shades.get(v.id);
     if (!s) {
@@ -246,21 +251,28 @@ export class IntroCutscene {
     const settle = c.flight.crouchDown + c.flight.crouchUp;
     const landedAt = flights.reduce((m, f) => Math.max(m, impactAt + f.launch + f.duration + settle), 0);
     const petsAt = landedAt + c.pets.after;
-    // 宝宝的主人 = 同一列的人物（人物在后排、宝宝在他正前方）
+    const pets = this.planPets();
+    const petsEnd = pets.reduce((m, e) => Math.max(m, e.start + e.duration), 0) + c.pets.turn;
+    // 召唤：宝宝开始起跳时同时开始，小怪出场与宝宝入场并行；两者都结束才算过场结束（之后界面淡入、开战）
+    const summonAt = petsAt + this.summonCfg.after;
+    return { reveal, flights, pets, impactAt, petsAt, summonAt, endAt: Math.max(petsAt + petsEnd, summonAt + this.summon.timeline().endAt) };
+  }
+
+  /**
+   * 宝宝入场的路线（只取决于阵型，与过场开始时队长在哪无关）：宝宝的主人 = 同一列的人物（人物在后排、宝宝在他正前方）。
+   * 战后过场（步骤 19）把这条路线倒过来，让宝宝跳回主人身后。
+   */
+  planPets(): PetEntry[] {
     const blocker = (v: UnitView) => ({ x: v.home.x, z: v.home.z, radius: v.radius, height: v.bodyHeight });
     const heroes = this.heroes;
-    const pets = planPetEntries(
+    return planPetEntries(
       this.pets.map((v) => {
         const owner = heroes.reduce((a, b) => (Math.abs(this.colOf(b) - this.colOf(v)) < Math.abs(this.colOf(a) - this.colOf(v)) ? b : a));
         return { id: v.id, templateId: v.templateKey, col: this.colOf(v), slot: { x: v.home.x, z: v.home.z }, owner: blocker(owner) };
       }),
       [...heroes, ...this.pets].map(blocker),
-      c.pets,
+      this.cfg.pets,
     );
-    const petsEnd = pets.reduce((m, e) => Math.max(m, e.start + e.duration), 0) + c.pets.turn;
-    // 召唤：宝宝开始起跳时同时开始，小怪出场与宝宝入场并行；两者都结束才算过场结束（之后界面淡入、开战）
-    const summonAt = petsAt + this.summonCfg.after;
-    return { reveal, flights, pets, impactAt, petsAt, summonAt, endAt: Math.max(petsAt + petsEnd, summonAt + this.summon.timeline().endAt) };
   }
 
   /**

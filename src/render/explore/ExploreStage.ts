@@ -5,6 +5,8 @@
 //   - 点击 Boss（步骤 16）：跑到交谈点、面向 Boss 后通知界面层弹出对话框（onTalk）；对话中禁止移动，
 //     镜头注视点移到队长与 Boss 之间并略微拉近；说话人做小动作（setGesture）；
 //   - 离开探索：所有单位回到战斗站位、全部显示，相机回到战斗的固定机位。
+//   - 战后（步骤 19）：战后过场播完后从队长此刻的位置接着探索（resume）；胜利后 Boss 不在场（不显示、不挡路、点不到），
+//     “再挑战一次”时 Boss 先挡路（beginBossReturn），出现演出播完后才能点击对话（finishBossReturn）。
 // 战斗代码看到的永远是同一批 UnitView，探索不改战斗规则和演出。
 
 import type { Object3D } from 'three';
@@ -17,6 +19,7 @@ import { CameraFollow } from '../../explore/cameraFollow';
 import { ExploreSession, type TalkPhase } from '../../explore/exploreSession';
 import { ExploreWorld } from '../../explore/exploreWorld';
 import type { PathResult, Pt } from '../../explore/pathfinder';
+import { nearestStandable, type GroundPose } from '../../explore/introPlan';
 import { yawOf } from '../../explore/walker';
 import type { BattleCamera } from '../camera/battleCamera';
 import type { BattleStage } from '../units/BattleStage';
@@ -80,12 +83,77 @@ export class ExploreStage {
     return this.activeFlag;
   }
 
-  /** 进入探索：所有单位先回到开场状态，再按探索布置显示（只有队长和 Boss），相机对准队长 */
-  enter(): void {
+  /** 进入探索：所有单位先回到开场状态，再按探索布置显示（队长，Boss 在场时加 Boss），相机对准队长 */
+  enter(bossPresent = true): void {
     this.stage.reset();
-    for (const [id, view] of this.stage.views) view.model.visible = id === this.leaderId || id === this.bossId;
+    this.setBossPresent(bossPresent);
+    this.showLayout();
     this.activeFlag = true;
     this.returnToStart();
+  }
+
+  /** 探索布置的显隐：只有队长和（在场时的）Boss */
+  private showLayout(): void {
+    const boss = this.world.bossPresent;
+    for (const [id, view] of this.stage.views) view.model.visible = id === this.leaderId || (boss && id === this.bossId);
+  }
+
+  /** Boss 是否在场（胜利后不在场，“再挑战一次”后回来） */
+  get bossPresent(): boolean {
+    return this.world.bossPresent;
+  }
+
+  /**
+   * Boss 在场 / 不在场：导航网格与碰撞、点 Boss 是否有效随之切换（不改显隐，显隐由布置 / 演出负责）。
+   * 不在场时正在去找 Boss 说话的交谈被取消。
+   */
+  private setBossPresent(on: boolean): void {
+    this.world.setBossPresent(on);
+    this.session.setBossPresent(on);
+    if (!on) this.setBossHover(false);
+  }
+
+  /**
+   * 战后过场播完（步骤 19）：从队长此刻的位置接着探索。单位的复位和显隐已由战后过场做完，
+   * 这里同步移动逻辑、Boss 是否在场、相机（与过场最后的取景相同）。
+   */
+  resume(leader: GroundPose, bossPresent: boolean): void {
+    this.setBossPresent(bossPresent);
+    this.showLayout();
+    this.session.reset();
+    this.clearGestures();
+    this.marker.hide();
+    this.agent.place(leader.x, leader.z, leader.yaw);
+    this.stage.unit(this.leaderId).placeAt(leader.x, leader.z, leader.yaw);
+    this.follow.setDistance();
+    this.follow.snap(leader.x, leader.z);
+    this.applyCamera();
+    this.activeFlag = true;
+  }
+
+  /** 队长站在 (x, z) 时探索相机的取景（战后过场的相机终点） */
+  frameAt(x: number, z: number): { x: number; y: number; z: number; distance: number } {
+    const f = new CameraFollow();
+    f.snap(x, z);
+    return { x: f.x, y: EXPLORE_CONFIG.camera.height, z: f.z, distance: f.distance };
+  }
+
+  /**
+   * “再挑战一次”开始（步骤 19）：Boss 回到原位挡路（碰撞、寻路立即生效），但出现演出播完之前还不能点它对话。
+   * 队长正好站在 Boss 的位置附近时，先跑到旁边最近的可站点；正在跑的路线按新的障碍重算。
+   */
+  beginBossReturn(): void {
+    this.world.setBossPresent(true);
+    const a = this.agent;
+    const p = nearestStandable(this.world, a.x, a.z);
+    const dest = a.destination;
+    if (p.x !== a.x || p.z !== a.z) a.moveTo(p.x, p.z);
+    else if (dest) a.moveTo(dest.x, dest.z);
+  }
+
+  /** “再挑战一次”的出现演出播完：Boss 可以点击对话了 */
+  finishBossReturn(): void {
+    this.setBossPresent(true);
   }
 
   /** 离开探索：单位回到战斗站位、全部显示，相机回到战斗机位 */
@@ -161,7 +229,7 @@ export class ExploreStage {
 
   /** 点击 Boss（步骤 16）：跑向交谈点，到了面向 Boss 后触发 onTalk。对话中、Boss 不在场时返回 null */
   clickBoss(): PathResult | null {
-    if (!this.activeFlag) return null;
+    if (!this.activeFlag || !this.stage.unit(this.bossId).model.visible) return null;
     const r = this.session.clickBoss();
     if (r) this.marker.show(r.goal.x, r.goal.z);
     return r;

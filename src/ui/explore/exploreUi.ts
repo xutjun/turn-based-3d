@@ -20,6 +20,15 @@ export function clearBattleUi(ui: BattleUiParts): void {
   ui.result?.hide();
 }
 
+/**
+ * 战后过场开始前（步骤 19，点“继续”时）：与 clearBattleUi 相同地清掉头顶条、飘字、顺序条、选中光圈、日志和战后提示，
+ * 但倍速 / 跳过动画按钮留着（战后过场同样受它们控制）。过场播完进入探索时再调用 clearBattleUi。
+ */
+export function clearBattleUiForOutro(ui: BattleUiParts): void {
+  clearBattleUi(ui);
+  ui.hud.setControlsVisible(true);
+}
+
 /** 战斗界面层里还看得见的元素个数（头顶条、飘字、顺序条、横幅、选中光圈、结算面板） */
 export function battleUiResidue(ui: BattleUiParts): number {
   return ui.hud.visibleBattleElements() + ui.rings.visibleCount + (ui.result?.visible ? 1 : 0);
