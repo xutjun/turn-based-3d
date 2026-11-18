@@ -91,3 +91,14 @@ export function createFormationView(registry: AssetRegistry, templates: readonly
   }
   return { group, units };
 }
+
+/**
+ * 单独建一个单位模型（步骤 21：面板里的 3D 预览）：与战场上同一套 builder、武器挂接和网格合并，
+ * 但是全新的实例（材质、几何体都是自己的），改它不影响战场上的模型。不摆到阵位上。
+ */
+export function createStandaloneUnitModel(registry: AssetRegistry, t: UnitTemplate): Object3D {
+  const obj = createUnitModel(registry, t);
+  if (RENDER_OPTIMIZE.mergeStaticMeshes) mergeUnitMeshes(obj, UNIT_MODELS[t.templateId]?.summonParts);
+  obj.name = `preview:${t.id}`;
+  return obj;
+}

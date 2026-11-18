@@ -2,7 +2,7 @@
 // 这里不包含战斗逻辑：逻辑事件由 director/BattleDirector 转成演出，界面在 ui/ 里。
 
 import { Color, FogExp2, PCFShadowMap, Plane, Raycaster, Scene, Vector2, Vector3, WebGLRenderer, type DirectionalLight, type Object3D } from 'three';
-import { collectTicks, type TickFn } from '../assets/AssetRegistry';
+import { collectTicks, type AssetRegistry, type TickFn } from '../assets/AssetRegistry';
 import { SoundEngine, type SoundSettings } from '../assets/audio/SoundEngine';
 import { createEnvironmentMap } from '../assets/environment';
 import { createDefaultRegistry } from '../assets/registerDefaults';
@@ -86,6 +86,8 @@ export class BattleScene {
   readonly fx: FxSystem;
   /** 演出镜头：推近、跟随、抖动 */
   readonly cameraRig: CameraRig;
+  /** 资源注册表（步骤 21：面板的 3D 预览用同一套 builder 另建模型实例） */
+  readonly registry: AssetRegistry;
   /** 音效：全部用 Web Audio 合成；第一次点击 / 按键后才能出声 */
   readonly sound: SoundEngine;
   /** 最近一帧的真实耗时（秒），性能自检用 */
@@ -103,6 +105,8 @@ export class BattleScene {
   private readonly frameListeners: (() => void)[] = [];
   /** 每帧在摆姿态之前调用（探索模式移动角色用）；参数为场景时间的间隔（秒，暂停时不调用） */
   private readonly updateListeners: ((dt: number) => void)[] = [];
+  /** 主画面（含后处理）画完之后再画的叠加层（步骤 21：面板的 3D 预览视口，用剪裁区域画在同一张画布上） */
+  private readonly overlayRenderers: ((renderer: WebGLRenderer) => void)[] = [];
   private readonly projected = new Vector3();
   private low = false;
   /** 画质开关，给界面上的“画质”按钮用 */
@@ -140,6 +144,7 @@ export class BattleScene {
     if (new URLSearchParams(location.search).get('merge') === '0') RENDER_OPTIMIZE.mergeStaticMeshes = false;
 
     const registry = createDefaultRegistry();
+    this.registry = registry;
     const templates = [...ALLY_TEMPLATES, ...ENEMY_TEMPLATES];
     this.formation = createFormationView(registry, templates);
     this.battleCamera = createBattleCamera();
@@ -298,6 +303,7 @@ export class BattleScene {
   private draw(nowMs: number): void {
     this.renderer.info.reset();
     this.postFx.render(this.time);
+    for (const fn of this.overlayRenderers) fn(this.renderer);
     this.lastDrawCalls = this.renderer.info.render.calls;
     this.lastTriangles = this.renderer.info.render.triangles;
     this.debug.frame(nowMs);
@@ -381,6 +387,14 @@ export class BattleScene {
       programs: info.programs?.length ?? 0,
       objects,
     };
+  }
+
+  /**
+   * 注册叠加层绘制（步骤 21）：每帧主画面（含后处理）画完之后调用，用同一个渲染器在画布上再画一些东西
+   * （面板里的 3D 预览视口：剪裁区域 + 独立小场景，不新增 WebGL 上下文）。暂停时照常调用。
+   */
+  onOverlay(fn: (renderer: WebGLRenderer) => void): void {
+    this.overlayRenderers.push(fn);
   }
 
   /** 注册每帧回调（界面层用它更新头顶条和飘字），在渲染之前调用 */

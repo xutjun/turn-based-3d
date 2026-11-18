@@ -223,7 +223,7 @@ const CSS = `
   font-family:${SERIF_FONT}; color:#d8c690;
   background:linear-gradient(to top, rgba(0,0,0,.55), rgba(0,0,0,0) 38%); animation:dk-fade .25s ease-out; }
 .dk-dialog-layer.is-hidden { display:none; }
-.dk-dialog { left:50%; bottom:34px; width:820px; min-height:150px; transform:translateX(-50%); padding:30px 34px 22px;
+.dk-dialog { left:calc(50% + 190px); bottom:34px; width:820px; min-height:150px; transform:translateX(-50%); padding:30px 34px 22px;
   cursor:pointer; animation:dk-dialog-in .3s ease-out; }
 @keyframes dk-dialog-in { from { opacity:0; transform:translate(-50%, 14px); } to { opacity:1; transform:translate(-50%, 0); } }
 /* 内圈的暗金细线：第二道金属包边 */
@@ -245,6 +245,105 @@ const CSS = `
 .dk-dialog-choices.is-hidden { display:none; }
 .dk-dialog-choices .dk-btn { min-width:200px; padding:10px 18px; font-size:18px; letter-spacing:4px; }
 .dk-dialog-hint { position:absolute; right:34px; top:-14px; font-size:12px; letter-spacing:1px; color:#8f8468; text-shadow:0 1px 2px #000; }
+
+/* ---------- 探索界面（步骤 21）：左下角血蓝圆球 + 按钮栏 + 面板。在对话框之上（对话中“设置”可点） ---------- */
+.dk-explore-hud { position:absolute; inset:0; pointer-events:none; z-index:13; user-select:none;
+  font-family:${SERIF_FONT}; color:#d8c690; font-size:14px; line-height:1.35; }
+.dk-explore-hud > * { pointer-events:auto; }
+.dk-explore-hud > .dk-hud-panels { pointer-events:none; position:absolute; inset:0; }
+.dk-hud-panels > * { pointer-events:auto; }
+/* 圆球：外框是多层金属环，里面是玻璃球；左右两半各自裁剪，液体从下往上填 */
+.dk-orb { position:absolute; left:18px; bottom:16px; width:128px; height:128px; border-radius:50%;
+  background:radial-gradient(circle at 50% 30%, #5a4c36, #2a231a 55%, #120f0c 72%);
+  box-shadow:0 0 0 2px #0b0a09, 0 0 0 4px #7a6338, 0 0 0 6px #1a1714, 0 0 0 7px #c9a85a55, 0 8px 18px rgba(0,0,0,.8),
+    inset 0 2px 3px rgba(255,235,180,.25), inset 0 -3px 5px rgba(0,0,0,.8); }
+.dk-orb::before { content:""; position:absolute; inset:-5px; border-radius:50%; pointer-events:none;
+  background:
+    radial-gradient(circle at 50% 2px, #e2c170 0 2px, #3a2f1b 3px, transparent 4px),
+    radial-gradient(circle at 50% calc(100% - 2px), #e2c170 0 2px, #3a2f1b 3px, transparent 4px),
+    radial-gradient(circle at 2px 50%, #e2c170 0 2px, #3a2f1b 3px, transparent 4px),
+    radial-gradient(circle at calc(100% - 2px) 50%, #e2c170 0 2px, #3a2f1b 3px, transparent 4px); }
+.dk-orb-glass { position:absolute; inset:9px; border-radius:50%; overflow:hidden; background:#070506;
+  box-shadow:inset 0 0 14px #000, inset 0 0 0 1px #000; }
+.dk-orb-half { position:absolute; top:0; bottom:0; width:50%; overflow:hidden; cursor:default; }
+.dk-orb-half.is-hp { left:0; }
+.dk-orb-half.is-mp { right:0; }
+.dk-orb-liquid { position:absolute; left:0; right:0; bottom:0; transition:height .3s ease-out; overflow:hidden; }
+.dk-orb-half.is-hp .dk-orb-liquid { background:radial-gradient(ellipse 120% 90% at 100% 80%, #d8261a, #8a0d08 55%, #3a0302); }
+.dk-orb-half.is-mp .dk-orb-liquid { background:radial-gradient(ellipse 120% 90% at 0% 80%, #2c64e0, #0e2a8a 55%, #030b3a); }
+/* 液面：一道亮波纹缓慢横向流动 */
+.dk-orb-wave { position:absolute; left:-100%; top:-3px; width:300%; height:8px; opacity:.75;
+  background:repeating-radial-gradient(ellipse 18px 5px at 50% 100%, rgba(255,255,255,.35), rgba(255,255,255,0) 70%);
+  animation:dk-orb-wave 6s linear infinite; }
+.dk-orb-half.is-mp .dk-orb-wave { animation-duration:7.5s; animation-direction:reverse; }
+@keyframes dk-orb-wave { from { transform:translateX(0); } to { transform:translateX(33.333%); } }
+.dk-orb-divider { position:absolute; left:50%; top:0; bottom:0; width:4px; margin-left:-2px; pointer-events:none;
+  background:linear-gradient(90deg, #1a1408, #c9a85a 45%, #5a4320 55%, #120e08); box-shadow:0 0 4px #000; }
+.dk-orb-shine { position:absolute; inset:0; border-radius:50%; pointer-events:none;
+  background:
+    radial-gradient(ellipse 55% 35% at 38% 22%, rgba(255,255,255,.38), rgba(255,255,255,0) 70%),
+    radial-gradient(circle at 50% 50%, rgba(0,0,0,0) 58%, rgba(0,0,0,.55) 100%); }
+/* 按钮栏 */
+.dk-hud-bar { position:absolute; left:158px; bottom:22px; display:flex; gap:6px; }
+.dk-hud-btn { position:relative; width:46px; height:46px; padding:0; cursor:pointer; color:#d9c38a;
+  display:flex; align-items:center; justify-content:center;
+  background:
+    repeating-linear-gradient(118deg, rgba(255,255,255,.03) 0 2px, transparent 2px 7px),
+    linear-gradient(#3a342c, #1f1b17 52%, #15120f);
+  border:1px solid #0b0a09; border-radius:2px;
+  box-shadow:0 0 0 1px #6b5731, 0 0 0 3px #15120f, inset 0 1px 0 rgba(255,235,180,.18), inset 0 -2px 4px rgba(0,0,0,.7), 0 4px 10px rgba(0,0,0,.7); }
+.dk-hud-btn svg { width:26px; height:26px; display:block; filter:drop-shadow(0 1px 1px #000); }
+.dk-hud-btn:hover { color:#fff1c4; box-shadow:0 0 0 1px #c9a85a, 0 0 0 3px #15120f, 0 0 12px rgba(201,168,90,.4), inset 0 1px 0 rgba(255,235,180,.25); }
+.dk-hud-btn:active { transform:translateY(1px); }
+.dk-hud-btn.is-active { color:#ffe08a; background:linear-gradient(#5a4a2c, #2e2516 52%, #1c160c);
+  box-shadow:0 0 0 1px #f2d98a, 0 0 0 3px #15120f, 0 0 14px rgba(242,200,90,.5), inset 0 0 8px rgba(255,210,120,.25); }
+.dk-hud-btn.is-disabled { color:#5f594f; cursor:not-allowed; filter:grayscale(.9); }
+.dk-hud-btn.is-disabled:hover { color:#7a7264; box-shadow:0 0 0 1px #4a3a30, 0 0 0 3px #15120f; }
+/* 提示框 */
+.dk-tip { position:absolute; z-index:5; transform:translate(-50%, calc(-100% - 8px)); padding:4px 10px; white-space:nowrap;
+  pointer-events:none; font-size:13px; letter-spacing:1px; color:#eadcb4; background:rgba(14,12,10,.94);
+  border:1px solid #0b0a09; box-shadow:0 0 0 1px #7a6338, 0 4px 10px rgba(0,0,0,.8); }
+/* 面板框架 */
+/* 石质底子在单独的一层（.dk-game-panel-bg），面板本身只留外圈金属环；有 3D 预览的面板在底子上挖窗口（mask） */
+.dk-game-panel { left:18px; bottom:162px; width:640px; padding:0; isolation:isolate; animation:dk-fade .15s ease-out;
+  background:none; box-shadow:0 0 0 1px #7a6338, 0 0 0 3px #1a1714, 0 0 0 4px #43361f, 0 8px 22px rgba(0,0,0,.75); }
+.dk-game-panel-bg { position:absolute; inset:0; z-index:0; pointer-events:none;
+  background:
+    radial-gradient(ellipse at 18% 0%, rgba(255,240,200,.07), transparent 55%),
+    repeating-linear-gradient(118deg, rgba(255,255,255,.022) 0 2px, transparent 2px 9px),
+    repeating-linear-gradient(28deg, rgba(0,0,0,.16) 0 3px, transparent 3px 13px),
+    linear-gradient(#262320, #131110);
+  box-shadow:inset 0 0 22px rgba(0,0,0,.85), inset 0 1px 0 rgba(255,235,180,.08); }
+.dk-game-panel.has-window .dk-game-panel-bg {
+  -webkit-mask:linear-gradient(#000 0 0), linear-gradient(#000 0 0) var(--win-x) var(--win-y) / var(--win-w) var(--win-h) no-repeat;
+  -webkit-mask-composite:xor;
+  mask:linear-gradient(#000 0 0), linear-gradient(#000 0 0) var(--win-x) var(--win-y) / var(--win-w) var(--win-h) no-repeat;
+  mask-composite:exclude; }
+.dk-game-panel::before, .dk-game-panel::after { z-index:2; }
+.dk-game-panel::after { content:""; position:absolute; inset:6px; pointer-events:none; border:1px solid rgba(122,99,56,.4); }
+.dk-game-panel-head { position:relative; z-index:1; display:flex; align-items:center; justify-content:center; height:38px;
+  border-bottom:1px solid #0b0a09; box-shadow:0 1px 0 #43361f;
+  background:linear-gradient(#3a332a, #221e19 55%, #191613); }
+.dk-game-panel-title { font-size:17px; letter-spacing:8px; text-indent:8px; color:#e8d49a; text-shadow:0 1px 2px #000, 0 0 8px rgba(201,150,44,.4); }
+.dk-game-panel-close { position:absolute; right:8px; top:6px; width:26px; height:26px; padding:0; font-size:18px; line-height:1; letter-spacing:0; z-index:1; }
+.dk-game-panel-body { position:relative; z-index:1; padding:14px 16px 16px; }
+.dk-game-panel-empty { padding:70px 0; text-align:center; font-size:16px; letter-spacing:4px; color:#8f8468; }
+/* 角色面板：左侧 3D 预览（透明窗口，下面的画布上画模型），右侧属性 */
+.dk-char-layout { display:flex; gap:16px; }
+.dk-preview-view { position:relative; flex:none; width:260px; height:340px; cursor:grab; touch-action:none;
+  border:1px solid #0b0a09; box-shadow:0 0 0 1px #6b5731, inset 0 0 18px rgba(0,0,0,.9); }
+.dk-preview-view.is-dragging { cursor:grabbing; }
+.dk-char-info { flex:1; min-width:0; }
+.dk-char-head { display:flex; align-items:baseline; gap:10px; margin:2px 0 10px; }
+.dk-char-name { font-size:24px; letter-spacing:4px; color:#ffe08a; text-shadow:0 0 8px rgba(201,150,44,.7), 0 1px 2px #000; }
+.dk-char-class { font-size:13px; color:#a99a72; }
+.dk-char-row { display:flex; align-items:baseline; justify-content:space-between; min-height:26px; font-size:15px; }
+.dk-char-label { letter-spacing:2px; color:#b9a77a; }
+.dk-char-value { font-variant-numeric:tabular-nums; color:#eadcb4; }
+.dk-char-row.is-level .dk-char-value { font-size:18px; color:#ffe08a; }
+.dk-exp-bar { position:relative; height:9px; margin:2px 0 4px; background:#0b0a0a; border:1px solid #4a3d24; box-shadow:inset 0 1px 2px #000; }
+.dk-exp-bar > i { position:absolute; left:0; top:0; bottom:0; background:linear-gradient(#e2c170, #8a6a2c); }
+.dk-char-stats .dk-char-row { border-bottom:1px solid rgba(74,61,36,.45); }
 `;
 
 /** 把主题样式注入页面（重复调用只注入一次） */

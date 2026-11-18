@@ -93,6 +93,13 @@ import { INTRO_CONFIG } from '../data/cutsceneConfig';
 import { battleUiResidue, clearBattleUi, clearBattleUiForOutro, type BattleUiParts } from './explore/exploreUi';
 import { OutroCutscene, type OutroReport, type OutroResult } from '../render/cutscene/outroCutscene';
 import type { BattleSummary } from './stats/BattleStats';
+import type { UnitTemplate } from '../core/types';
+import { ExploreHud, resolveExploreEscape } from './explore/ExploreHud';
+import type { HudButtonId } from './explore/hudIcons';
+import type { PanelId } from './explore/PanelHost';
+import { PanelPreview } from '../render/preview/PanelPreview';
+import { createStandaloneUnitModel } from '../render/scene/formationView';
+import { UNIT_MODELS } from '../data/unitModels';
 
 /** 页面处在哪个界面 */
 export type AppScreen = 'title' | 'explore' | 'dialog' | 'intro' | 'battle' | 'result' | 'outro';
@@ -161,6 +168,10 @@ export interface AppDebug {
   outro(): { active: boolean; report: OutroReport | null; fade: number; shaded: string[]; fx: number };
   /** 代替点结算画面的主按钮（胜利“重新开始”、失败“再来一次”） */
   outroContinue(): void;
+  /** 探索界面（步骤 21）：是否显示、打开的面板、3D 预览的视口数与上一帧画了几个、缓存的预览模型数 */
+  hud(): { visible: boolean; panel: PanelId | null; previews: number; rendered: number; cached: number; gearHidden: boolean };
+  /** 代替点按钮栏上的按钮 */
+  hudPress(id: HudButtonId): void;
   /** 演出时间（暂停时不变） */
   clock(): number;
   /** 联系表：停掉自动渲染改为手动逐帧推进（manual），推进 seconds 秒（每帧 dt），取当前画面（PNG data URL） */
@@ -232,7 +243,39 @@ export class PlayerBattleApp {
   private match: Match | null = null;
   private seed: number;
   private matches = 0;
-  private screen: AppScreen = 'title';
+  private screenValue: AppScreen = 'title';
+  /** 探索界面（步骤 21）：左下角血蓝圆球 + 按钮栏 + 面板；只在探索和对话中显示 */
+  private readonly exploreHud: ExploreHud;
+  /** 面板里的 3D 预览（步骤 21）：主渲染器画完后用剪裁区域再画一个小场景，不新增 WebGL 上下文 */
+  private readonly panelPreview: PanelPreview;
+
+  /** 当前界面；切换时同步探索界面的显隐和右上角齿轮（步骤 21） */
+  private get screen(): AppScreen {
+    return this.screenValue;
+  }
+
+  private set screen(value: AppScreen) {
+    this.screenValue = value;
+    this.applyScreen();
+  }
+
+  /**
+   * 界面切换后同步（步骤 21）：探索界面只在探索 / 对话中显示（离开探索时关闭面板）；
+   * 右上角齿轮在标题、探索、对话中不显示（探索中设置由按钮栏的“设置”和 Esc 打开），过场、战斗、结算中照常显示。
+   */
+  private applyScreen(): void {
+    const s = this.screenValue;
+    this.gear?.classList.toggle('is-hidden', s === 'title' || s === 'explore' || s === 'dialog');
+    this.exploreHud?.syncScreen(s);
+  }
+
+  /** 当前队长的模板 */
+  private leaderTemplate(): UnitTemplate {
+    const t = ALLY_TEMPLATES.find((u) => u.id === this.explore.leaderId);
+    if (!t) throw new Error(`队长 ${this.explore.leaderId} 不在友方模板里`);
+    return t;
+  }
+
   /** 正在拆掉上一场（重新开始 / 退出 / 再战一次进行中）：期间忽略重复操作 */
   private busy = false;
   /** 玩家的偏好：再战一次时保留 */
@@ -343,12 +386,16 @@ export class PlayerBattleApp {
       groundAt: (x, y) => this.scene.groundAt(x, y),
       bossBox: () => this.bossScreenBox(),
       onGround: (x, z) => void this.explore.clickGround(x, z),
-      onBoss: () => void this.explore.clickBoss(), // 跑到交谈点，到了弹出对话框（步骤 16）
+      onBoss: () => {
+        // 跑到交谈点，到了弹出对话框（步骤 16）；打开着的面板先关掉（步骤 21，DESIGN §9.17 M4）
+        this.exploreHud.closePanel();
+        void this.explore.clickBoss();
+      },
       onBossHover: (on) => this.explore.setBossHover(on),
     });
     this.exploreHint = el('div', 'dk-explore-hint', '左键：移动　点击 Boss：对话　方向键 / WASD：移动（调试）　Esc：设置');
     this.exploreHint.style.cssText =
-      'position:absolute;left:50%;bottom:22px;transform:translateX(-50%);padding:6px 16px;pointer-events:none;' +
+      'position:absolute;left:50%;top:14px;transform:translateX(-50%);padding:6px 16px;pointer-events:none;' + // 步骤 21：左下角是圆球和按钮栏，提示移到上方
       'font-size:15px;letter-spacing:1px;color:rgba(222,206,170,0.82);background:rgba(10,8,8,0.55);' +
       'border:1px solid rgba(150,120,70,0.35);border-radius:3px;white-space:nowrap;display:none;';
     stageEl.insertBefore(this.exploreHint, this.menuLayer); // 在菜单层下面
@@ -402,6 +449,36 @@ export class PlayerBattleApp {
       },
     });
 
+    // 探索界面（步骤 21）：圆球、按钮栏、面板；在菜单层之下、对话框之上（对话中“设置”可点）
+    const templates = [...ALLY_TEMPLATES, ...ENEMY_TEMPLATES];
+    this.panelPreview = new PanelPreview({
+      build: (id) => {
+        const t = templates.find((u) => u.id === id);
+        if (!t) throw new Error(`预览：没有单位 ${id}`);
+        return createStandaloneUnitModel(this.scene.registry, t);
+      },
+      idleStyle: (id) => {
+        const t = templates.find((u) => u.id === id);
+        return t ? UNIT_MODELS[t.templateId]?.idle : undefined;
+      },
+      environment: this.scene.scene.environment,
+    });
+    this.scene.onOverlay((renderer) => this.panelPreview.render(renderer));
+    this.exploreHud = new ExploreHud({
+      stage: stageEl,
+      before: this.menuLayer,
+      leader: () => this.leaderTemplate(),
+      preview: this.panelPreview,
+      onSettings: () => {
+        if (!this.busy) this.menu.open(this.menuContext());
+      },
+    });
+    this.scene.onUpdate((dt) => {
+      this.exploreHud.update(dt);
+      this.panelPreview.update(dt);
+    });
+    this.applyScreen();
+
     this.scene.onUpdate((dt) => {
       if (!this.dialogue) return;
       this.dialogue.update(dt);
@@ -427,6 +504,8 @@ export class PlayerBattleApp {
     removeEventListener('keyup', this.onKeyUpCapture, true);
     removeEventListener('blur', this.onBlur);
     this.explorePointer.dispose();
+    this.exploreHud.dispose();
+    this.panelPreview.dispose();
     this.dialogBox.dispose();
     this.explore.dispose();
     this.exploreHint.remove();
@@ -492,7 +571,7 @@ export class PlayerBattleApp {
     this.explore.enter();
     clearBattleUi(this.battleUi); // 不留任何战斗界面元素（步骤 17 修正）
     this.title.show();
-    this.gear.classList.add('is-hidden');
+    // 右上角齿轮：探索、对话、标题界面中不显示（applyScreen，步骤 21）
     this.exploreHint.style.display = 'none';
     this.uiRoot.style.display = 'none';
     this.hud.setControlsVisible(false);
@@ -515,7 +594,6 @@ export class PlayerBattleApp {
     this.scene.sound.unlock();
     this.menu.close();
     this.title.hide();
-    this.gear.classList.remove('is-hidden');
     this.uiRoot.style.display = 'none'; // 日志、宝宝指令、结算只在战斗中显示
     this.hud.setControlsVisible(false); // 倍速、跳过、顺序条只在战斗中显示
     this.exploreHint.style.display = '';
@@ -535,7 +613,6 @@ export class PlayerBattleApp {
     this.explorePointer.clear();
     this.explore.leave();
     this.exploreHint.style.display = 'none';
-    this.gear.classList.remove('is-hidden');
     this.uiRoot.style.display = '';
     this.hud.setControlsVisible(true);
     this.hud.setBattleOpacity(1);
@@ -557,7 +634,6 @@ export class PlayerBattleApp {
     this.exploreInput.clear();
     this.explorePointer.clear();
     this.exploreHint.style.display = 'none';
-    this.gear.classList.remove('is-hidden');
     this.uiRoot.style.display = 'none'; // 日志、宝宝指令在开战后淡入
     this.hud.setBattleOpacity(0); // 头顶条、顺序条先藏起来
     this.hud.setControlsVisible(true); // 倍速、跳过动画在过场中就能用
@@ -653,7 +729,6 @@ export class PlayerBattleApp {
     clearBattleUi(this.battleUi);
     this.uiRoot.style.display = 'none';
     this.exploreHint.style.display = '';
-    this.gear.classList.remove('is-hidden');
   }
 
   /** 设置里“退出游戏”：结束当前战斗或探索，场上复位，回到标题界面 */
@@ -741,7 +816,6 @@ export class PlayerBattleApp {
     this.explore.resume(leader);
     clearBattleUi(this.battleUi);
     this.exploreHint.style.display = '';
-    this.gear.classList.remove('is-hidden');
   }
 
   /** 立即走完正在播的战后过场（打开“跳过动画”直到它结束，再恢复原来的设置） */
@@ -886,9 +960,11 @@ export class PlayerBattleApp {
         return;
       }
       if (this.busy) return;
-      if (this.screen === 'dialog') {
-        // 对话中 Esc = “再等等”（DESIGN §11.1）；设置菜单用右上角齿轮打开
-        this.finishDialog('close');
+      // 探索 / 对话中（步骤 21）：对话 = “再等等”（DESIGN §11.1）；有面板先关面板；否则打开设置
+      const action = resolveExploreEscape({ screen: this.screen, menuOpen: this.menu.isOpen, panelOpen: this.exploreHud.openPanel !== null });
+      if (action === 'dialog' || action === 'panel') {
+        if (action === 'dialog') this.finishDialog('close');
+        else this.exploreHud.closePanel();
         e.stopImmediatePropagation();
         e.preventDefault();
         return;
@@ -1099,6 +1175,7 @@ export class PlayerBattleApp {
       dialogChoose: (i) => this.chooseDialog(i),
       clickBoss: () => {
         if (this.screen !== 'explore' || this.menu.isOpen || this.busy) return null;
+        this.exploreHud.closePanel();
         const r = this.explore.clickBoss();
         return r ? { x: r.goal.x, z: r.goal.z } : null;
       },
@@ -1126,6 +1203,15 @@ export class PlayerBattleApp {
         fx: this.introFx.activeCount + this.summonFx.activeCount,
       }),
       outroContinue: () => void this.result.activate(),
+      hud: () => ({
+        visible: this.exploreHud.visible,
+        panel: this.exploreHud.openPanel,
+        previews: this.panelPreview.activeCount,
+        rendered: this.panelPreview.lastRendered,
+        cached: this.panelPreview.cachedCount,
+        gearHidden: this.gear.classList.contains('is-hidden'),
+      }),
+      hudPress: (id) => this.exploreHud.press(id),
       clock: () => this.scene.scheduler.time,
       manual: (on) => this.scene.setManual(on),
       step: (seconds, dt = 1 / 60) => {

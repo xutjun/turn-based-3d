@@ -66,8 +66,36 @@ export class FakeElement {
     if (i >= 0) list.splice(i, 1);
     this.parent = null;
   }
-  addEventListener(): void {}
-  removeEventListener(): void {}
+  innerHTML = '';
+  /** 登记的事件监听（步骤 21：测试里可以手动触发） */
+  readonly listeners: Record<string, ((e: unknown) => void)[]> = {};
+  addEventListener(type: string, fn: (e: unknown) => void): void {
+    (this.listeners[type] ??= []).push(fn);
+  }
+  removeEventListener(type: string, fn: (e: unknown) => void): void {
+    const list = this.listeners[type];
+    if (list) this.listeners[type] = list.filter((f) => f !== fn);
+  }
+  /** 触发一个事件（只调用登记在自己身上的监听，不冒泡） */
+  dispatch(type: string, e: unknown = {}): void {
+    for (const fn of [...(this.listeners[type] ?? [])]) fn(e);
+  }
+  /** 只支持本项目用到的选择器：逗号分隔的“.类名”和“.父类名 > *” */
+  matches(selector: string): boolean {
+    return selector.split(',').some((part) => {
+      const s = part.trim();
+      const child = /^\.([\w-]+)\s*>\s*\*$/.exec(s);
+      if (child) return this.parent?.classList.contains(child[1]!) ?? false;
+      const cls = /^\.([\w-]+)$/.exec(s);
+      return cls ? this.classList.contains(cls[1]!) : false;
+    });
+  }
+  /** 自己和所有祖先（模拟 composedPath） */
+  path(): FakeElement[] {
+    const out: FakeElement[] = [];
+    for (let n: FakeElement | null = this; n; n = n.parent) out.push(n);
+    return out;
+  }
   getBoundingClientRect() {
     return { left: 0, top: 0, width: 1280, height: 800, right: 1280, bottom: 800 };
   }

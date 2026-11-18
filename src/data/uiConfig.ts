@@ -68,3 +68,31 @@ export const TITLE_CONFIG = {
   name: '深渊之战',
   subtitle: '暗黑风 3D 回合制战斗',
 };
+
+/**
+ * 面板里的 3D 预览视口（步骤 21，DESIGN §12.4）：复用主渲染器，在面板区域用剪裁区域再画一个小场景。
+ * 不经过 Bloom，所以预览实例的发光强度整体乘 glowBoost（只改预览实例自己的材质，战场不受影响，§9.17 M7）。
+ */
+export const PREVIEW_CONFIG = {
+  glowBoost: 1.8,
+  fov: 26, // 预览相机的竖直视角（度）
+  /** 模型身高占视口高度的比例（留出头顶和脚下的空白） */
+  fill: 0.8,
+  /** 相机俯视角度（弧度）：略高于模型中部往下看 */
+  pitch: 0.12,
+  clearColor: 0x0d0b0a, // 视口底色（与面板石质底色接近）
+  /** 灯光：主光（暖）、轮廓光（冷）、环境光 */
+  keyLight: { color: 0xffe2b8, intensity: 2.6, position: [2.2, 3.2, 3.0] as const },
+  rimLight: { color: 0x7fa6ff, intensity: 2.2, position: [-2.6, 2.4, -2.8] as const },
+  ambient: { color: 0x40384a, intensity: 1.1 },
+  environmentIntensity: 0.6,
+  stand: { radius: 0.62, color: 0x1a1613 }, // 脚下的暗色圆台（半径按人物身高 1.8 米计，随模型缩放）
+  /** 拖拽旋转与松手惯性（ui/explore/spin.ts） */
+  spin: {
+    dragRadPerPx: 0.012,
+    inertiaDecay: 4.5,
+    maxSpin: 9,
+    minSpin: 0.05,
+    releaseHold: 0.08,
+  },
+};
