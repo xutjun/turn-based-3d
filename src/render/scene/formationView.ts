@@ -34,8 +34,8 @@ function createUnitModel(registry: AssetRegistry, t: UnitTemplate): Object3D {
   const def = UNIT_MODELS[t.templateId];
   if (def && registry.has(def.assetKey)) {
     const model = registry.create(def.assetKey, def.params ?? {});
-    // 会走路的人形：腿部关节要在合并网格之前登记（步骤 14）
-    if (def.walk) enableLegJoints(model);
+    // 会走路的人形（步骤 14）和要抬腿跺地的 Boss（步骤 17）：腿部关节要在合并网格之前登记
+    if (def.walk || def.legs) enableLegJoints(model);
     // 人物手持发光武器
     const weaponDef = t.weaponId ? WEAPON_MODELS[t.weaponId] : undefined;
     if (weaponDef && registry.has(weaponDef.assetKey)) {

@@ -18,6 +18,10 @@ export interface UnitModelDef {
    * 代价是腿部网格不能再并进身体，每人多几次绘制调用，所以只给需要走路的单位打开。
    */
   walk?: boolean;
+  /**
+   * 只登记腿部关节、不走路（步骤 17）：Boss 在入场过场里抬腿跺地，身体下沉时屈膝踩地。绘制调用同样会多几次。
+   */
+  legs?: boolean;
 }
 
 /** 某个模型（资源键）的待机风格：预览页没有单位模板，按资源键查 */
@@ -28,6 +32,11 @@ export function idleStyleOfAsset(assetKey: string): IdleStyleId | undefined {
 /** 某个模型（资源键）会不会走路（预览页用） */
 export function walksOfAsset(assetKey: string): boolean {
   return Object.values(UNIT_MODELS).some((d) => d.assetKey === assetKey && d.walk === true);
+}
+
+/** 某个模型（资源键）有没有腿部关节（会走路，或像 Boss 一样要抬腿；预览页用） */
+export function hasLegJointsOfAsset(assetKey: string): boolean {
+  return Object.values(UNIT_MODELS).some((d) => d.assetKey === assetKey && (d.walk === true || d.legs === true));
 }
 
 export const UNIT_MODELS: Record<string, UnitModelDef> = {
@@ -51,7 +60,7 @@ export const UNIT_MODELS: Record<string, UnitModelDef> = {
   enemy_fallen_knight: { assetKey: ASSET_KEYS.enemyFallenKnight, idle: 'stiff' },
   enemy_demon_priest: { assetKey: ASSET_KEYS.enemyDemonPriest, idle: 'flowing' },
   enemy_necromancer: { assetKey: ASSET_KEYS.enemyNecromancer, idle: 'flowing' },
-  enemy_abyss_lord: { assetKey: ASSET_KEYS.enemyAbyssLord, idle: 'overlord' },
+  enemy_abyss_lord: { assetKey: ASSET_KEYS.enemyAbyssLord, idle: 'overlord', legs: true }, // 入场过场抬腿跺地（步骤 17）
 };
 
 /**

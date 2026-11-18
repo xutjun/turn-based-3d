@@ -23,6 +23,12 @@
 // - “我准备好了”：关闭对话框，发出“进入战斗”信号——本步直接进入现有的战斗流程（入场过场在步骤 17、18）；
 //   “再等等”：关闭对话框，回到自由移动。
 //
+// 步骤 17：
+// - “我准备好了”之后播放入场过场（render/cutscene/introCutscene）：队员从队长的影子里显形 → Boss 怒吼、跺地 →
+//   我方 5 人被震飞、落到战斗格子 → 宝宝跳入 → 相机过渡到战斗视角；过场结束才建引擎、开第 1 回合，头顶条、顺序条、界面淡入。
+//   过场中可开设置（暂停）、切倍速、跳过动画；设置里“重新开始”= 跳过过场直接开战，“退出游戏”= 立即走完过场后回到标题。
+// - 新阵型：人物在前排（骑士烬刃居中），宝宝在主人身后一排（data/heroes.ts 的 ALLY_LINEUP）。
+//
 // 地址参数：
 //   seed=数字   随机种子（相同种子、相同指令战斗过程完全相同）；不填则用当前时间
 //   speed=2     初始战斗速度
@@ -70,9 +76,12 @@ import { BOSS_DIALOGUE_ID, DIALOGUE_EMOTES, DIALOGUES, type DialogueAction } fro
 import { EXPLORE_CONFIG } from '../data/exploreConfig';
 import { DialogueSession } from '../explore/dialogueSession';
 import { DialogBox } from './dialog/DialogBox';
+import { IntroCutscene, type IntroPlan, type IntroReport } from '../render/cutscene/introCutscene';
+import { IntroFx } from '../render/cutscene/introFx';
+import { INTRO_CONFIG } from '../data/cutsceneConfig';
 
 /** 页面处在哪个界面 */
-export type AppScreen = 'title' | 'explore' | 'dialog' | 'battle';
+export type AppScreen = 'title' | 'explore' | 'dialog' | 'intro' | 'battle';
 
 /** 调试：对话的状态（window.__app.dialog()） */
 export interface DialogSnapshot {
@@ -128,8 +137,16 @@ export interface AppDebug {
   dialogAdvance(): void;
   dialogChoose(index: number): void;
   clickBoss(): { x: number; z: number } | null;
+  /** 入场过场（步骤 17）：是否在播、这一次的走位、上一次的检查结果、残留 */
+  intro(): { active: boolean; plan: IntroPlan | null; report: IntroReport | null; shaded: string[]; fx: number; hudOpacity: number };
+  /** 验收：把队长放到 (x, z)、面向 Boss，直接开始入场过场（代替“我准备好了”）；返回过场结束的 Promise */
+  introFrom(x: number, z: number): Promise<void>;
   /** 演出时间（暂停时不变） */
   clock(): number;
+  /** 联系表：停掉自动渲染改为手动逐帧推进（manual），推进 seconds 秒（每帧 dt），取当前画面（PNG data URL） */
+  manual(on: boolean): void;
+  step(seconds: number, dt?: number): void;
+  shot(): string;
   /** 某单位身体中部在窗口里的坐标（鼠标选目标自检用：已含黑边和缩放） */
   unitClient(id: string): { x: number; y: number };
   /** 场上残留检查：离开站位的单位、进行中的动画、飘字数量、特效数量 */
@@ -181,6 +198,10 @@ export class PlayerBattleApp {
   /** 与 Boss 的对话（步骤 16）：对话框与当前进度（没在对话为 null） */
   private readonly dialogBox: DialogBox;
   private dialogue: DialogueSession | null = null;
+  /** 入场过场（步骤 17）与它自己的地面特效；introRun = 正在播放的那一次 */
+  private readonly introFx: IntroFx;
+  private readonly intro: IntroCutscene;
+  private introRun: Promise<unknown> | null = null;
   private readonly unsubscribeStore: () => void;
   private match: Match | null = null;
   private seed: number;
@@ -313,6 +334,22 @@ export class PlayerBattleApp {
       onChoose: (i) => this.chooseDialog(i),
     });
     this.explore.onTalk = () => this.openDialog();
+
+    // 入场过场（步骤 17）：地面特效常驻场景（不用时隐藏）；启动时预热显形用的着色器，第一次过场不卡顿
+    this.introFx = new IntroFx();
+    this.scene.scene.add(this.introFx.group);
+    this.intro = new IntroCutscene({
+      stage,
+      scheduler,
+      camera: this.scene.battleCamera,
+      rig: this.scene.cameraRig,
+      fx: this.scene.fx,
+      sound,
+      introFx: this.introFx,
+      world: this.explore.world,
+      leaderId: this.explore.leaderId,
+      bossId: this.explore.bossId,
+    });
     this.scene.onUpdate((dt) => {
       if (!this.dialogue) return;
       this.dialogue.update(dt);
@@ -327,6 +364,7 @@ export class PlayerBattleApp {
   }
 
   start(): void {
+    this.prewarm();
     this.scene.start();
     if (this.autoStart) void this.startBattle();
     else this.showTitle();
@@ -352,6 +390,19 @@ export class PlayerBattleApp {
     this.hud.dispose();
     this.scene.dispose();
     this.viewport.dispose();
+  }
+
+  /**
+   * 启动预热（步骤 17）：用战斗视角、20 个单位全部显示的状态画一帧，再换上显形用的材质副本画一帧，
+   * 把所有着色器（含阴影、半透明）提前编译好。否则入场过场里镜头从对话视角拉到战斗视角时，
+   * 大量第一次进入画面的物体逐帧编译着色器（实测每帧卡 4~5 秒，演出时钟几乎停住）。
+   */
+  private prewarm(): void {
+    const { stage } = this.scene;
+    stage.reset(); // 全部显示、回到格子
+    this.scene.battleCamera.setFrame(null);
+    this.scene.renderOnce();
+    this.intro.prewarm(() => this.scene.renderOnce());
   }
 
   /** 探索中 Boss 在屏幕上的可点范围（与战斗选目标同一套拾取，步骤 15） */
@@ -391,6 +442,8 @@ export class PlayerBattleApp {
   private menuContext(): MenuContext {
     // 对话中与探索相同（“回到起点”“退出游戏”，DESIGN §9.10 F7）
     if (this.screen === 'dialog') return 'explore';
+    // 入场过场中与战斗相同（“重新开始”= 跳过过场直接开战，“退出游戏”）
+    if (this.screen === 'intro') return 'battle';
     return this.screen === 'title' ? 'title' : this.screen;
   }
 
@@ -410,7 +463,7 @@ export class PlayerBattleApp {
 
   /** 跳过标题和探索，直接开战（地址参数 start=1、自检用；正式流程在步骤 16、17 由对话和入场过场进入） */
   async startBattle(): Promise<void> {
-    if (this.busy || this.screen === 'battle') return;
+    if (this.busy || this.screen === 'battle' || this.screen === 'intro') return;
     this.dismissDialog();
     this.scene.sound.unlock();
     this.menu.close();
@@ -422,12 +475,75 @@ export class PlayerBattleApp {
     this.gear.classList.remove('is-hidden');
     this.uiRoot.style.display = '';
     this.hud.setControlsVisible(true);
+    this.hud.setBattleOpacity(1);
+    this.uiRoot.style.opacity = '';
     this.screen = 'battle';
     this.startMatch();
   }
 
+  /**
+   * 入场过场（步骤 17）：从对话视角接着演——队员显形、Boss 怒吼跺地、我方震飞落位、宝宝跳入、相机过渡；
+   * 播完才建引擎开第 1 回合（过场期间不会有任何战斗行动），然后头顶条、顺序条、战斗界面淡入。
+   */
+  async startIntro(): Promise<void> {
+    if (this.busy || this.screen === 'battle' || this.screen === 'intro' || this.introRun) return;
+    this.dismissDialog();
+    this.scene.sound.unlock();
+    this.menu.close();
+    this.title.hide();
+    this.exploreInput.clear();
+    this.explorePointer.clear();
+    this.exploreHint.style.display = 'none';
+    this.gear.classList.remove('is-hidden');
+    this.uiRoot.style.display = 'none'; // 日志、宝宝指令在开战后淡入
+    this.hud.setBattleOpacity(0); // 头顶条、顺序条先藏起来
+    this.hud.setControlsVisible(true); // 倍速、跳过动画在过场中就能用
+    this.screen = 'intro';
+    const start = this.explore.beginIntro();
+    const run = this.intro.play(start);
+    this.introRun = run;
+    try {
+      await run;
+    } catch (err) {
+      console.error('入场过场中断：', err);
+    } finally {
+      this.introRun = null;
+    }
+    if (this.screen !== 'intro') return; // 过场中途退出到标题
+    // g. 开战：第 1 回合；头顶条、顺序条、战斗界面淡入（随倍速，跳过动画时立即出现）
+    this.screen = 'battle';
+    this.uiRoot.style.display = '';
+    this.uiRoot.style.opacity = '0';
+    this.startMatch();
+    void this.scene.scheduler.tween(INTRO_CONFIG.uiFade, (t) => {
+      this.hud.setBattleOpacity(t);
+      this.uiRoot.style.opacity = t >= 1 ? '' : t.toFixed(3);
+    });
+  }
+
+  /** 立即走完正在播的过场（打开“跳过动画”直到它结束，再恢复原来的设置） */
+  private async skipIntro(): Promise<void> {
+    const run = this.introRun;
+    if (!run) return;
+    const s = this.scene.scheduler;
+    const was = s.skip;
+    this.menu.close(false);
+    this.scene.setPaused(false);
+    s.setSkip(true);
+    try {
+      await run.catch(() => undefined);
+    } finally {
+      s.setSkip(was);
+    }
+  }
+
   /** 设置里“重新开始”：战斗中放弃当前战斗、状态完全重置后重开一局（同“再战一次”）；探索中回到起点 */
   async restart(): Promise<void> {
+    if (this.screen === 'intro') {
+      // 过场中“重新开始”：过场立即走完，直接开战
+      await this.skipIntro();
+      return;
+    }
     if (this.screen === 'dialog') {
       // 对话中“回到起点”：关掉对话框，回到探索再回到起点
       this.dismissDialog();
@@ -449,6 +565,11 @@ export class PlayerBattleApp {
     if (this.busy || this.screen === 'title') return;
     this.busy = true;
     try {
+      if (this.screen === 'intro') {
+        // 过场中退出：先让过场立即走完（所有单位复位、特效清空），不开战
+        this.screen = 'title';
+        await this.skipIntro();
+      }
       if (this.screen === 'battle') await this.teardown();
       this.showTitle();
     } finally {
@@ -529,7 +650,8 @@ export class PlayerBattleApp {
     const next = this.explore.endDialog(action);
     this.screen = 'explore';
     if (next === 'battle') {
-      void this.startBattle();
+      // 我准备好了：入场过场（步骤 17）
+      void this.startIntro();
       return;
     }
     this.exploreHint.style.display = '';
@@ -804,7 +926,28 @@ export class PlayerBattleApp {
         const r = this.explore.clickBoss();
         return r ? { x: r.goal.x, z: r.goal.z } : null;
       },
+      intro: () => ({
+        active: this.intro.active,
+        plan: this.intro.plan,
+        report: this.intro.lastReport,
+        shaded: this.intro.shadedUnits(),
+        fx: this.introFx.activeCount,
+        hudOpacity: this.hud.battleOpacity,
+      }),
+      introFrom: async (x, z) => {
+        if (this.screen !== 'explore' && this.screen !== 'dialog') return;
+        this.dismissDialog();
+        this.screen = 'explore';
+        this.explore.placeLeader(x, z);
+        await this.startIntro();
+      },
       clock: () => this.scene.scheduler.time,
+      manual: (on) => this.scene.setManual(on),
+      step: (seconds, dt = 1 / 60) => {
+        const n = Math.max(1, Math.round(seconds / dt));
+        for (let i = 0; i < n; i++) this.scene.stepFrame(dt, i === n - 1);
+      },
+      shot: () => this.scene.snapshot(),
       unitClient: (id) => {
         const unit = this.scene.stage.unit(id);
         const head = this.scene.worldToScreen(unit.headPosition(new Vector3()));

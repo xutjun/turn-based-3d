@@ -45,7 +45,7 @@ import { applySilhouette, silhouetteRequested } from '../render/debug/silhouette
 import { createPostFx, type PostFx } from '../render/postfx/composer';
 import { IdleAnimator } from '../render/units/IdleAnimator';
 import { seedOf } from '../render/units/idleMotion';
-import { idleStyleOfAsset, UNIT_MODELS, walksOfAsset } from '../data/unitModels';
+import { idleStyleOfAsset, UNIT_MODELS, walksOfAsset, hasLegJointsOfAsset } from '../data/unitModels';
 import { ALLY_TEMPLATES } from '../data/heroes';
 import { ENEMY_TEMPLATES } from '../data/enemies';
 import { DIALOGUE_EMOTES, type EmotePose } from '../data/dialogues';
@@ -259,7 +259,7 @@ export class PreviewPage {
     if (this.model) this.turntable.remove(this.model);
     this.model = this.registry.create(entry.key, entry.previewParams ?? {});
     // 会走路的人物：腿部关节登记为动画关节（与战场一致）
-    if (walksOfAsset(entry.key)) enableLegJoints(this.model);
+    if (hasLegJointsOfAsset(entry.key)) enableLegJoints(this.model);
     this.turntable.add(this.model);
     this.walkView = null;
 

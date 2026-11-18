@@ -31,6 +31,7 @@ import { STAGING } from '../../data/presentationConfig';
 import { EASE, type Ease, type Scheduler } from '../director/Scheduler';
 import type { AttackStyle, GroundPoint, MoveOptions } from '../director/types';
 import { chargeYaw, turnToward } from './turning';
+import { detourBump, type Detour, type DetourSample } from './detour';
 
 const TAU = Math.PI * 2;
 const TURN = 'root.turn';
@@ -166,6 +167,11 @@ export class UnitMotion {
   readonly pose: Record<string, number> = {};
   /** 步态层：冲刺 / 扑跃途中整体的前倾、侧倾、离地、旋身；squash = 跳劈落地时身体被压下去（步骤 11c，和姿态层叠加） */
   readonly gait = { pitch: 0, roll: 0, hop: 0, spin: 0, squash: 0 };
+  /**
+   * 冲锋路线绕开己方单位（步骤 17）：给出起点、终点和沿途的离地高度，返回侧偏（没有挡路的人返回 null）。
+   * 由舞台（BattleStage）接上；不接时路线是直线（与原来一样）。
+   */
+  avoid: ((from: GroundPoint, to: GroundPoint, samples: readonly DetourSample[]) => Detour | null) | null = null;
   /** 步态层：随步伐摆动的关节（魔偶的双腿） */
   readonly gaitJoints: Record<string, number> = {};
   /** 命中顿住时的震颤幅度（0 = 没有） */
@@ -388,6 +394,17 @@ export class UnitMotion {
     const dirZ = dist > 1e-4 ? dz / dist : Math.cos(this.yaw);
     const steps = Math.max(1, Math.round(dist / g.stride));
     const airborne = g.hop > 0;
+    // 绕开挡路的己方单位（步骤 17：后排宝宝冲锋时绕过前排的主人）
+    let detour: Detour | null = null;
+    if (this.avoid && dist > 0.5) {
+      const samples: DetourSample[] = [];
+      for (let i = 0; i <= 60; i++) {
+        const t = i / 60;
+        const s = dashProgress(t, g.accel, g.brake);
+        samples.push({ s, hop: g.hop * 4 * t * (1 - t), lateral: g.arc * dist * Math.sin(Math.PI * s) * side });
+      }
+      detour = this.avoid(from, to, samples);
+    }
     let lastStep = 0;
     let ended = false;
     const emit = (kind: Footfall['kind'], dust: number, shake: number): void => {
@@ -412,7 +429,7 @@ export class UnitMotion {
     return this.scheduler.tween(duration, (t) => {
       const s = dashProgress(t, g.accel, g.brake);
       const v = dashSpeed(t, g.accel, g.brake);
-      const lateral = g.arc * dist * Math.sin(Math.PI * s) * side;
+      const lateral = g.arc * dist * Math.sin(Math.PI * s) * side + (detour ? detour.offset * detourBump(s, detour.at) : 0);
       this.ground.x = from.x + dx * s - dirZ * lateral;
       this.ground.z = from.z + dz * s + dirX * lateral;
       this.yaw = yawAt(t);
@@ -443,7 +460,7 @@ export class UnitMotion {
       const drive = Math.sqrt(v);
       this.gait.pitch = lean * along;
       this.gait.roll = -lean * across * 0.6 + g.sway * wave * drive;
-      this.gait.hop = g.hop * 4 * t * (1 - t) + g.bob * Math.abs(wave) * drive;
+      this.gait.hop = g.hop * 4 * t * (1 - t) * (detour?.lift ?? 1) + g.bob * Math.abs(wave) * drive;
       this.gait.spin = g.spin !== 0 ? TAU * g.spin * smooth((s - w0) / Math.max(1e-4, w1 - w0)) : 0;
       if (g.legs) {
         this.gaitJoints[`${g.legs.joints[0]}.x`] = g.legs.swing * wave * drive;

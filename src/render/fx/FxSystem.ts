@@ -496,6 +496,39 @@ export class FxSystem {
       });
   }
 
+  /**
+   * 跺地飞溅的碎石（步骤 17，入场过场）：从中心向外、向上抛出的碎屑（带余温的暗红碎屑 + 灰土），受重力落下。只用粒子。
+   * @param radius 飞溅范围（米）
+   * @param amount 数量倍率
+   */
+  rubble(at: Point3, color: number, dustColor: number, radius: number, amount = 1): void {
+    if (this.scheduler.skip) return;
+    this.c.setHex(color);
+    const n = this.burstCount(30 * amount);
+    for (let i = 0; i < n; i++) {
+      const a = Math.random() * TAU;
+      const r = rnd(0.2, 1) * radius * 0.3;
+      const sp = rnd(1.5, 4.5);
+      this.spawn(
+        at.x + Math.cos(a) * r, 0.1, at.z + Math.sin(a) * r,
+        Math.cos(a) * sp, rnd(2.5, 6.5), Math.sin(a) * sp,
+        rnd(0.6, 1.1), rnd(0.06, 0.14), this.c, 1.4, PARTICLE_CELL.ember, 11, 0.4, -0.3,
+      );
+    }
+    this.c.setHex(dustColor);
+    const m = this.burstCount(18 * amount);
+    for (let i = 0; i < m; i++) {
+      const a = (i / Math.max(1, m)) * TAU + rnd(-0.2, 0.2);
+      const r = rnd(0.3, 1) * radius * 0.25;
+      const sp = rnd(1.2, 3.2);
+      this.spawn(
+        at.x + Math.cos(a) * r, rnd(0.05, 0.3), at.z + Math.sin(a) * r,
+        Math.cos(a) * sp, rnd(0.4, 1.4), Math.sin(a) * sp,
+        rnd(0.9, 1.5), rnd(0.6, 1.1), this.c, 0.28, PARTICLE_CELL.smoke, -0.1, 1.6, 1.4,
+      );
+    }
+  }
+
   /** 命中闪光 + 火花；heavy = 重击（更大、带冲击环和闪光） */
   private impact(at: Point3, color: number, duration: number, heavy: boolean): Promise<void> {
     const flash = this.sprite(glowTexture(), color, heavy ? 2.2 : 1.8);

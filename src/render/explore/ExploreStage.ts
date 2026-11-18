@@ -100,6 +100,39 @@ export class ExploreStage {
     this.camera.setFrame(null);
   }
 
+  /**
+   * 交给入场过场（步骤 17）：停止探索的移动、跟随和高亮，但不复位单位——过场从队长此刻的位置、朝向和镜头接着演。
+   * 返回队长的位置朝向与当前取景（对话视角）。之后由过场把所有人送回战斗格子。
+   */
+  beginIntro(): { leader: { x: number; z: number; yaw: number }; camera: { x: number; y: number; z: number; distance: number } } {
+    const a = this.agent;
+    const leader = { x: a.x, z: a.z, yaw: a.yaw };
+    const camera = { x: this.follow.x, y: EXPLORE_CONFIG.camera.height, z: this.follow.z, distance: this.follow.distance };
+    this.activeFlag = false;
+    this.session.reset();
+    this.clearGestures();
+    this.setBossHover(false);
+    this.marker.hide();
+    a.place(a.x, a.z, a.yaw);
+    return { leader, camera };
+  }
+
+  /**
+   * 调试 / 验收（步骤 17）：把队长放到任意位置、面向 Boss，直接触发对话结束后的“进入战斗”。
+   * 正常流程里对话总是在交谈点发生；这个入口用来检查从近、中、远、Boss 左右两侧开打时的落位。
+   */
+  placeLeader(x: number, z: number): void {
+    const boss = this.stage.unit(this.bossId).home;
+    const yaw = yawOf(boss.x - x, boss.z - z);
+    this.session.reset();
+    this.agent.place(x, z, yaw);
+    this.stage.unit(this.leaderId).placeAt(x, z, yaw);
+    const c = EXPLORE_CONFIG.dialog.camera;
+    this.follow.setDistance(c.distance);
+    this.follow.snap(x + (boss.x - x) * c.bossBias, z + (boss.z - z) * c.bossBias);
+    this.applyCamera();
+  }
+
   /** 回到起点：队长站回出生点、面向 Boss，停下，相机立即对准 */
   returnToStart(): void {
     const s = EXPLORE_CONFIG.start;

@@ -28,6 +28,7 @@ import { IDLE_RUNTIME } from './units/IdleAnimator';
 import { ATTACK_RUNTIME } from './units/UnitView';
 import { ATTACK_ANIM } from '../data/attackAnimConfig';
 import { BattleStage } from './units/BattleStage';
+import { frameDelta } from './frameClock';
 
 const MAX_FRAME_DT = 0.1; // 切回标签页时限制单帧时间跨度
 /** 地面（y = 0，法线朝上） */
@@ -156,6 +157,7 @@ export class BattleScene {
       createBattlefield(registry),
       createGroundFog(),
       this.formation.group,
+      this.stage.lightRig,
       fx.group,
     );
     // 其余投射阴影的物体（没有交给阴影代理的）进入阴影图层
@@ -233,6 +235,15 @@ export class BattleScene {
     return this.renderer.domElement.toDataURL('image/png');
   }
 
+  /**
+   * 预热（步骤 17）：不推进任何时间，按当前状态完整地画一帧（含阴影和后处理），让这一帧里看得见的所有材质
+   * 提前编译好着色器。启动时用战斗视角、所有单位显示的状态调用，入场过场镜头拉远时就不会卡顿。
+   */
+  renderOnce(): void {
+    this.stage.update(this.time);
+    this.draw(this.lastMs);
+  }
+
   /** 停止渲染并释放资源 */
   dispose(): void {
     this.renderer.setAnimationLoop(null);
@@ -261,7 +272,8 @@ export class BattleScene {
 
   private frame(nowMs: number, render = true): void {
     this.lastFrameDt = (nowMs - this.lastMs) / 1000;
-    const dt = Math.min(MAX_FRAME_DT, this.lastFrameDt);
+    // 时间戳可能早于上一次记下的时刻（rAF 给的是帧开始时刻）：负的间隔按 0，演出时钟不会倒退
+    const dt = frameDelta(nowMs, this.lastMs, MAX_FRAME_DT);
     this.lastMs = nowMs;
     if (this.pausedFlag) {
       if (render) this.draw(nowMs);

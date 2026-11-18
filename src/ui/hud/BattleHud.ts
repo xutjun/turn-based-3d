@@ -229,6 +229,21 @@ export class BattleHud implements DirectorHud {
     this.renderControls();
   };
 
+  /** 头顶条、出手顺序条的不透明度（步骤 17：入场过场中隐藏，开战时淡入）；速度 / 跳过按钮不受影响 */
+  private layerOpacity = 1;
+
+  setBattleOpacity(a: number): void {
+    this.layerOpacity = Math.max(0, Math.min(1, a));
+    const v = this.layerOpacity >= 1 ? '' : this.layerOpacity.toFixed(3);
+    this.orderEl.style.opacity = v;
+    for (const head of this.heads.values()) head.el.style.opacity = v;
+  }
+
+  /** 当前的头顶条 / 顺序条不透明度（调试） */
+  get battleOpacity(): number {
+    return this.layerOpacity;
+  }
+
   /** 显示 / 隐藏右上角的速度按钮和顶部的出手顺序条（标题界面上隐藏） */
   setControlsVisible(on: boolean): void {
     this.controlsEl.classList.toggle('is-hidden', !on);
@@ -346,6 +361,7 @@ export class BattleHud implements DirectorHud {
       const statusEl = document.createElement('div');
       statusEl.className = 'hud-status';
       el.append(statusEl);
+      if (this.layerOpacity < 1) el.style.opacity = this.layerOpacity.toFixed(3);
       this.root.append(el);
       this.heads.set(u.id, {
         el,

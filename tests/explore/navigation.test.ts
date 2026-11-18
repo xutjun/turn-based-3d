@@ -424,7 +424,7 @@ describe('步骤 15：队长跑过去（点击移动）', () => {
     }
     expect(minGap).toBeGreaterThanOrEqual(-1e-6);
     expect(arrivals).toBeGreaterThan(100); // 等得够久的那些大多到了
-  });
+  }, 30_000); // 步骤 17：测试文件变多、并行时 CPU 更忙，单独跑约 2 秒，默认 5 秒的超时会偶发不够
 
   it('每一次点击最终都能到达终点（随机 80 个点，各自等到停下）', () => {
     const rng = createRng(1515);

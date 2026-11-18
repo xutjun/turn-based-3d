@@ -7,7 +7,7 @@
 //   - 受击、闪避、倒地、防御仍是这里的几个“姿态参数”；
 //   - 每帧由 applyPose() 把两者叠加，换算成模型根节点和各关节的位置、旋转，最后再叠加待机偏移。
 
-import { Color, Matrix4, Quaternion, Vector3, type Mesh, type MeshBasicMaterial, type MeshStandardMaterial, type Object3D } from 'three';
+import { Color, Matrix4, Quaternion, Vector3, type Mesh, type MeshBasicMaterial, type MeshStandardMaterial, type Object3D, type PointLight } from 'three';
 import { getRig, type HumanoidRig } from '../../assets/models/characters/rig';
 import { bowStringDepth, getEquippedWeapon, getWeaponGlow, getWeaponHold, setBowArrowVisible, setBowDraw } from '../../assets/models/weapons';
 import { GLOW_BASE_KEY } from '../../assets/materials';
@@ -22,6 +22,7 @@ import { ATTACK_ANIM, LEFT_GRIP, MOTION_OF_TEMPLATE, MOTION_PROFILES, MOUNTED_ST
 import { solveArmIK } from './armIK';
 import { IdleAnimator, type LegReach } from './IdleAnimator';
 import { UnitMotion, type Footfall, type MotionPhase } from './UnitMotion';
+import { pathDetour, type DetourObstacle } from './detour';
 import { seedOf } from './idleMotion';
 import { IDLE_CONFIG } from '../../data/idleConfig';
 import type { EmotePose } from '../../data/dialogues';
@@ -42,6 +43,23 @@ const HOVER_COLOR = new Color();
 export const ATTACK_RUNTIME = {
   secondary: true, // 披风、袍摆、链条、尾巴的惯性甩动
 };
+
+/**
+ * 过场的特技层（步骤 17，入场过场）：被震飞时的离地高度、空中翻滚、落地下蹲，Boss 跺地抬腿等。
+ * 由过场的时间轴直接写入（场景调度器的补间），全部为 0 / 空时与没有这一层完全一样；战斗中不使用。
+ */
+export interface StuntLayer {
+  /** 根节点离地高度（米，世界坐标）：腾空为正，落地下蹲为负（人形的膝盖由 IK 弯曲，脚留在地上） */
+  y: number;
+  /** 绕身体中心的俯仰（弧度，前倾为正，向后翻滚为负）：转轴在离地 height × pivot 处 */
+  pitch: number;
+  roll: number;
+  /** 身体相对当前朝向的附加转角（弧度） */
+  spin: number;
+  pivot: number;
+  /** 叠加在动作姿态上的关节偏移（与进攻动作同一套通道名） */
+  pose: Record<string, number>;
+}
 
 /** 受击 / 闪避 / 倒地 / 防御的姿态参数：全部为 0 时就是自然站姿（出手的姿态在 UnitMotion 里） */
 interface Pose {
@@ -73,8 +91,62 @@ export class UnitView implements StageUnit {
   readonly home: GroundPoint;
   readonly facing: GroundPoint;
 
+  /**
+   * 模型上的点光源（发光武器的光，步骤 17）：搬到场景级的分组里（detachLights），每帧跟随原来的挂点；
+   * 单位隐藏时亮度为 0 而不是把光源移出场景——场景里的光源数量恒定，显示 / 隐藏单位时不会让所有材质重新编译着色器。
+   */
+  private readonly lights: { light: PointLight; parent: Object3D; local: Vector3 }[] = [];
+  private lightsDetached = false;
+
+  /** 把模型上的点光源搬到 group 里（BattleStage 建好时调用一次） */
+  detachLights(group: Object3D): void {
+    if (this.lightsDetached) return;
+    this.lightsDetached = true;
+    const found: PointLight[] = [];
+    this.model.traverse((o) => {
+      if ((o as PointLight).isPointLight) found.push(o as PointLight);
+    });
+    for (const light of found) {
+      const parent = light.parent;
+      if (!parent) continue;
+      this.lights.push({ light, parent, local: light.position.clone() });
+      parent.remove(light);
+      group.add(light);
+    }
+    this.syncLights();
+  }
+
+  /** 光源跟随挂点；单位隐藏时熄灭（亮度每帧由武器的发光控制器重新写入） */
+  private syncLights(): void {
+    if (this.lights.length === 0) return;
+    const shown = this.model.visible;
+    for (const l of this.lights) {
+      if (!shown) {
+        l.light.intensity = 0;
+        continue;
+      }
+      l.parent.updateWorldMatrix(true, false);
+      l.light.position.copy(l.local).applyMatrix4(l.parent.matrixWorld);
+    }
+  }
+
+  /** 模板编号（过场按它选宝宝的入场方式） */
+  get templateKey(): string {
+    return this.templateId;
+  }
+
   /** 动作档案：用哪一套进攻动作 */
   readonly motion: MotionId;
+  /**
+   * 冲锋时要绕开的己方单位（步骤 17）：由 BattleStage 接上（同一方、站在格子上、看得见的其他单位）；默认没有。
+   */
+  obstacleSource: () => readonly DetourObstacle[] = () => [];
+
+  /** 身高（米，含缩放）：别人冲锋时判断能不能从头顶越过 */
+  get bodyHeight(): number {
+    return this.height;
+  }
+
   /** 镜头轻震的出口（魔偶踏步）；由 BattleStage 接到演出镜头上 */
   onShake: (amount: number) => void = () => undefined;
 
@@ -151,6 +223,8 @@ export class UnitView implements StageUnit {
   /** 这一帧实际使用的动作姿态：没有说话动作时就是 act.pose，有时是两者之和（复用同一个对象） */
   private livePose: Record<string, number>;
   private readonly mixPose: Record<string, number> = {};
+  /** 过场的特技层（步骤 17）：过场时间轴直接改这里的数值，结束时 clearStunt() */
+  readonly stunt: StuntLayer = { y: 0, pitch: 0, roll: 0, spin: 0, pivot: 0.5, pose: {} };
 
   constructor(
     template: UnitTemplate,
@@ -193,6 +267,10 @@ export class UnitView implements StageUnit {
     const muzzle = MOTION_PROFILES[this.motion].muzzle;
     this.muzzleJoint = muzzle?.joint ? extra[muzzle.joint] : undefined;
     this.act = new UnitMotion(scheduler, this.home, this.baseYaw, this.motion, (f) => this.footfall(f));
+    this.act.avoid = (from, to, samples) => {
+      const others = this.obstacleSource();
+      return others.length > 0 ? pathDetour(from, to, others, this.radius * 0.8, samples) : null;
+    };
     this.livePose = this.act.pose;
     this.weapon = getEquippedWeapon(model);
     if (this.weapon) {
@@ -334,7 +412,46 @@ export class UnitView implements StageUnit {
     return this.gestureWeight;
   }
 
+  /** 身体有没有处在过场的特技里（待机让位、腿不踩地的判断用） */
+  get stuntActive(): boolean {
+    const t = this.stunt;
+    return t.y !== 0 || t.pitch !== 0 || t.roll !== 0 || t.spin !== 0 || Object.keys(t.pose).length > 0;
+  }
+
+  /** 清掉过场的特技层（过场结束、重置时） */
+  clearStunt(): void {
+    const t = this.stunt;
+    t.y = t.pitch = t.roll = t.spin = 0;
+    t.pivot = 0.5;
+    for (const k of Object.keys(t.pose)) delete t.pose[k];
+  }
+
+  /** 离地高度（米）：过场中被震飞、跳入时用（头顶条、联系表取景） */
+  get stuntHeight(): number {
+    return this.stunt.y;
+  }
+
   private updateGesture(dt: number): void {
+    this.updateGestureWeight(dt);
+    // 过场的特技姿态叠加在最上面
+    const stunt = this.stunt.pose;
+    let any = false;
+    for (const _ in stunt) {
+      any = true;
+      break;
+    }
+    if (!any) return;
+    if (this.livePose === this.act.pose) {
+      const mix = this.mixPose;
+      for (const k of Object.keys(mix)) delete mix[k];
+      Object.assign(mix, this.act.pose);
+      this.livePose = mix;
+    }
+    const mix = this.livePose;
+    for (const [k, v] of Object.entries(stunt)) mix[k] = (mix[k] ?? 0) + v;
+  }
+
+  private updateGestureWeight(dt: number): void {
     const g = this.gesture;
     if (!g) {
       this.livePose = this.act.pose;
@@ -487,7 +604,7 @@ export class UnitView implements StageUnit {
   /** 头顶条的世界坐标（站位上方固定高度，不随冲锋和倒地晃动以外的动作抖动） */
   headPosition(out: Vector3): Vector3 {
     // 倒地后头顶条降低一些，贴近躺在地上的身体
-    return out.set(this.ground.x, this.height * (1 - 0.55 * this.pose.fall) + this.act.gait.hop, this.ground.z);
+    return out.set(this.ground.x, this.height * (1 - 0.55 * this.pose.fall) + this.act.gait.hop + this.stunt.y, this.ground.z);
   }
 
   moveTo(point: GroundPoint, duration: number, face?: GroundPoint, options?: MoveOptions): Promise<void> {
@@ -629,6 +746,7 @@ export class UnitView implements StageUnit {
     this.livePose = this.act.pose;
     this.highlightTarget = this.highlightLevel = 0;
     this.applyHighlight();
+    this.clearStunt();
     this.restoreBase();
     this.idle.update(this.lastIdleTime, 1);
     this.idle.setSecondary(0, 0, 0, 0);
@@ -754,7 +872,7 @@ export class UnitView implements StageUnit {
     // 走路时待机让位（只留一点呼吸）
     const p = this.pose;
     const walking = (this.legs?.walk.weight ?? 0) * 0.85;
-    const busy = Math.min(1, Math.max(this.act.busy ? 1 : 0, p.lean * 3, p.side * 4, walking, this.gestureWeight * 0.6));
+    const busy = Math.min(1, Math.max(this.act.busy || this.stuntActive ? 1 : 0, p.lean * 3, p.side * 4, walking, this.gestureWeight * 0.6));
     const target = (1 - busy) * (1 - (1 - IDLE_CONFIG.guardScale) * p.guard);
     this.idleWeight += (target - this.idleWeight) * (1 - Math.exp(-IDLE_CONFIG.blendRate * dt));
     // 倒地后只保留极轻微的变化；消失的单位不动
@@ -763,6 +881,7 @@ export class UnitView implements StageUnit {
     this.idle.update(idleTime, this.idleWeight * down);
     this.applyPose(time);
     this.updateSecondary();
+    this.syncLights();
     if (this.sealed && this.sealBands) {
       this.sealBands[0]!.rotation.y = time * 1.4;
       this.sealBands[1]!.rotation.y = -time * 1.1;
@@ -827,7 +946,7 @@ export class UnitView implements StageUnit {
     const pitch = ch('root.pitch') + g.pitch + (walk?.lean ?? 0);
     const lift = ch('root.lift') - (walk?.drop ?? 0);
     const roll = ch('root.roll') + g.roll + (walk?.roll ?? 0);
-    const turn = ch('root.turn') + g.spin;
+    const turn = ch('root.turn') + g.spin + this.stunt.spin;
     // 命中顿住时的一点震颤
     if (this.act.shudder > 0) forward += this.act.shudder * Math.sin(time * 95);
     forward -= 0.12 * p.lean; // 受击时略微后退
@@ -843,14 +962,19 @@ export class UnitView implements StageUnit {
     // 重心转移带起的一点点左右位移（厘米级，不算离开站位）
     // （p.side 为正是向右手侧；步态的 shift 为正是向左手侧）
     const side = p.side + idle.shift + ch('root.side') - (walk?.shift ?? 0);
+    // 过场的翻滚绕身体中心转（不是绕脚底）：转动 θ 后把身体中心挪回原处
+    const st = this.stunt;
+    const pc = this.height * st.pivot;
+    const pivotUp = st.pitch !== 0 ? pc * (1 - Math.cos(st.pitch)) : 0;
+    const pivotFwd = st.pitch !== 0 ? -pc * Math.sin(st.pitch) : 0;
     m.position.set(
-      this.ground.x + fx * forward * s - fz * side * s,
-      g.hop + lift * s + bob,
-      this.ground.z + fz * forward * s + fx * side * s,
+      this.ground.x + fx * forward * s - fz * side * s + fx * pivotFwd,
+      g.hop + lift * s + bob + st.y + pivotUp,
+      this.ground.z + fz * forward * s + fx * side * s + fz * pivotFwd,
     );
     // 前倾为正；受击后仰、倒地向后躺平
-    m.rotation.x = pitch - p.lean - 0.08 * p.guard - (Math.PI / 2) * EASE.in(p.fall);
-    m.rotation.z = roll + idle.roll;
+    m.rotation.x = pitch + st.pitch - p.lean - 0.08 * p.guard - (Math.PI / 2) * EASE.in(p.fall);
+    m.rotation.z = roll + idle.roll + st.roll;
     // 整体形变：扑跃时沿前后方向拉长，落地 / 蓄力时压扁
     const k = this.baseScale * (1 - 0.97 * p.shrink);
     const stretch = ch('root.stretch');
@@ -933,7 +1057,9 @@ export class UnitView implements StageUnit {
     if (!legs) return;
     const m = this.model;
     const p = this.pose;
-    const plant = (1 - EASE.in(p.fall)) * (1 - p.shrink);
+    // 过场中腾空（被震飞、翻滚）时腿不再找地面：回到站姿，由特技姿态收腿
+    const air = this.stunt.y > 0 ? Math.min(1, this.stunt.y / 0.25) : 0;
+    const plant = (1 - EASE.in(p.fall)) * (1 - p.shrink) * (1 - air);
     const reach = this.legReach;
     if (plant <= 0) {
       for (const k of [reach.kneeL, reach.kneeR, reach.footL, reach.footR]) k.z = 0;
@@ -943,7 +1069,7 @@ export class UnitView implements StageUnit {
     const sy = Math.abs(m.scale.y) > 1e-6 ? m.scale.y : 1;
     // 待机呼吸带起的那几毫米不算（否则膝盖会跟着呼吸一弯一弯；原来就是整个人轻微起伏）
     const lift = (m.position.y - idleBob) / sy;
-    const hop = this.act.gait.hop;
+    const hop = this.act.gait.hop + Math.max(0, this.stunt.y);
     const tuck = hop > 0 ? LEG_PLANT.tuck * Math.min(1, hop / LEG_PLANT.tuckHeight) : 0;
     const pitch = m.rotation.x;
     // 行走：按“满权重”的身体（下沉、前倾都按满值）求步态的腿，再与站姿的腿按行走权重混合

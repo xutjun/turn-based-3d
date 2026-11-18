@@ -39,3 +39,15 @@ describe('整场战斗回归：姿态复位', () => {
     expect(problems).toEqual([]);
   }, 120_000);
 });
+
+describe('整场战斗回归（步骤 17）：入场过场之后', () => {
+  it.each([
+    ['交谈点', { x: -1.5, z: -1.5 }, 1],
+    ['出生点', { x: 8.5, z: 8.5 }, 2],
+  ] as const)('从%s开打：过场结束后与直接开战的开场姿态一致，之后整场战斗每次出手后姿态复位、无离位（%i 倍速）', async (_name, at, timeScale) => {
+    const { engine, problems, maxAway } = await runBattleReal(33, { intro: at, timeScale });
+    expect(engine.getState().phase).toBe('ended');
+    expect(problems).toEqual([]);
+    expect(maxAway).toBeLessThanOrEqual(1);
+  }, 180_000);
+});

@@ -5,7 +5,7 @@
 //   docs/screenshots/<prefix>-dialog-boss.png      Boss 的台词（仰头、张翼狂笑）
 //   docs/screenshots/<prefix>-dialog-choices.png   两个选项
 //   docs/screenshots/<prefix>-dialog-menu.png      对话中打开设置菜单（暂停）
-//   docs/screenshots/<prefix>-dialog-battle.png    选“我准备好了”后进入战斗
+//   docs/screenshots/<prefix>-dialog-battle.png    选“我准备好了”后（步骤 17 起先播入场过场）进入战斗
 // 同时检查：对话中点地面不移动、方向键不移动；菜单打开时台词不前进；Esc = 再等等；“再等等”后可以自由移动；
 // 两个选项都正确执行；整个过程没有页面错误。
 //
@@ -190,7 +190,7 @@ const H = 800;
   const p8 = s.ex.units[s.ex.leader];
   check(s.screen === 'explore' && !s.dialog.open && Math.hypot(p8.x - 8.5, p8.z - 8.5) < 0.01, `回到起点（${s.screen}，${p8.x.toFixed(2)}, ${p8.z.toFixed(2)}）`);
 
-  console.log('9. 选“我准备好了”（鼠标点按钮）→ 进入战斗');
+  console.log('9. 选“我准备好了”（鼠标点按钮）→ 入场过场 → 进入战斗');
   await clickBoss();
   await waitDialog();
   for (let i = 0; i < 6 && !(await state()).dialog.choices; i++) {
@@ -198,7 +198,10 @@ const H = 800;
     await wait(50);
   }
   await page.click('.dk-dialog-choice >> nth=0');
-  await page.waitForFunction(() => window.__app.screen() === 'battle', null, { timeout: 5000 });
+  // 步骤 17：先播入场过场（约 7 秒），播完才进入战斗
+  await page.waitForFunction(() => window.__app.screen() === 'intro', null, { timeout: 3000 });
+  check(!(await state()).dialog.open, '对话框关闭，开始入场过场');
+  await page.waitForFunction(() => window.__app.screen() === 'battle', null, { timeout: 15000 });
   await wait(1500);
   s = await state();
   check(s.screen === 'battle' && !s.dialog.open && !s.ex.active, `进入战斗（${s.screen}）`);

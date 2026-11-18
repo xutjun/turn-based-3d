@@ -38,7 +38,7 @@ function walk(view: UnitView, speed: number, seconds: number, each?: (frame: num
 }
 
 describe('真实模型：行走', () => {
-  it('友方 5 人都有腿部关节（髋、膝、踝），敌人没有（腿仍并在身体里，不增加绘制调用）', () => {
+  it('友方 5 人都有腿部关节（髋、膝、踝）；敌人里只有 Boss 有（步骤 17 入场跺地），其余敌人没有（腿仍并在身体里）', () => {
     for (const t of HEROES) {
       const v = heroView(t.id);
       expect(v.canWalk, t.id).toBe(true);
@@ -47,8 +47,10 @@ describe('真实模型：行走', () => {
     }
     const enemies = createRealViews(new Scheduler(), ENEMY_TEMPLATES);
     for (const [id, v] of enemies) {
-      expect(v.canWalk, id).toBe(false);
-      expect(allAnimatedJoints(v.model, getRig(v.model))['hipL'], id).toBeUndefined();
+      const boss = ENEMY_TEMPLATES.find((t) => t.id === id)?.rank === 'boss';
+      expect(v.canWalk, id).toBe(boss);
+      if (boss) for (const name of LEG_JOINT_NAMES) expect(allAnimatedJoints(v.model, getRig(v.model))[name], `${id} ${name}`).toBeDefined();
+      else expect(allAnimatedJoints(v.model, getRig(v.model))['hipL'], id).toBeUndefined();
     }
   });
 

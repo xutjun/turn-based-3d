@@ -150,7 +150,7 @@ describe('玩家战斗控制器', () => {
     await tick();
     expect(auto.controller.session.progress).toEqual({ index: 1, total: 5 });
     auto.controller.session.chooseDefend();
-    expect(auto.controller.session.unitId).toBe('A1');
+    expect(auto.controller.session.unitId).toBe('A2'); // 新阵型：按列，雷咒（col 1）在夜隼之后
     auto.controller.stop();
   });
 
@@ -165,12 +165,12 @@ describe('玩家战斗控制器', () => {
     // 正在给宝宝下指令时切到自动：跳到下一个人物
     expect(m.controller.setPetAuto(true)).toBe(true);
     expect(m.engine.getState().settings.petAutoCommand).toBe(true);
-    expect(session.unitId).toBe('A1');
+    expect(session.unitId).toBe('A2'); // 新阵型：夜隼之后是雷咒（col 1）
     expect(session.progress).toEqual({ index: 2, total: 5 });
 
     // 再切回手动：宝宝重新需要指令
     expect(m.controller.setPetAuto(false)).toBe(true);
-    expect(session.unitId).toBe('A1');
+    expect(session.unitId).toBe('A2');
     expect(session.progress.total).toBe(10);
     m.controller.stop();
   });

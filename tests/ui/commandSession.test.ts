@@ -392,9 +392,10 @@ describe('指令会话：默认阵容的技能（真实引擎）', () => {
     };
     expect(names('A0')).toEqual(['三连射', '箭雨']);
     expect(names('A5')).toEqual([]); // 物理型宝宝没有主动技能
-    expect(names('A1')).toEqual(['连斩', '旋风斩']);
+    // 新阵型（步骤 17）：下指令顺序按列，雷咒（col 1）在烬刃（col 2）之前
     expect(names('A2')).toEqual(['群体法术·天雷', '单体法术·炎爆']);
     expect(names('A7')).toEqual(['三重魂火']);
+    expect(names('A1')).toEqual(['连斩', '旋风斩']);
     expect(names('A3')).toEqual(['封印']);
     expect(names('A8')).toEqual(['三重魂火']);
     expect(names('A4')).toEqual(['群体治疗', '复活']);
@@ -403,8 +404,8 @@ describe('指令会话：默认阵容的技能（真实引擎）', () => {
 
   it('物理型宝宝没有“技能”选项：hasSkills 为 false，openSkills 不会打开技能列表；法术型宝宝有', () => {
     const { session, goTo } = realSession();
-    // 按下指令的顺序依次检查
-    for (const [id, has] of [['A5', false], ['A6', false], ['A7', true], ['A8', true], ['A9', false]] as const) {
+    // 按下指令的顺序依次检查（新阵型：按列 夜隼、雷咒、烬刃、缚魂、守誓，各自的宝宝紧随其后）
+    for (const [id, has] of [['A5', false], ['A7', true], ['A6', false], ['A8', true], ['A9', false]] as const) {
       goTo(id);
       expect(session.hasSkills, id).toBe(has);
       session.openSkills();

@@ -15,7 +15,10 @@ export type SoundName =
   | 'seal' // 封印锁链
   | 'fall' // 倒地
   | 'revive' // 复活
-  | 'click'; // 界面点击
+  | 'click' // 界面点击
+  | 'roar' // Boss 怒吼（步骤 17 入场过场）：低沉的咆哮
+  | 'quake' // Boss 跺地（步骤 17）：极低频的震地轰鸣
+  | 'shadow'; // 暗影显形（步骤 17）：低沉的嘶声
 
 export const AUDIO_CONFIG = {
   storageKey: 'dk-battle-audio', // 旧版（步骤 8）记住音量和静音用的本地存储键；步骤 12 起统一存到 SETTINGS_CONFIG.storageKey，只用于迁移
@@ -36,6 +39,9 @@ export const AUDIO_CONFIG = {
     fall: 0.7,
     revive: 0.5,
     click: 0.25,
+    roar: 0.9,
+    quake: 1,
+    shadow: 0.45,
   } satisfies Record<SoundName, number>,
   /** 同一种音效两次播放之间的最短间隔（秒）：群体法术 6 个目标同帧受击时只响一声，不会叠成爆音 */
   minInterval: 0.045,

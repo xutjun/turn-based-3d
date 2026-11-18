@@ -100,6 +100,58 @@ export function poseDiff(before: Record<string, number>, after: Record<string, n
 }
 
 /**
+ * 在真实的 UnitView 上演一遍入场过场（步骤 17）：队长从 at 开打（探索布置：只显示队长和 Boss），按帧推进到演完。
+ * 特效、镜头、音效用空实现。
+ */
+export async function playIntroReal(
+  scheduler: Scheduler,
+  views: Map<string, UnitView>,
+  at: { x: number; z: number },
+  frame: () => void,
+): Promise<void> {
+  const { IntroCutscene } = await import('../../src/render/cutscene/introCutscene');
+  const { IntroFx } = await import('../../src/render/cutscene/introFx');
+  const { ExploreWorld } = await import('../../src/explore/exploreWorld');
+  const { nearestStandable } = await import('../../src/explore/introPlan');
+  const { EXPLORE_CONFIG } = await import('../../src/data/exploreConfig');
+  const boss = [...views.values()].find((v) => v.radius > 1)!;
+  const leaderId = EXPLORE_CONFIG.leaderId;
+  const world = new ExploreWorld(boss.home);
+  const stage = {
+    views,
+    unit: (id: string) => views.get(id)!,
+    reset: () => {
+      scheduler.flush();
+      for (const v of views.values()) v.reset();
+    },
+  };
+  const intro = new IntroCutscene({
+    stage: stage as never,
+    scheduler,
+    camera: { setFrame: () => undefined } as never,
+    rig: { shake: () => undefined } as never,
+    fx: { burst: () => Promise.resolve(), rubble: () => undefined, flashLight: () => undefined } as never,
+    sound: { play: () => undefined },
+    introFx: new IntroFx(),
+    world,
+    leaderId,
+    bossId: boss.id,
+  });
+  const p = nearestStandable(world, at.x, at.z);
+  const yaw = Math.atan2(boss.home.x - p.x, boss.home.z - p.z);
+  for (const v of views.values()) v.model.visible = v.id === leaderId || v === boss;
+  views.get(leaderId)!.placeAt(p.x, p.z, yaw);
+  let done = false;
+  void intro.play({ leader: { x: p.x, z: p.z, yaw }, camera: { x: p.x, y: 1.2, z: p.z, distance: 17 } }).then(() => (done = true));
+  for (let i = 0; i < 20000 && !done; i++) {
+    scheduler.update(1 / 60);
+    frame();
+    await new Promise((r) => setImmediate(r));
+  }
+  if (!done) throw new Error('入场过场没有结束');
+}
+
+/**
  * 用真实模型跑完整场战斗（步骤 11b 的“姿态复位”回归）：逻辑层自动出指令，演出由真实的 UnitView 表演，
  * 每推进一帧演出都更新一次所有单位的姿态（和游戏里的渲染循环一样）。
  * 待机时间固定为 0，所以待机偏移恒定：任何一次出手结束后，每个站着的单位的根节点和全部关节
@@ -107,7 +159,7 @@ export function poseDiff(before: Record<string, number>, after: Record<string, n
  */
 export async function runBattleReal(
   seed: number,
-  options: { skip?: boolean; timeScale?: number; tweak?: (scheduler: Scheduler) => void } = {},
+  options: { skip?: boolean; timeScale?: number; tweak?: (scheduler: Scheduler) => void; intro?: { x: number; z: number } } = {},
 ) {
   const { BattleEngine } = await import('../../src/core/battle');
   const { createDefaultSetup } = await import('../../src/data/defaultSetup');
@@ -156,6 +208,12 @@ export async function runBattleReal(
       if (diff.length > 0) problems.push(`${when}：${id} 姿态没有复位 ${diff.slice(0, 4).join('; ')}（出手者 ${lastActor}）`);
     }
   };
+
+  if (options.intro) {
+    // 步骤 17：先从探索的位置演一遍入场过场，演完后所有单位必须与直接开战的开场姿态完全一致
+    await playIntroReal(scheduler, views, options.intro, frame);
+    check('入场过场结束后');
+  }
 
   engine.start();
   await idle();

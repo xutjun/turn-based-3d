@@ -13,6 +13,7 @@ interface Scheduled {
 
 function fakeContext() {
   const log: Scheduled[] = [];
+  const sources: { onended: (() => void) | null }[] = [];
   const gains: { value: number }[] = [];
   const param = (value = 0) => ({
     value,
@@ -25,7 +26,7 @@ function fakeContext() {
   const node = () => ({ connect: (n: unknown) => n, disconnect() {} });
   const source = (kind: Scheduled['kind']) => {
     const entry: Scheduled = { kind, start: -1, stop: -1 };
-    return {
+    const src = {
       ...node(),
       type: 'sine',
       loop: false,
@@ -40,6 +41,8 @@ function fakeContext() {
         entry.stop = t;
       },
     };
+    sources.push(src);
+    return src;
   };
   const ctx = {
     state: 'running' as 'running' | 'suspended' | 'closed',
@@ -65,7 +68,11 @@ function fakeContext() {
       ctx.state = 'closed';
     },
   };
-  return { ctx, log, gains };
+  /** 模拟所有已排的声源都播完了（触发结束回调，释放同时发声的名额） */
+  const finishAll = (): void => {
+    for (const s of sources.splice(0)) s.onended?.();
+  };
+  return { ctx, log, gains, finishAll };
 }
 
 function setup(clock = { rate: 1, skip: false }, settings = { volume: 0.5, muted: false }) {
@@ -111,6 +118,7 @@ describe('音效引擎', () => {
       fake.ctx.currentTime += 1;
       engine.play(name);
       expect(sfx().length, name).toBeGreaterThan(before);
+      fake.finishAll(); // 这一声播完（音效种类多于同时发声上限时不会被丢弃）
     }
   });
 

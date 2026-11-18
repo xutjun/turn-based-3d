@@ -1,6 +1,6 @@
 // 舞台：把场上的单位模型包装成 UnitView，并提供技能特效和演出镜头。实现 director/types.ts 的 Stage 接口。
 
-import type { Object3D } from 'three';
+import { Group, type Object3D } from 'three';
 import type { UnitId, UnitTemplate } from '../../core/types';
 import type { Scheduler } from '../director/Scheduler';
 import type { CameraRig } from '../camera/CameraRig';
@@ -16,6 +16,8 @@ const SILENT: SoundPlayer = { play: () => undefined };
 
 export class BattleStage implements Stage {
   readonly views = new Map<UnitId, UnitView>();
+  /** 单位身上的点光源（发光武器）：搬到这里，单位隐藏时只熄灭、不移出场景（场景光源数恒定，步骤 17） */
+  readonly lightRig = new Group();
 
   constructor(
     templates: readonly UnitTemplate[],
@@ -32,7 +34,21 @@ export class BattleStage implements Stage {
       const view = new UnitView(t, model, scheduler, fx, sound);
       // 沉重的踏步（魔偶）让镜头轻震
       view.onShake = (amount) => this.camera.shake(amount);
+      view.detachLights(this.lightRig);
       this.views.set(t.id, view);
+    }
+    this.lightRig.name = 'unitLights';
+    // 冲锋绕开己方单位（步骤 17）：同一方、看得见、没有离开格子的其他单位；倒地的按躺下的高度算
+    for (const view of this.views.values()) {
+      view.obstacleSource = () => {
+        const out: { x: number; z: number; radius: number; height: number }[] = [];
+        for (const other of this.views.values()) {
+          if (other === view || other.side !== view.side || !other.model.visible || other.away) continue;
+          const g = other.groundPosition;
+          out.push({ x: g.x, z: g.z, radius: other.radius, height: other.bodyHeight * (other.fallen > 0.5 ? 0.25 : 1) });
+        }
+        return out;
+      };
     }
   }
 

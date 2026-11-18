@@ -6,6 +6,7 @@ import { CLASS_SKILLS, RANGED_VARIANTS } from '../../src/data/classes';
 import { PASSIVES } from '../../src/data/passives';
 import { PET_ASSIGNMENT, PET_TYPES } from '../../src/data/pets';
 import { SKILLS } from '../../src/data/skills';
+import { ALLY_LINEUP } from '../../src/data/heroes';
 
 describe('默认配置表', () => {
   const setup = createDefaultSetup(1);
@@ -25,18 +26,32 @@ describe('默认配置表', () => {
     }
   });
 
-  it('友方 5 个人物在后排、各持不同武器；宝宝在主人身前一排', () => {
+  it('新阵型（步骤 17）：友方 5 个人物在前排、各持不同武器；宝宝在主人身后一排', () => {
     const heroes = allies.filter((u) => u.kind === 'hero');
     const pets = allies.filter((u) => u.kind === 'pet');
     expect(heroes).toHaveLength(5);
     expect(pets).toHaveLength(5);
     expect(new Set(heroes.map((h) => h.weaponId)).size).toBe(5);
     for (const h of heroes) {
-      expect(h.slot.row).toBe(1);
+      expect(h.slot.row).toBe(0);
       const pet = pets.find((p) => p.id === h.petId)!;
       expect(pet.ownerId).toBe(h.id);
-      expect(pet.slot).toEqual({ row: 0, col: h.slot.col });
+      expect(pet.slot).toEqual({ row: 1, col: h.slot.col });
     }
+  });
+
+  it('新阵型（步骤 17）：骑士烬刃在前排正中，其余 4 人分在两侧，顺序按 ALLY_LINEUP', () => {
+    const byId = Object.fromEntries(allies.map((u) => [u.id, u]));
+    expect(byId['A1']!.name).toBe('烬刃');
+    expect(byId['A1']!.slot).toEqual({ row: 0, col: 2 });
+    expect(ALLY_LINEUP).toHaveLength(5);
+    expect(new Set(ALLY_LINEUP).size).toBe(5);
+    ALLY_LINEUP.forEach((id, col) => expect(byId[id]!.slot).toEqual({ row: 0, col }));
+    // DESIGN §11.7 的表：夜隼、雷咒、烬刃、缚魂、守誓
+    expect(ALLY_LINEUP.map((id) => byId[id]!.name)).toEqual(['夜隼', '雷咒', '烬刃', '缚魂', '守誓']);
+    // 左右各两人
+    expect(ALLY_LINEUP.slice(0, 2).length).toBe(2);
+    expect(ALLY_LINEUP.slice(3).length).toBe(2);
   });
 
   it('弓箭为远程物理、法杖为法术普攻、其余武器为近战物理', () => {

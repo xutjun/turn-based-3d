@@ -401,3 +401,94 @@ export function trailTexture(): Texture {
     return canvasTexture(canvas);
   });
 }
+
+/**
+ * 暗影池（步骤 17，队员从队长的影子里显形）：中心浓、边缘渐淡、带几道不规则的烟丝，白色 + 透明度（颜色由材质决定）。
+ */
+export function shadowPoolTexture(): Texture {
+  return cached('fxShadowPool', () => {
+    const size = 256;
+    const canvas = createCanvas(size, size);
+    const ctx = get2d(canvas);
+    const c = size / 2;
+    const g = ctx.createRadialGradient(c, c, 0, c, c, c);
+    g.addColorStop(0, 'rgba(255,255,255,1)');
+    g.addColorStop(0.45, 'rgba(255,255,255,0.85)');
+    g.addColorStop(0.75, 'rgba(255,255,255,0.35)');
+    g.addColorStop(1, 'rgba(255,255,255,0)');
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, size, size);
+    // 边缘不规则：几团向外伸出的烟丝
+    const rand = createRng(17);
+    const rng = (): number => rand.next();
+    for (let i = 0; i < 14; i++) {
+      const a = rng() * TAU;
+      const r = c * (0.55 + rng() * 0.3);
+      const x = c + Math.cos(a) * r;
+      const y = c + Math.sin(a) * r;
+      const blob = ctx.createRadialGradient(x, y, 0, x, y, c * (0.12 + rng() * 0.12));
+      blob.addColorStop(0, 'rgba(255,255,255,0.5)');
+      blob.addColorStop(1, 'rgba(255,255,255,0)');
+      ctx.fillStyle = blob;
+      ctx.fillRect(0, 0, size, size);
+    }
+    return canvasTexture(canvas);
+  });
+}
+
+/**
+ * 地面裂纹（步骤 17，Boss 跺地）：从中心向外分叉的发光裂缝，越往外越细越淡；白色 + 透明度，叠加混合发光。
+ */
+export function groundCrackTexture(seed = 29): Texture {
+  return cached(`fxCrack:${seed}`, () => {
+    const size = 512;
+    const canvas = createCanvas(size, size);
+    const ctx = get2d(canvas);
+    const c = size / 2;
+    const rand = createRng(seed);
+    const rng = (): number => rand.next();
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    const crack = (x: number, y: number, angle: number, length: number, width: number, depth: number): void => {
+      let px = x;
+      let py = y;
+      let a = angle;
+      const steps = 6 + Math.floor(rng() * 4);
+      const seg = length / steps;
+      for (let i = 0; i < steps; i++) {
+        a += (rng() - 0.5) * 0.9;
+        const nx = px + Math.cos(a) * seg;
+        const ny = py + Math.sin(a) * seg;
+        const w = width * (1 - i / steps) + 0.6;
+        // 外层柔光 + 内层亮芯
+        ctx.strokeStyle = 'rgba(255,255,255,0.22)';
+        ctx.lineWidth = w * 3.2;
+        ctx.beginPath();
+        ctx.moveTo(px, py);
+        ctx.lineTo(nx, ny);
+        ctx.stroke();
+        ctx.strokeStyle = 'rgba(255,255,255,0.95)';
+        ctx.lineWidth = w;
+        ctx.beginPath();
+        ctx.moveTo(px, py);
+        ctx.lineTo(nx, ny);
+        ctx.stroke();
+        if (depth > 0 && rng() < 0.32) crack(nx, ny, a + (rng() < 0.5 ? -1 : 1) * (0.5 + rng() * 0.6), length * 0.45, w * 0.7, depth - 1);
+        px = nx;
+        py = ny;
+      }
+    };
+    const arms = 9;
+    for (let i = 0; i < arms; i++) {
+      const a = (i / arms) * TAU + (rng() - 0.5) * 0.5;
+      crack(c + Math.cos(a) * 10, c + Math.sin(a) * 10, a, c * (0.62 + rng() * 0.3), 7, 2);
+    }
+    // 中心踏出的坑：一团亮光
+    const g = ctx.createRadialGradient(c, c, 0, c, c, c * 0.16);
+    g.addColorStop(0, 'rgba(255,255,255,0.9)');
+    g.addColorStop(1, 'rgba(255,255,255,0)');
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, size, size);
+    return canvasTexture(canvas);
+  });
+}
