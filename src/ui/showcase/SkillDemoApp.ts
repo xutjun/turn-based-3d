@@ -4,6 +4,7 @@
 //
 // 地址参数：
 //   play=<id>   打开页面后自动播放某个演示（id 见 skillDemoScripts.ts，例如 play=whirlwind）
+//   summon=<种类> 打开页面后自动播放召唤演示（bones / soul / wisps / rise / all，步骤 18）
 //   all=1       依次自动播放全部演示
 //   speed=2     初始两倍速；skip=1 一开始就跳过动画
 // 快捷键：1 / 2 切换速度，S 跳过动画（和正式战斗相同）。
@@ -20,6 +21,18 @@ import { BattleHud } from '../hud/BattleHud';
 import { el, injectTheme } from '../theme';
 import { snapshotOf } from './showcaseScript';
 import { buildSkillDemos, DEMO_SKILLS, type SkillDemo } from './skillDemoScripts';
+import { SummonCutscene } from '../../render/cutscene/summonCutscene';
+import { SummonFx } from '../../render/cutscene/summonFx';
+import type { SummonStyle } from '../../data/cutsceneConfig';
+
+/** 召唤演示（步骤 18）：每种小怪单独播放出场动画，或播放完整召唤（Boss 施法 + 9 个小怪分批出场 + 短吼） */
+const SUMMON_DEMOS: { id: SummonStyle | 'all'; label: string; note: string }[] = [
+  { id: 'bones', label: '骷髅兵', note: '地面裂开，骨头飞起拼合（脊椎、肋骨、头骨、四肢），盔甲武器落下，眼火点亮，站起' },
+  { id: 'soul', label: '堕落骑士', note: '地面升起黑烟，半透明的灵魂轮廓浮现，凝成实体，盔甲由暗到亮，眼光亮起' },
+  { id: 'wisps', label: '亡灵法师', note: '绿色鬼火汇聚，灵魂显现后凝成实体，骨杖最后出现在手中' },
+  { id: 'rise', label: '恶魔祭司', note: '脚下升起暗影法阵，身影从法阵中升起成形' },
+  { id: 'all', label: '完整召唤', note: 'Boss 举臂、身前召唤法阵、光束射向各阵位，9 个小怪分批出场，最后一声短吼' },
+];
 
 /** 一次演示的性能与一致性记录 */
 export interface DemoResult {
@@ -94,6 +107,9 @@ export class SkillDemoApp {
   private readonly check: SkillDemoCheck;
   private readonly tmp = new Vector3();
   private director: BattleDirector | null = null;
+  private readonly summon: SummonCutscene;
+  private readonly summonFx = new SummonFx();
+  private summoning = false;
   private stopped = false;
   /** 正在统计的帧耗时（秒）；null = 没有在统计 */
   private frameTimes: number[] | null = null;
@@ -129,6 +145,17 @@ export class SkillDemoApp {
     });
 
     this.demos = buildSkillDemos(this.units);
+    this.scene.scene.add(this.summonFx.group);
+    const boss = ENEMY_TEMPLATES.find((t) => t.rank === 'boss')!;
+    this.summon = new SummonCutscene({
+      stage,
+      scheduler,
+      fx: this.scene.fx,
+      rig: this.scene.cameraRig,
+      sound: this.scene.sound,
+      summonFx: this.summonFx,
+      bossId: boss.id,
+    });
 
     injectTheme();
     if (!document.getElementById(STYLE_ID)) {
@@ -157,6 +184,18 @@ export class SkillDemoApp {
       this.buttons.set(demo.id, b);
       row.append(b);
     }
+    // 召唤演示（步骤 18）
+    const summonRow = el('div', 'sd-row');
+    summonRow.append(el('span', 'sd-group', '召唤'));
+    for (const demo of SUMMON_DEMOS) {
+      const b = el('button', 'dk-btn', demo.label);
+      b.type = 'button';
+      b.title = demo.note;
+      b.onclick = () => void this.playSummon(demo.id);
+      this.buttons.set(`summon:${demo.id}`, b);
+      summonRow.append(b);
+    }
+    list.append(summonRow);
     this.noteEl = el('div', 'sd-note', '点上面的按钮单独播放一个技能的演出。右上角可切换 1× / 2× 和跳过动画。');
     this.statsEl = el('div', 'sd-stats');
     panel.append(el('div', 'dk-title', '技能演示'), list, this.noteEl, this.statsEl);
@@ -185,6 +224,10 @@ export class SkillDemoApp {
   }
 
   start(): void {
+    // 召唤用的材质副本和特效先编译一次，第一次播放不卡顿
+    this.scene.stage.reset();
+    this.scene.renderOnce();
+    this.summon.prewarm(() => this.scene.renderOnce());
     this.scene.start();
     void this.reset().then(async () => {
       const query = new URLSearchParams(location.search);
@@ -195,6 +238,8 @@ export class SkillDemoApp {
           await this.play(demo.id);
         }
       } else if (first) await this.play(first);
+      const summon = query.get('summon');
+      if (summon && SUMMON_DEMOS.some((d) => d.id === summon)) await this.playSummon(summon as SummonStyle | 'all');
     });
   }
 
@@ -257,10 +302,55 @@ export class SkillDemoApp {
     return { emit, director };
   }
 
+  /**
+   * 召唤演示（步骤 18）：战场复位后，把这一种小怪（或全部）藏起来再播放出场；“完整召唤”含 Boss 施法、光束和短吼。
+   * 结束后显示绘制调用峰值与残留检查。
+   */
+  async playSummon(kind: SummonStyle | 'all'): Promise<void> {
+    if (this.check.playing || this.summoning || this.stopped) return;
+    const demo = SUMMON_DEMOS.find((d) => d.id === kind)!;
+    const { scheduler, fx } = this.scene;
+    this.summoning = true;
+    this.check.playing = `summon:${kind}`;
+    for (const [key, b] of this.buttons) {
+      b.disabled = true;
+      b.classList.toggle('is-on', key === `summon:${kind}`);
+    }
+    this.noteEl.textContent = `${demo.label}：${demo.note}`;
+    this.statsEl.textContent = '';
+    try {
+      await this.reset();
+      const ids = this.summon.minions.filter((v) => kind === 'all' || this.summon.styleOf(v) === kind).map((v) => v.id);
+      this.summon.hide(ids);
+      this.hud.setBattleOpacity(0); // 头顶条在出场时不挡画面
+      await scheduler.nextFrame();
+      this.peakDrawCalls = 0;
+      const idleDrawCalls = this.scene.lastDrawCalls;
+      this.frameTimes = [];
+      const full = kind === 'all';
+      await this.summon.play({ ids, cast: full, roar: full });
+      this.frameTimes = null;
+      this.hud.setBattleOpacity(1);
+      for (let i = 0; i < 400 && fx.activeCount().particles + fx.activeCount().objects > 0; i++) await scheduler.nextFrame();
+      const left = fx.activeCount().objects + fx.activeCount().particles + this.summonFx.activeCount;
+      const bad = left > 0 || this.summon.shadedUnits().length > 0 || this.summon.unrestoredUnits().length > 0;
+      this.statsEl.textContent = [
+        `绘制调用 ${idleDrawCalls} → 峰值 ${this.peakDrawCalls}`,
+        `结束后残留特效 ${left} · 未换回原材质 ${this.summon.shadedUnits().length} · 部件未复位 ${this.summon.unrestoredUnits().length}`,
+      ].join('\n');
+      this.statsEl.classList.toggle('bad', bad);
+    } finally {
+      this.frameTimes = null;
+      this.summoning = false;
+      this.check.playing = null;
+      for (const b of this.buttons.values()) b.disabled = false;
+    }
+  }
+
   /** 播放一个演示；正在播放别的演示时忽略 */
   async play(id: string): Promise<DemoResult | null> {
     const demo = this.demos.find((d) => d.id === id);
-    if (!demo || this.check.playing || this.stopped) return null;
+    if (!demo || this.check.playing || this.summoning || this.stopped) return null;
     const { scheduler, stage, fx } = this.scene;
     this.check.playing = id;
     for (const [key, b] of this.buttons) {

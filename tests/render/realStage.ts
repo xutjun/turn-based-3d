@@ -100,6 +100,23 @@ export function poseDiff(before: Record<string, number>, after: Record<string, n
 }
 
 /**
+ * 过场用的空特效系统（步骤 17、18）：尘土、冲击波、碎石、闪光、粒子都不做事；particles 记下发射过的粒子数。
+ * 与真实特效系统一样，跳过动画时不发射粒子（emitCount / burstCount 为 0）。
+ */
+export function cutsceneFx(scheduler?: Scheduler): FxSystem & { emitted: number } {
+  const fx = {
+    emitted: 0,
+    burst: () => Promise.resolve(),
+    rubble: () => undefined,
+    flashLight: () => undefined,
+    emitCount: (rate: number) => (scheduler?.skip ? 0 : Math.floor(rate * (scheduler?.delta ?? 1 / 60) + 0.5)),
+    burstCount: (n: number) => (scheduler?.skip ? 0 : Math.ceil(n)),
+    particle: () => void (fx.emitted += 1),
+  };
+  return fx as unknown as FxSystem & { emitted: number };
+}
+
+/**
  * 在真实的 UnitView 上演一遍入场过场（步骤 17）：队长从 at 开打（探索布置：只显示队长和 Boss），按帧推进到演完。
  * 特效、镜头、音效用空实现。
  */
@@ -130,7 +147,7 @@ export async function playIntroReal(
     scheduler,
     camera: { setFrame: () => undefined } as never,
     rig: { shake: () => undefined } as never,
-    fx: { burst: () => Promise.resolve(), rubble: () => undefined, flashLight: () => undefined } as never,
+    fx: cutsceneFx(scheduler),
     sound: { play: () => undefined },
     introFx: new IntroFx(),
     world,

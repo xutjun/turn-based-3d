@@ -14,7 +14,7 @@ import { Scheduler } from '../../src/render/director/Scheduler';
 import type { FxSystem } from '../../src/render/fx/FxSystem';
 import type { BattleStage } from '../../src/render/units/BattleStage';
 import type { UnitView } from '../../src/render/units/UnitView';
-import { createRealViews, poseDiff, poseSnapshot } from './realStage';
+import { createRealViews, cutsceneFx, poseDiff, poseSnapshot } from './realStage';
 
 // 入场过场（步骤 17）：真实模型、真实 UnitView、真实调度器，按帧推进。
 // 检查：落点误差为 0、结束时全员在格子上面向敌方并显示、姿态与直接开战完全一致、材质换回原材质、
@@ -31,7 +31,7 @@ function setup() {
   const camera = { setFrame: (f: CameraFrame | null) => frames.push(f ? { ...f } : null), target: { x: 0, z: 0 } } as unknown as BattleCamera;
   let shakes = 0;
   const rig = { shake: () => void (shakes += 1) } as unknown as CameraRig;
-  const fx = { burst: () => Promise.resolve(), rubble: () => undefined, flashLight: () => undefined } as unknown as FxSystem;
+  const fx: FxSystem = cutsceneFx(scheduler);
   const sounds: string[] = [];
   const stage = {
     views,
@@ -158,10 +158,10 @@ describe('入场过场（真实模型）', () => {
     const talk = { x: s.boss.home.x + BOSS_FACING.x * 4, z: s.boss.home.z + BOSS_FACING.z * 4 };
     const start = exploreLayout(s.views, s.boss, s.world, talk);
     const { watch, report } = await play(s, start);
-    // 时长：约 6 秒（1 倍速）
+    // 时长：入场约 6.4 秒 + 召唤约 5.5 秒（1 倍速，步骤 18 加入召唤）
     const seconds = watch.frames / 60;
-    expect(seconds).toBeGreaterThan(5);
-    expect(seconds).toBeLessThan(8.5);
+    expect(seconds).toBeGreaterThan(10.5);
+    expect(seconds).toBeLessThan(13.5);
     // 落点误差为 0
     for (const id of ['A0', 'A1', 'A2', 'A3', 'A4']) expect(report.landing[id], id).toBe(0);
     for (const [id, f] of Object.entries(report.final)) {
@@ -185,7 +185,7 @@ describe('入场过场（真实模型）', () => {
     s.scheduler.setTimeScale(2);
     const start = exploreLayout(s.views, s.boss, s.world, EXPLORE_CONFIG.start);
     const { watch, report } = await play(s, start);
-    expect(watch.frames / 60).toBeLessThan(4.3);
+    expect(watch.frames / 60).toBeLessThan(6.8);
     for (const id of ['A0', 'A1', 'A2', 'A3', 'A4']) expect(report.landing[id], id).toBe(0);
     expect(watch.worstObstacle).toBeGreaterThanOrEqual(0);
     expectBattleReady(s);

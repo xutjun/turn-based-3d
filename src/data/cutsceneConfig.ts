@@ -199,3 +199,146 @@ export const INTRO_POSES = {
   /** 魔偶下落：双臂高举，落地砸下 */
   golemFall: { 'shoulderL.x': -2.2, 'shoulderR.x': -2.2, 'head.x': -0.2 } as Record<string, number>,
 };
+
+/** 小怪出场方式（步骤 18）：骷髅兵拼骨架、堕落骑士灵魂凝聚、亡灵法师鬼火汇聚、恶魔祭司暗影法阵升起 */
+export type SummonStyle = 'bones' | 'soul' | 'wisps' | 'rise';
+
+/**
+ * 召唤演出（步骤 18，SPEC §14.3，DESIGN §11.8）：宝宝就位、镜头到达战斗视角后开始。时刻相对召唤开始（1 倍速，秒）。
+ *   Boss 高举双臂 → 身前暗红召唤法阵 → 法阵分出光束射向各个阵位 → 小怪分批出场 → 全部就位后 Boss 短吼 → 战斗界面淡入。
+ */
+export const SUMMON_CONFIG = {
+  /** 宝宝全部就位后多久开始召唤 */
+  after: 0.1,
+  /** 各种小怪的出场方式（按模板） */
+  styles: {
+    enemy_skeleton: 'bones',
+    enemy_fallen_knight: 'soul',
+    enemy_necromancer: 'wisps',
+    enemy_demon_priest: 'rise',
+  } as Record<string, SummonStyle>,
+  /** Boss 施法：举起双臂（raise 秒），保持到最后一批光束射出后 hold 秒，再放下（lower 秒） */
+  cast: { raise: 0.45, hold: 0.25, lower: 0.4 },
+  /** Boss 身前的召唤法阵：离 Boss 多远（沿 Boss 朝向）、半径、颜色、符文转速、淡入淡出 */
+  circle: { ahead: 2.6, radius: 1.7, color: 0x8a1410, glow: 0xff3a22, spin: 1.4, fadeIn: 0.4, fadeOut: 0.45, opacity: 0.9 },
+  /** 光束：从法阵中心射向阵位，travel 秒飞到，linger 秒淡出；离地高度、宽度 */
+  beam: { start: 0.5, travel: 0.3, linger: 0.35, height: 0.35, width: 0.5, color: 0xff3a22 },
+  /**
+   * 出场批次：按顺序依次出场，at = 这一批的光束射出的时刻（相对第一批），同一批内每只再错开 stagger 秒。
+   * 光束飞到阵位的那一刻，小怪开始出场。
+   */
+  batches: [
+    { templates: ['enemy_skeleton'], at: 0, stagger: 0.1 },
+    { templates: ['enemy_fallen_knight'], at: 0.9, stagger: 0.12 },
+    { templates: ['enemy_necromancer'], at: 1.55, stagger: 0 },
+    { templates: ['enemy_demon_priest'], at: 2.1, stagger: 0.12 },
+  ] as { templates: string[]; at: number; stagger: number }[],
+  /**
+   * 骷髅兵：地面裂开 → 骨头从地里冒出、飞起拼合（按部件依次：脊椎骨盆、肋骨、头骨、双臂、双腿）→
+   * 盔甲和武器落到身上 → 眼火点亮 → 从佝偻站直。
+   */
+  bones: {
+    duration: 2.0,
+    crackColor: 0xb8361e,
+    /** 各部件开始飞的时刻（相对这只开始）与飞行时长；骨头从阵位周围 scatter 米、地下 depth 米处冒出，最高飞到 arc 米 */
+    parts: { spine: 0.12, ribs: 0.26, skull: 0.4, arms: 0.52, legs: 0.62 } as Record<string, number>,
+    stagger: 0.03, // 同一部件里的几块骨头依次错开
+    fly: 0.5,
+    scatter: { min: 0.5, max: 1.1 },
+    depth: 0.25,
+    arc: 0.9,
+    tumble: 4.5, // 飞行中翻转的角度（弧度，落位时归零）
+    /** 盔甲和武器从上方 drop 米落下 */
+    gearAt: 1.3,
+    gearFall: 0.22,
+    drop: 0.9,
+    eyesAt: 1.6,
+    /** 站起：从佝偻（SUMMON_POSES.hunch）站直，同时脚从裂缝里拔出（根节点从 -sink 回到 0） */
+    standAt: 1.6,
+    stand: 0.4,
+    sink: 0.12,
+    boneColor: 0xd8d2bc,
+    eyeColor: 0x9fe8ff,
+  },
+  /** 堕落骑士：地面升起黑烟 → 半透明的灵魂轮廓浮现 → 逐渐凝成实体（盔甲由暗到亮）→ 眼光亮起、一次光爆 */
+  soul: {
+    duration: 1.6,
+    smoke: 0x1a1418,
+    smokeFor: 0.9, // 黑烟持续冒的时长
+    appearAt: 0.25, // 灵魂开始浮现
+    condense: 1.25, // 浮现到凝成实体的时长
+    rise: 0.35, // 灵魂从地面下浮起的高度（米）
+    look: { tint: 0x16202c, glow: 0x5a86b8, glowStrength: 1.0 },
+    burst: 0xffa02a,
+  },
+  /** 亡灵法师：绿色鬼火从四周汇聚 → 灵魂显现、凝成实体 → 骨杖最后出现在手中 */
+  wisps: {
+    duration: 1.7,
+    color: 0x6cff8a,
+    gather: 0.6, // 鬼火汇聚
+    radius: 2.2,
+    appearAt: 0.45,
+    condense: 0.9,
+    look: { tint: 0x0e2a16, glow: 0x3cd86a, glowStrength: 1.1 },
+    staffAt: 1.35,
+    staffGrow: 0.25,
+  },
+  /** 恶魔祭司：脚下升起暗影法阵 → 身影从法阵中自下而上升起成形 → 法阵收缩消失 */
+  rise: {
+    duration: 1.6,
+    circleIn: 0.3,
+    radius: 1.2,
+    color: 0x3a0c3a,
+    glow: 0xd2368a,
+    riseAt: 0.2,
+    rise: 1.05,
+    depth: 2.3, // 开始时身影在地下多深（米）
+    look: { tint: 0x2a0a26, glow: 0xb0247a, glowStrength: 0.9 },
+    circleOut: 0.3,
+  },
+  /** 全部就位后 Boss 的短吼 */
+  roar: { after: 0.15, duration: 0.65, shake: 0.18 },
+};
+
+export type SummonConfig = typeof SUMMON_CONFIG;
+
+/** 召唤演出里的姿态（通道名与进攻动作相同，没有该关节的模型自动忽略） */
+export const SUMMON_POSES = {
+  /** Boss 施放召唤：双臂（连同武器）高举过头、挺胸仰头、双翼展开（Boss 的翼 y 为负 = 展开） */
+  cast: {
+    'shoulderL.x': -2.5,
+    'shoulderR.x': -2.6,
+    'shoulderL.z': 0.35,
+    'shoulderR.z': -0.35,
+    'elbowL.x': -0.35,
+    'elbowR.x': -0.25,
+    'chest.x': -0.22,
+    'spine.x': -0.1,
+    'head.x': -0.35,
+    'wingL.y': -0.85,
+    'wingR.y': 0.85,
+    'wingL.z': 0.35,
+    'wingR.z': -0.35,
+  } as Record<string, number>,
+  /** 骷髅兵拼合时的佝偻：弯腰、低头、双臂下垂 */
+  hunch: {
+    'spine.x': 0.45,
+    'chest.x': 0.3,
+    'head.x': 0.45,
+    'shoulderL.x': 0.25,
+    'shoulderR.x': 0.45,
+    'elbowR.x': 0.5,
+  } as Record<string, number>,
+  /** 短吼：后仰、仰头、双翼张开（比入场怒吼小） */
+  roar: {
+    'root.pitch': -0.1,
+    'head.x': -0.7,
+    'chest.x': -0.3,
+    'wingL.y': -0.9,
+    'wingR.y': 0.9,
+    'wingL.z': 0.4,
+    'wingR.z': -0.4,
+    'shoulderL.z': 0.6,
+    'shoulderR.z': -0.6,
+  } as Record<string, number>,
+};

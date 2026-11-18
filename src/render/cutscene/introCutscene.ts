@@ -7,14 +7,15 @@
 //      飞向战斗格子，空中翻滚或后仰，落地屈膝缓冲后起身、转向敌方；
 //   e. 宝宝从主人身后进场：狼跃入、骨龙飞入、幽灵飘入、魔偶重重落地，就位后转向敌方；
 //   f. 相机从对话视角平滑过渡到战斗视角；
-//   g. （界面层）过场结束后开战，头顶条、顺序条、战斗界面淡入。
+//   g. Boss 召唤 9 个小怪（步骤 18，summonCutscene.ts）：举臂、身前召唤法阵、光束射向各阵位，小怪按种类分批出场，最后一声短吼；
+//   h. （界面层）过场结束后开战，头顶条、顺序条、战斗界面淡入。
 //
 // 所有“等一会儿”和“在一段时间内变化”都走 Scheduler：倍速、跳过动画、暂停自动生效。
 // 各条轨道彼此独立、只写自己负责的东西，跳过时以任何顺序完成都得到同一个结果；
-// 最后 finish() 把所有单位交还战斗：回到格子、原朝向、站姿、全部显示（9 个小怪此时直接出现，召唤演出在步骤 18），
+// 最后 finish() 把所有单位交还战斗：回到格子、原朝向、站姿、全部显示（小怪由召唤演出逐一出场，跳过时直接完整就位），
 // 特效清空、相机回到战斗机位——与“直接开战”的开场状态完全一致。过场期间不产生任何战斗事件（引擎在过场结束后才建）。
 
-import { INTRO_CONFIG, INTRO_POSES, type IntroConfig } from '../../data/cutsceneConfig';
+import { INTRO_CONFIG, INTRO_POSES, SUMMON_CONFIG, type IntroConfig, type SummonConfig } from '../../data/cutsceneConfig';
 import { CAMERA_CONFIG } from '../../data/renderConfig';
 import { ROW_DIRECTION } from '../../data/formation';
 import type { UnitId } from '../../core/types';
@@ -41,6 +42,8 @@ import type { BattleStage } from '../units/BattleStage';
 import type { UnitView } from '../units/UnitView';
 import type { IntroFx } from './introFx';
 import { ShadeReveal, type ShadeLook } from './shadeReveal';
+import { SummonCutscene, type SummonReport } from './summonCutscene';
+import { SummonFx } from './summonFx';
 
 /** 相机取景（注视点 + 距离） */
 export interface CameraFrame {
@@ -65,6 +68,8 @@ export interface IntroPlan {
   impactAt: number;
   /** 宝宝入场开始的时刻 */
   petsAt: number;
+  /** 召唤开始的时刻（宝宝全部就位、镜头已在战斗视角，步骤 18） */
+  summonAt: number;
   /** 全部就位的时刻 */
   endAt: number;
 }
@@ -76,6 +81,8 @@ export interface IntroReport {
   /** 结束时离格子的距离、朝向误差 */
   final: Record<UnitId, { dist: number; yaw: number; visible: boolean }>;
   skipped: boolean;
+  /** 召唤演出的记录（步骤 18） */
+  summon: SummonReport | null;
 }
 
 export interface IntroDeps {
@@ -90,6 +97,9 @@ export interface IntroDeps {
   leaderId: UnitId;
   bossId: UnitId;
   config?: IntroConfig;
+  /** 召唤演出的地面特效（步骤 18）；不传时自己建一份（测试用，不进场景） */
+  summonFx?: SummonFx;
+  summonConfig?: SummonConfig;
 }
 
 const TAU = Math.PI * 2;
@@ -119,8 +129,23 @@ export class IntroCutscene {
   /** 调试 / 测试：上一次过场的检查结果 */
   lastReport: IntroReport | null = null;
 
+  /** 召唤演出（步骤 18）：入场过场的最后一段；技能演示页也直接用它 */
+  readonly summon: SummonCutscene;
+  private readonly summonCfg: SummonConfig;
+
   constructor(private readonly d: IntroDeps) {
     this.cfg = d.config ?? INTRO_CONFIG;
+    this.summonCfg = d.summonConfig ?? SUMMON_CONFIG;
+    this.summon = new SummonCutscene({
+      stage: d.stage,
+      scheduler: d.scheduler,
+      fx: d.fx,
+      rig: d.rig,
+      sound: d.sound,
+      summonFx: d.summonFx ?? new SummonFx(),
+      bossId: d.bossId,
+      config: this.summonCfg,
+    });
   }
 
   get active(): boolean {
@@ -186,7 +211,8 @@ export class IntroCutscene {
     }
     this.d.introFx.setPrewarm(true);
     try {
-      compile();
+      // 召唤演出的材质副本和特效（步骤 18）一起编译
+      this.summon.prewarm(compile);
     } finally {
       this.d.introFx.setPrewarm(false);
       this.d.introFx.clear();
@@ -232,7 +258,9 @@ export class IntroCutscene {
       c.pets,
     );
     const petsEnd = pets.reduce((m, e) => Math.max(m, e.start + e.duration), 0) + c.pets.turn;
-    return { reveal, flights, pets, impactAt, petsAt, endAt: petsAt + petsEnd };
+    // 召唤：宝宝全部就位后开始（此时镜头早已到达战斗视角）
+    const summonAt = Math.max(petsAt + petsEnd, c.camera.at + c.camera.duration) + this.summonCfg.after;
+    return { reveal, flights, pets, impactAt, petsAt, summonAt, endAt: summonAt + this.summon.timeline().endAt };
   }
 
   /**
@@ -261,6 +289,7 @@ export class IntroCutscene {
       at(c.stomp.at, () => this.stomp(plan));
       for (const f of plan.flights) at(plan.impactAt + f.launch, () => this.fly(f));
       at(plan.petsAt, () => this.petsIn(plan.pets));
+      at(plan.summonAt, () => this.summon.play().then(() => undefined));
       // 时间轴结束前途中打开了跳过：记下来（检查用）
       void s.wait(plan.endAt).then(() => (skipped = skipped || s.skip));
       await Promise.all(tracks);
@@ -269,7 +298,7 @@ export class IntroCutscene {
       this.finish();
       this.playing = false;
     }
-    this.lastReport = { landing: { ...this.landing }, final: this.finalCheck(), skipped };
+    this.lastReport = { landing: { ...this.landing }, final: this.finalCheck(), skipped, summon: this.summon.lastReport };
     return this.lastReport;
   }
 
@@ -635,9 +664,10 @@ export class IntroCutscene {
   /** 把所有单位交还战斗：特技层、材质、特效、相机全部复位（与直接开战的开场状态一致） */
   private finish(): void {
     for (const sh of this.shades.values()) sh.restore();
+    this.summon.finish();
     this.d.introFx.clear();
     for (const v of this.d.stage.views.values()) v.clearStunt();
-    // 回到格子、原朝向、站姿、全部显示（小怪直接出现）；清特效、镜头复位
+    // 回到格子、原朝向、站姿、全部显示（召唤被跳过时小怪直接完整就位）；清特效、镜头复位
     this.d.stage.reset();
     this.d.camera.setFrame(null);
   }
@@ -654,7 +684,7 @@ export class IntroCutscene {
 
   /** 正在用副本材质的单位（残留检查：过场结束后必须为空） */
   shadedUnits(): UnitId[] {
-    return [...this.shades].filter(([, s]) => !s.usingOriginals()).map(([id]) => id);
+    return [...[...this.shades].filter(([, s]) => !s.usingOriginals()).map(([id]) => id), ...this.summon.shadedUnits()];
   }
 }
 

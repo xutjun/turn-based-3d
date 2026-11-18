@@ -22,6 +22,12 @@ export interface UnitModelDef {
    * 只登记腿部关节、不走路（步骤 17）：Boss 在入场过场里抬腿跺地，身体下沉时屈膝踩地。绘制调用同样会多几次。
    */
   legs?: boolean;
+  /**
+   * 召唤演出（步骤 18）要单独移动 / 显隐的部件：这些关节（模型里的 `joint:<名字>`）在合并网格时也作为边界保留，
+   * 挂在下面的网格不并进上一级。它们不参与战斗动画，外观不变；每个关节多一两次绘制调用。
+   * 骷髅兵：左右整条腿（拼骨架时四肢逐一飞来）；亡灵法师：骨杖（最后出现在手中）。
+   */
+  summonParts?: readonly string[];
 }
 
 /** 某个模型（资源键）的待机风格：预览页没有单位模板，按资源键查 */
@@ -56,10 +62,10 @@ export const UNIT_MODELS: Record<string, UnitModelDef> = {
   pet_ghost: { assetKey: ASSET_KEYS.petGhost, idle: 'spectral' },
   pet_golem: { assetKey: ASSET_KEYS.petGolem, idle: 'construct' },
   // 敌人（精英略大，Boss 约 2 倍；比例在各 builder 的默认 scale 里，可在 params 覆盖）
-  enemy_skeleton: { assetKey: ASSET_KEYS.enemySkeleton, idle: 'rattle' },
+  enemy_skeleton: { assetKey: ASSET_KEYS.enemySkeleton, idle: 'rattle', summonParts: ['hipL', 'hipR'] },
   enemy_fallen_knight: { assetKey: ASSET_KEYS.enemyFallenKnight, idle: 'stiff' },
   enemy_demon_priest: { assetKey: ASSET_KEYS.enemyDemonPriest, idle: 'flowing' },
-  enemy_necromancer: { assetKey: ASSET_KEYS.enemyNecromancer, idle: 'flowing' },
+  enemy_necromancer: { assetKey: ASSET_KEYS.enemyNecromancer, idle: 'flowing', summonParts: ['weaponMount'] },
   enemy_abyss_lord: { assetKey: ASSET_KEYS.enemyAbyssLord, idle: 'overlord', legs: true }, // 入场过场抬腿跺地（步骤 17）
 };
 

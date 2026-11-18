@@ -59,8 +59,13 @@ function createUnitModel(registry: AssetRegistry, t: UnitTemplate): Object3D {
  * 只有登记在 units/animatedJoints.ts 里的关节作为边界：人形的肩、肘、腰、胸、头，
  * 以及待机动画会转的额外关节（宝宝的头、尾、翅膀 …，Boss 的双翼）；其余关节下的部件并进上一级。
  */
-function mergeUnitMeshes(model: Object3D): void {
+function mergeUnitMeshes(model: Object3D, summonParts: readonly string[] = []): void {
   const moving = new Set<Object3D>(Object.values(allAnimatedJoints(model, getRig(model))));
+  // 召唤演出要单独移动 / 显隐的部件（步骤 18）：同样作为合并边界（不参与动画，外观不变）
+  for (const name of summonParts) {
+    const joint = model.getObjectByName(`${JOINT_PREFIX}${name}`);
+    if (joint) moving.add(joint);
+  }
   mergeStaticMeshes(model, {
     isStatic: (node) => node.name.startsWith(JOINT_PREFIX) && !moving.has(node),
     shadowLayer: RENDER_OPTIMIZE.shadowLayer,
@@ -75,7 +80,7 @@ export function createFormationView(registry: AssetRegistry, templates: readonly
   for (const t of templates) {
     const obj = createUnitModel(registry, t);
     // 合并不会单独运动的小网格，减少绘制调用（外观和动画不变）
-    if (RENDER_OPTIMIZE.mergeStaticMeshes) mergeUnitMeshes(obj);
+    if (RENDER_OPTIMIZE.mergeStaticMeshes) mergeUnitMeshes(obj, UNIT_MODELS[t.templateId]?.summonParts);
     const pos = slotPosition(t.side, t.slot);
     obj.position.set(pos.x, 0, pos.z);
     obj.rotation.y = facingYawOf(t.side);

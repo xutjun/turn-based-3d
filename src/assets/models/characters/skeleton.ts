@@ -31,6 +31,12 @@ export const SKELETON_DEFAULTS: SkeletonParams = {
   eyeIntensity: 4,
 };
 
+/**
+ * 召唤演出（步骤 18）按材质名区分部件：骨头（含刻符的骨头、眼窝和牙缝的暗色）先从地里飞起拼成骨架，
+ * 其余（锈铁盔甲、剑、盾、破布、破旗）最后落到身上，眼火（eye）最后点亮。只是名字，不影响外观。
+ */
+export const SKELETON_PART = { bone: 'skeleton:bone', eye: 'skeleton:eye' } as const;
+
 export function buildSkeletonSoldier(params: Partial<SkeletonParams> = {}): Group {
   const c = { ...SKELETON_DEFAULTS, ...params };
   const rig = createRig({ ...DEFAULT_DIMS, shoulderWidth: 0.2 });
@@ -51,6 +57,9 @@ export function buildSkeletonSoldier(params: Partial<SkeletonParams> = {}): Grou
     surface: boneTextures(),
     rim,
   });
+
+  bone.name = runedBone.name = dark.name = SKELETON_PART.bone;
+  eye.name = SKELETON_PART.eye;
 
   // --- 骨盆（带两片髋骨翼）与腰间破布、朽皮带 ---
   box(rig.hips, bone, 0.25, 0.09, 0.13, 0, 0, 0);

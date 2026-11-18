@@ -79,6 +79,7 @@ import { DialogueSession } from '../explore/dialogueSession';
 import { DialogBox } from './dialog/DialogBox';
 import { IntroCutscene, type IntroPlan, type IntroReport } from '../render/cutscene/introCutscene';
 import { IntroFx } from '../render/cutscene/introFx';
+import { SummonFx } from '../render/cutscene/summonFx';
 import { INTRO_CONFIG } from '../data/cutsceneConfig';
 import { battleUiResidue, clearBattleUi, type BattleUiParts } from './explore/exploreUi';
 
@@ -204,6 +205,8 @@ export class PlayerBattleApp {
   private dialogue: DialogueSession | null = null;
   /** 入场过场（步骤 17）与它自己的地面特效；introRun = 正在播放的那一次 */
   private readonly introFx: IntroFx;
+  /** 召唤演出的地面特效（步骤 18）：常驻场景，不用时隐藏 */
+  private readonly summonFx: SummonFx;
   private readonly intro: IntroCutscene;
   private introRun: Promise<unknown> | null = null;
   private readonly unsubscribeStore: () => void;
@@ -342,6 +345,8 @@ export class PlayerBattleApp {
     // 入场过场（步骤 17）：地面特效常驻场景（不用时隐藏）；启动时预热显形用的着色器，第一次过场不卡顿
     this.introFx = new IntroFx();
     this.scene.scene.add(this.introFx.group);
+    this.summonFx = new SummonFx();
+    this.scene.scene.add(this.summonFx.group);
     this.intro = new IntroCutscene({
       stage,
       scheduler,
@@ -350,6 +355,7 @@ export class PlayerBattleApp {
       fx: this.scene.fx,
       sound,
       introFx: this.introFx,
+      summonFx: this.summonFx,
       world: this.explore.world,
       leaderId: this.explore.leaderId,
       bossId: this.explore.bossId,
@@ -954,7 +960,7 @@ export class PlayerBattleApp {
         plan: this.intro.plan,
         report: this.intro.lastReport,
         shaded: this.intro.shadedUnits(),
-        fx: this.introFx.activeCount,
+        fx: this.introFx.activeCount + this.summonFx.activeCount,
         hudOpacity: this.hud.battleOpacity,
       }),
       introFrom: async (x, z) => {

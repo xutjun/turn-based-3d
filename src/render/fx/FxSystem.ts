@@ -1119,6 +1119,46 @@ export class FxSystem {
   }
 
   // ------------------------------------------------------------------
+  // 给过场用的粒子接口（步骤 18 召唤演出：骨片、鬼火、黑烟）
+  // ------------------------------------------------------------------
+
+  /** 这一帧按“每秒 rate 个”该发射几个（跳过动画时为 0，低画质按比例减少） */
+  emitCount(rate: number): number {
+    if (this.scheduler.skip) return 0;
+    return Math.floor(rate * this.particleScale * this.scheduler.delta + Math.random());
+  }
+
+  /** 一次性发射 n 个折算后的个数（跳过动画时为 0） */
+  burstCount(n: number): number {
+    return this.scheduler.skip ? 0 : Math.ceil(n * this.particleScale);
+  }
+
+  /**
+   * 发射一个粒子（共用粒子池，不新建对象；跳过动画时什么都不做）。
+   * @param cell 图集格子（PARTICLE_CELL）；gravity 为负 = 向上飘；grow 为寿命内直径的增长比例
+   */
+  particle(
+    x: number,
+    y: number,
+    z: number,
+    vx: number,
+    vy: number,
+    vz: number,
+    life: number,
+    size: number,
+    color: number,
+    brightness: number,
+    cell: number,
+    gravity = 0,
+    drag = 1,
+    grow = 0,
+  ): void {
+    if (this.scheduler.skip) return;
+    this.c.setHex(color);
+    this.particles.spawn(x, y, z, vx, vy, vz, life, size, this.c, brightness, cell, gravity, drag, grow);
+  }
+
+  // ------------------------------------------------------------------
   // 内部工具
   // ------------------------------------------------------------------
 
@@ -1179,17 +1219,6 @@ export class FxSystem {
   ): void {
     if (this.scheduler.skip) return;
     this.particles.spawn(x, y, z, vx, vy, vz, life, size, color, brightness, cell, gravity, drag, grow);
-  }
-
-  /** 持续发射：按“每秒 rate 个”折算出这一帧该发射几个（跳过动画时为 0） */
-  private emitCount(rate: number): number {
-    if (this.scheduler.skip) return 0;
-    return Math.floor(rate * this.particleScale * this.scheduler.delta + Math.random());
-  }
-
-  /** 一次性爆发的粒子数（跳过动画时为 0） */
-  private burstCount(n: number): number {
-    return this.scheduler.skip ? 0 : Math.ceil(n * this.particleScale);
   }
 
   /** 向四周迸溅的火花 */
