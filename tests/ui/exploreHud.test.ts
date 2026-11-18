@@ -51,14 +51,55 @@ async function setup() {
 }
 
 describe('探索界面的显隐', () => {
-  it('只在探索和对话中显示；标题、过场、战斗、结算、战后过场中隐藏', async () => {
+  it('只在自由探索时显示；对话中淡出；标题、过场、战斗、结算、战后过场中整个隐藏', async () => {
     const s = await setup();
-    const { exploreHudVisibleOn } = await import('../../src/ui/explore/ExploreHud');
+    const { exploreHudState } = await import('../../src/ui/explore/ExploreHud');
+    const want = { title: 'hidden', explore: 'shown', dialog: 'faded', intro: 'hidden', battle: 'hidden', result: 'hidden', outro: 'hidden' } as const;
     for (const screen of ['title', 'explore', 'dialog', 'intro', 'battle', 'result', 'outro'] as const) {
       s.hud.syncScreen(screen);
-      expect(s.hud.visible, screen).toBe(screen === 'explore' || screen === 'dialog');
-      expect(exploreHudVisibleOn(screen)).toBe(s.hud.visible);
+      expect(s.hud.state, screen).toBe(want[screen]);
+      expect(exploreHudState(screen, false)).toBe(want[screen]);
+      expect(s.hud.visible).toBe(screen === 'explore');
+      expect(s.root.style['display'], screen).toBe(want[screen] === 'hidden' ? 'none' : '');
+      expect(s.root.classList.contains('is-faded'), screen).toBe(want[screen] !== 'shown');
     }
+    expect(exploreHudState('explore', true)).toBe('faded');
+  });
+
+  it('点 Boss 跑向交谈点时淡出（面板关闭、按钮不可点）；选“再等等”回到探索后淡入', async () => {
+    const s = await setup();
+    s.hud.syncScreen('explore');
+    s.hud.press('character');
+    s.hud.setTalking(true); // 跑向交谈点
+    expect(s.hud.state).toBe('faded');
+    expect(s.root.classList.contains('is-faded')).toBe(true);
+    expect(s.hud.openPanel).toBeNull();
+    s.hud.press('party');
+    s.hud.press('settings');
+    expect(s.hud.openPanel).toBeNull();
+    expect(s.settings()).toBe(0);
+    s.hud.syncScreen('dialog'); // 到了，弹出对话框
+    expect(s.hud.state).toBe('faded');
+    // 再等等：回到探索，交谈子状态回到 none
+    s.hud.syncScreen('explore');
+    expect(s.hud.state).toBe('faded'); // 交谈状态还没清（页面下一帧同步）
+    s.hud.setTalking(false);
+    expect(s.hud.state).toBe('shown');
+    expect(s.root.classList.contains('is-faded')).toBe(false);
+    s.hud.press('party');
+    expect(s.hud.openPanel).toBe('party');
+  });
+
+  it('选“我准备好了”：对话中淡出的界面直接保持隐藏进入过场', async () => {
+    const s = await setup();
+    s.hud.syncScreen('explore');
+    s.hud.setTalking(true);
+    s.hud.syncScreen('dialog');
+    s.hud.syncScreen('intro');
+    expect(s.hud.state).toBe('hidden');
+    s.hud.setTalking(false); // 过场开始后交谈状态清掉，也不会显示出来
+    expect(s.hud.state).toBe('hidden');
+    expect(s.root.style['display']).toBe('none');
   });
 
   it('界面层插在菜单层之下（设置菜单盖在它上面）', async () => {
@@ -79,7 +120,8 @@ describe('探索界面的显隐', () => {
       s.hud.syncScreen('explore');
       s.hud.press('character');
       expect(s.hud.openPanel).toBe('character');
-      // 点 Boss → 对话：对话中面板已关（页面在 clickBoss 时关掉；这里也由 syncScreen 保证）
+      // 点 Boss → 跑向交谈点 → 对话：开始跑时就淡出、面板关闭
+      s.hud.setTalking(true);
       s.hud.syncScreen('dialog');
       expect(s.hud.openPanel).toBeNull();
       expect(s.mounted()).toHaveLength(0);
@@ -90,6 +132,7 @@ describe('探索界面的显隐', () => {
       }
       // 战后回到探索：页面先切界面再走 clearBattleUi
       s.hud.syncScreen('explore');
+      s.hud.setTalking(false);
       clearBattleUi(parts);
       expect(s.hud.visible).toBe(true);
       expect(s.hud.orb.current).toEqual({ hp: 1200, maxHp: 1200, mp: 600, maxMp: 600 });
@@ -166,20 +209,18 @@ describe('面板开关与互斥', () => {
     expect(s.settings()).toBe(1);
   });
 
-  it('对话中只有“设置”可用，其余按钮置灰、点了无效', async () => {
+  it('对话中按钮栏隐藏，所有按钮（含设置）都点不了；回到探索后恢复可用（v0.7-hud2）', async () => {
     const s = await setup();
     s.hud.syncScreen('dialog');
-    for (const id of ['character', 'inventory', 'pet', 'party'] as const) {
+    for (const id of ['character', 'inventory', 'pet', 'party', 'settings'] as const) {
       s.hud.press(id);
       expect(s.hud.openPanel).toBeNull();
       expect(s.button(id).classList.contains('is-disabled')).toBe(true);
     }
-    expect(s.button('settings').classList.contains('is-disabled')).toBe(false);
-    s.hud.press('settings');
-    expect(s.settings()).toBe(1);
-    // 回到探索后恢复可用
+    expect(s.settings()).toBe(0);
     s.hud.syncScreen('explore');
     expect(s.button('character').classList.contains('is-disabled')).toBe(false);
+    expect(s.button('settings').classList.contains('is-disabled')).toBe(false);
   });
 });
 

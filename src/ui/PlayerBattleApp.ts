@@ -260,12 +260,13 @@ export class PlayerBattleApp {
   }
 
   /**
-   * 界面切换后同步（步骤 21）：探索界面只在探索 / 对话中显示（离开探索时关闭面板）；
-   * 右上角齿轮在标题、探索、对话中不显示（探索中设置由按钮栏的“设置”和 Esc 打开），过场、战斗、结算中照常显示。
+   * 界面切换后同步（步骤 21）：探索界面只在自由探索时显示（跑向 Boss、对话中淡出，离开探索时隐藏并关闭面板）；
+   * 右上角齿轮在标题、探索中不显示（探索中设置由按钮栏的“设置”和 Esc 打开）；对话中按钮栏隐藏，
+   * 齿轮照常显示（与步骤 16 相同，对话中 Esc = “再等等”），过场、战斗、结算中也照常显示（v0.7-hud2）。
    */
   private applyScreen(): void {
     const s = this.screenValue;
-    this.gear?.classList.toggle('is-hidden', s === 'title' || s === 'explore' || s === 'dialog');
+    this.gear?.classList.toggle('is-hidden', s === 'title' || s === 'explore');
     this.exploreHud?.syncScreen(s);
   }
 
@@ -387,15 +388,15 @@ export class PlayerBattleApp {
       bossBox: () => this.bossScreenBox(),
       onGround: (x, z) => void this.explore.clickGround(x, z),
       onBoss: () => {
-        // 跑到交谈点，到了弹出对话框（步骤 16）；打开着的面板先关掉（步骤 21，DESIGN §9.17 M4）
-        this.exploreHud.closePanel();
+        // 跑到交谈点，到了弹出对话框（步骤 16）；圆球和按钮栏立即开始淡出、面板关闭（v0.7-hud2，DESIGN §9.17 M4）
         void this.explore.clickBoss();
+        this.exploreHud.setTalking(this.explore.session.phase !== 'none');
       },
       onBossHover: (on) => this.explore.setBossHover(on),
     });
     this.exploreHint = el('div', 'dk-explore-hint', '左键：移动　点击 Boss：对话　方向键 / WASD：移动（调试）　Esc：设置');
     this.exploreHint.style.cssText =
-      'position:absolute;left:50%;top:14px;transform:translateX(-50%);padding:6px 16px;pointer-events:none;' + // 步骤 21：左下角是圆球和按钮栏，提示移到上方
+      'position:absolute;left:50%;bottom:22px;transform:translateX(-50%);padding:6px 16px;pointer-events:none;' +
       'font-size:15px;letter-spacing:1px;color:rgba(222,206,170,0.82);background:rgba(10,8,8,0.55);' +
       'border:1px solid rgba(150,120,70,0.35);border-radius:3px;white-space:nowrap;display:none;';
     stageEl.insertBefore(this.exploreHint, this.menuLayer); // 在菜单层下面
@@ -474,6 +475,8 @@ export class PlayerBattleApp {
       },
     });
     this.scene.onUpdate((dt) => {
+      // 跑向交谈点、转身、对话中：圆球和按钮栏淡出；回到普通探索时淡入（v0.7-hud2）
+      this.exploreHud.setTalking(this.explore.session.phase !== 'none');
       this.exploreHud.update(dt);
       this.panelPreview.update(dt);
     });
@@ -1175,8 +1178,8 @@ export class PlayerBattleApp {
       dialogChoose: (i) => this.chooseDialog(i),
       clickBoss: () => {
         if (this.screen !== 'explore' || this.menu.isOpen || this.busy) return null;
-        this.exploreHud.closePanel();
         const r = this.explore.clickBoss();
+        this.exploreHud.setTalking(this.explore.session.phase !== 'none');
         return r ? { x: r.goal.x, z: r.goal.z } : null;
       },
       intro: () => ({

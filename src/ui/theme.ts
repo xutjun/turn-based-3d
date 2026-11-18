@@ -223,7 +223,7 @@ const CSS = `
   font-family:${SERIF_FONT}; color:#d8c690;
   background:linear-gradient(to top, rgba(0,0,0,.55), rgba(0,0,0,0) 38%); animation:dk-fade .25s ease-out; }
 .dk-dialog-layer.is-hidden { display:none; }
-.dk-dialog { left:calc(50% + 190px); bottom:34px; width:820px; min-height:150px; transform:translateX(-50%); padding:30px 34px 22px;
+.dk-dialog { left:50%; bottom:34px; width:820px; min-height:150px; transform:translateX(-50%); padding:30px 34px 22px;
   cursor:pointer; animation:dk-dialog-in .3s ease-out; }
 @keyframes dk-dialog-in { from { opacity:0; transform:translate(-50%, 14px); } to { opacity:1; transform:translate(-50%, 0); } }
 /* 内圈的暗金细线：第二道金属包边 */
@@ -246,10 +246,12 @@ const CSS = `
 .dk-dialog-choices .dk-btn { min-width:200px; padding:10px 18px; font-size:18px; letter-spacing:4px; }
 .dk-dialog-hint { position:absolute; right:34px; top:-14px; font-size:12px; letter-spacing:1px; color:#8f8468; text-shadow:0 1px 2px #000; }
 
-/* ---------- 探索界面（步骤 21）：左下角血蓝圆球 + 按钮栏 + 面板。在对话框之上（对话中“设置”可点） ---------- */
+/* ---------- 探索界面（步骤 21）：左下角血蓝圆球 + 按钮栏 + 面板（居中）。跑向 Boss、对话中淡出（v0.7-hud2） ---------- */
 .dk-explore-hud { position:absolute; inset:0; pointer-events:none; z-index:13; user-select:none;
-  font-family:${SERIF_FONT}; color:#d8c690; font-size:14px; line-height:1.35; }
+  font-family:${SERIF_FONT}; color:#d8c690; font-size:14px; line-height:1.35; opacity:1; transition:opacity .3s ease-out; }
 .dk-explore-hud > * { pointer-events:auto; }
+.dk-explore-hud.is-faded { opacity:0; }
+.dk-explore-hud.is-faded > *, .dk-explore-hud.is-faded .dk-hud-panels > * { pointer-events:none; }
 .dk-explore-hud > .dk-hud-panels { pointer-events:none; position:absolute; inset:0; }
 .dk-hud-panels > * { pointer-events:auto; }
 /* 圆球：外框是多层金属环，里面是玻璃球；左右两半各自裁剪，液体从下往上填 */
@@ -305,7 +307,7 @@ const CSS = `
   border:1px solid #0b0a09; box-shadow:0 0 0 1px #7a6338, 0 4px 10px rgba(0,0,0,.8); }
 /* 面板框架 */
 /* 石质底子在单独的一层（.dk-game-panel-bg），面板本身只留外圈金属环；有 3D 预览的面板在底子上挖窗口（mask） */
-.dk-game-panel { left:18px; bottom:162px; width:640px; padding:0; isolation:isolate; animation:dk-fade .15s ease-out;
+.dk-game-panel { left:50%; top:50%; transform:translate(-50%, -50%); width:640px; padding:0; isolation:isolate; animation:dk-fade .15s ease-out;
   background:none; box-shadow:0 0 0 1px #7a6338, 0 0 0 3px #1a1714, 0 0 0 4px #43361f, 0 8px 22px rgba(0,0,0,.75); }
 .dk-game-panel-bg { position:absolute; inset:0; z-index:0; pointer-events:none;
   background:

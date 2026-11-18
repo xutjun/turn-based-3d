@@ -1,8 +1,9 @@
 // 探索界面（步骤 21，SPEC §15.3、DESIGN §12.3）：左下角血蓝圆球（当前队长）+ 圆球右侧一排按钮
 // （角色、道具、技能、宝宝、队友、设置）+ 面板框架（同一时间只开一个）。
 //
-// - 只在探索和对话中显示；入场过场、战斗、结算、战后过场、标题界面中整个隐藏（并关掉打开着的面板）。
-// - 对话中只有“设置”可用，其余按钮置灰（DESIGN §9.17 M4）。
+// - 只在自由探索时显示。点 Boss 开始跑向交谈点时淡出（setTalking），对话中保持隐藏；选“再等等”回到探索后淡入；
+//   选“我准备好了”后保持隐藏进入过场。入场过场、战斗、结算、战后过场、标题界面中整个隐藏（并关掉打开着的面板）。
+//   （步骤 21 验收修正 v0.7-hud2，DESIGN §9.17 M4）
 // - 技能按钮始终禁用，悬停提示“敬请期待”；道具、宝宝、队友本步打开空面板（“下一步实现”）。
 // - “设置”打开原来的设置菜单（内容不变），探索中右上角的齿轮由页面隐藏。
 // - Esc 优先级：设置菜单打开 → 交给菜单；对话中 → “再等等”；有面板 → 关闭面板；否则打开设置（resolveExploreEscape）。
@@ -19,9 +20,13 @@ import { CharacterPanel, type PreviewHost } from './panels/CharacterPanel';
 /** 页面处在哪个界面（与 PlayerBattleApp 的 AppScreen 相同） */
 export type HudScreen = 'title' | 'explore' | 'dialog' | 'intro' | 'battle' | 'result' | 'outro';
 
-/** 探索界面显示在哪些界面上 */
-export function exploreHudVisibleOn(screen: HudScreen): boolean {
-  return screen === 'explore' || screen === 'dialog';
+/**
+ * 探索界面的状态（纯函数，可测）：'shown' = 显示、可点；'faded' = 淡出（跑向交谈点、对话中，不可点）；'hidden' = 整个不显示。
+ */
+export function exploreHudState(screen: HudScreen, talking: boolean): 'shown' | 'faded' | 'hidden' {
+  if (screen === 'explore') return talking ? 'faded' : 'shown';
+  if (screen === 'dialog') return 'faded';
+  return 'hidden';
 }
 
 /**
@@ -77,6 +82,8 @@ export class ExploreHud {
   private readonly bar: HTMLDivElement;
   private readonly buttons = new Map<HudButtonId, HTMLButtonElement>();
   private screen: HudScreen = 'title';
+  /** 正在跑向交谈点 / 转身 / 对话中（探索的交谈子状态不是 none） */
+  private talking = false;
 
   constructor(private readonly deps: ExploreHudDeps) {
     this.root = el('div', 'dk-explore-hud');
@@ -112,8 +119,14 @@ export class ExploreHud {
     this.renderButtons();
   }
 
+  /** 显示着、可以点（淡出和隐藏时都为 false） */
   get visible(): boolean {
-    return this.root.style.display !== 'none';
+    return this.state === 'shown';
+  }
+
+  /** 当前状态：显示 / 淡出 / 隐藏 */
+  get state(): 'shown' | 'faded' | 'hidden' {
+    return exploreHudState(this.screen, this.talking);
   }
 
   /** 当前打开的面板 */
@@ -124,19 +137,20 @@ export class ExploreHud {
   /** 页面切换界面时调用：决定显示 / 隐藏、对话模式；离开探索时关闭面板 */
   syncScreen(screen: HudScreen): void {
     this.screen = screen;
-    const show = exploreHudVisibleOn(screen);
-    if (screen !== 'explore') this.panels.close();
-    this.root.style.display = show ? '' : 'none';
-    if (!show) this.tooltip.hide();
-    this.renderButtons();
-    if (show) this.refresh();
+    this.apply();
   }
 
-  /** 按钮能不能点（技能始终不能；对话中只有设置能点） */
+  /** 探索的交谈子状态变化时调用（页面每帧同步）：跑向交谈点开始时淡出，回到普通探索时淡入 */
+  setTalking(on: boolean): void {
+    if (on === this.talking) return;
+    this.talking = on;
+    this.apply();
+  }
+
+  /** 按钮能不能点（技能始终不能；淡出、隐藏时都不能） */
   isEnabled(id: HudButtonId): boolean {
     if (id === 'skills') return false;
-    if (this.screen === 'dialog') return id === 'settings';
-    return this.screen === 'explore';
+    return this.visible;
   }
 
   /** 点按钮（与鼠标点击相同；不能点时什么都不做） */
@@ -176,9 +190,21 @@ export class ExploreHud {
     this.root.remove();
   }
 
+  /** 按状态显示 / 淡出 / 隐藏；不是“显示”时关闭面板和提示框 */
+  private apply(): void {
+    const state = this.state;
+    if (state !== 'shown') {
+      this.panels.close();
+      this.tooltip.hide();
+    }
+    this.root.style.display = state === 'hidden' ? 'none' : '';
+    this.root.classList.toggle('is-faded', state !== 'shown');
+    this.renderButtons();
+    if (state === 'shown') this.refresh();
+  }
+
   private tipOf(def: ButtonDef): string {
     if (def.id === 'skills') return '技能：敬请期待';
-    if (this.screen === 'dialog' && def.id !== 'settings') return `${def.label}（对话中不可用）`;
     return def.id === 'settings' ? '设置（Esc）' : def.label;
   }
 
