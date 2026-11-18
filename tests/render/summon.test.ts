@@ -134,7 +134,7 @@ describe('召唤演出：时间轴（配置）', () => {
     expect(last).toBeLessThan(B.gearAt - 0.04);
   });
 
-  it('按配置分批：骷髅兵 → 堕落骑士 → 亡灵法师 → 恶魔祭司；光束先到再出场；整段 5~7 秒', () => {
+  it('按配置分批：骷髅兵 → 堕落骑士 → 亡灵法师 → 恶魔祭司，直接在阵位按批次时刻出场；Boss 召唤动作约 1 秒；召唤段约 5 秒', () => {
     const s = setup();
     const tl = s.summon.timeline();
     expect(tl.entries).toHaveLength(9);
@@ -144,10 +144,15 @@ describe('召唤演出：时间轴（配置）', () => {
       const v = s.views.get(e.id)!;
       expect(e.batch, e.id).toBe(order.indexOf(v.templateKey));
       expect(e.style, e.id).toBe(SUMMON_CONFIG.styles[v.templateKey]);
-      expect(e.beamAt, e.id).not.toBeNull();
-      expect(e.startAt - e.beamAt!, `${e.id} 光束飞到才出场`).toBeCloseTo(SUMMON_CONFIG.beam.travel, 9);
-      expect(e.beamAt!, `${e.id} 在 Boss 举臂之后`).toBeGreaterThanOrEqual(SUMMON_CONFIG.cast.raise);
+      // 出场时刻 = 这一批的时刻 + 批内间隔（配置）
+      const b = SUMMON_CONFIG.batches[e.batch]!;
+      const k = tl.entries.filter((x) => x.batch === e.batch).findIndex((x) => x.id === e.id);
+      expect(e.startAt, e.id).toBeCloseTo(b.at + k * b.stagger, 9);
     }
+    // Boss 的召唤动作是一次短促的举臂（约 1 秒），远早于最后一只出场完
+    expect(tl.castEnd).toBeGreaterThanOrEqual(0.8);
+    expect(tl.castEnd).toBeLessThanOrEqual(1.2);
+    expect(tl.castEnd).toBeLessThan(Math.max(...tl.entries.map((e) => e.startAt)));
     // 后一批整体晚于前一批开始；同一批内按间隔错开
     for (let b = 1; b < 4; b++) {
       const prev = Math.max(...tl.entries.filter((e) => e.batch === b - 1).map((e) => e.startAt));
@@ -158,11 +163,11 @@ describe('召唤演出：时间轴（配置）', () => {
     expect(skel[1]! - skel[0]!).toBeCloseTo(SUMMON_CONFIG.batches[0]!.stagger, 9);
     // 全部就位后才短吼
     expect(tl.roarAt!).toBeGreaterThan(Math.max(...tl.entries.map((e) => e.endAt)));
-    expect(tl.endAt).toBeGreaterThanOrEqual(5);
-    expect(tl.endAt).toBeLessThanOrEqual(7);
+    expect(tl.endAt).toBeGreaterThanOrEqual(4.5);
+    expect(tl.endAt).toBeLessThanOrEqual(5.5);
   });
 
-  it('入场过场：召唤在宝宝全部就位、镜头到达战斗视角之后开始，整段过场的结束时刻包含召唤', () => {
+  it('入场过场：召唤在宝宝开始起跳时同时开始（与宝宝入场并行，镜头已在战斗视角），过场在两者都结束后才结束', () => {
     const s = setup();
     const world = new ExploreWorld(s.boss.home);
     const intro = new IntroCutscene({
@@ -180,9 +185,10 @@ describe('召唤演出：时间轴（配置）', () => {
     const p = nearestStandable(world, EXPLORE_CONFIG.start.x, EXPLORE_CONFIG.start.z);
     const plan = intro.makePlan({ leader: { x: p.x, z: p.z, yaw: 0 }, camera: { x: p.x, y: 1.2, z: p.z, distance: 17 } });
     const petsEnd = Math.max(...plan.pets.map((e) => plan.petsAt + e.start + e.duration));
-    expect(plan.summonAt).toBeGreaterThan(petsEnd);
-    expect(plan.summonAt).toBeGreaterThanOrEqual(0.6 + 1.6); // 镜头过渡结束
-    expect(plan.endAt).toBeCloseTo(plan.summonAt + intro.summon.timeline().endAt, 9);
+    expect(plan.summonAt).toBeCloseTo(plan.petsAt, 9);
+    expect(plan.summonAt).toBeLessThan(petsEnd); // 与宝宝入场重叠
+    expect(plan.summonAt).toBeGreaterThanOrEqual(0.6 + 1.6); // 镜头过渡已结束
+    expect(plan.endAt).toBeCloseTo(Math.max(petsEnd, plan.summonAt + intro.summon.timeline().endAt), 9);
   });
 });
 
@@ -198,7 +204,15 @@ describe('召唤演出（真实模型）', () => {
     const W = SUMMON_CONFIG.wisps;
     const checks: string[] = [];
     let bonesTotal = 0;
+    let bossRaised = false;
+    let bossIdleWhileSummoning = false;
     const { report, frames, samples, busyFrames, fxSeen } = await run(s, {}, (_f, time) => {
+      // Boss 只做一次短促的召唤动作：举臂期间特技层有姿态，之后立即回到待机（短吼之前不再有姿态），小怪继续出场
+      if (time > 0.2 && time < tl.castEnd - 0.5 && s.boss.stuntActive) bossRaised = true;
+      if (time > tl.castEnd + 1 / 30 && time < tl.roarAt! - 0.02) {
+        expect(s.boss.stuntActive, `Boss 在 ${time.toFixed(2)} 秒已回到待机`).toBe(false);
+        if (s.summon.minions.some((v) => !v.model.visible)) bossIdleWhileSummoning = true;
+      }
       const asm = s.summon.assemblyOf(skeleton.id);
       const local = time - sk.startAt;
       if (asm && local > 0.25 && local < 0.35) {
@@ -231,6 +245,8 @@ describe('召唤演出（真实模型）', () => {
         checks.push('staff');
       }
     });
+    expect(bossRaised).toBe(true);
+    expect(bossIdleWhileSummoning).toBe(true);
     expect(new Set(checks)).toEqual(new Set(['early', 'bones', 'eyes', 'staff-hidden', 'staff']));
     // 骨架按部件拆开：五类都有，腿是单独的部件
     const counts = s.summon.assemblyOf(skeleton.id)!.counts;
@@ -239,8 +255,8 @@ describe('召唤演出（真实模型）', () => {
     expect(counts.gear).toBeGreaterThan(0);
     expect(counts.eyes).toBeGreaterThan(0);
     // 时长：5~7 秒（1 倍速）
-    expect(frames / 60).toBeGreaterThanOrEqual(5);
-    expect(frames / 60).toBeLessThanOrEqual(7.1);
+    expect(frames / 60).toBeGreaterThanOrEqual(4.5);
+    expect(frames / 60).toBeLessThanOrEqual(5.6);
     // 每只在自己的出场时刻之前都看不见；出场顺序与批次一致
     for (const e of tl.entries) {
       const before = samples.filter((p) => p.time < e.startAt - 1e-6);
@@ -253,7 +269,8 @@ describe('召唤演出（真实模型）', () => {
     }
     expect(report.roared).toBe(true);
     expect(report.skipped).toBe(false);
-    expect(s.sounds).toEqual(expect.arrayContaining(['cast', 'bolt', 'roar']));
+    expect(s.sounds).toEqual(expect.arrayContaining(['cast', 'roar']));
+    expect(s.sounds).not.toContain('bolt'); // 光束已删除
     expect(fxSeen).toBeGreaterThan(3); // 法阵、光束、阵位贴花确实出现过
     expect(s.fx.emitted).toBeGreaterThan(100);
     expect(busyFrames).toBe(0); // 过场期间没有任何战斗动作
@@ -264,7 +281,7 @@ describe('召唤演出（真实模型）', () => {
     const s = setup();
     s.scheduler.setTimeScale(2);
     const { frames } = await run(s);
-    expect(frames / 60).toBeLessThan(3.6);
+    expect(frames / 60).toBeLessThan(2.9);
     expectComplete(s);
   }, 120_000);
 

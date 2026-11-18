@@ -158,10 +158,10 @@ describe('入场过场（真实模型）', () => {
     const talk = { x: s.boss.home.x + BOSS_FACING.x * 4, z: s.boss.home.z + BOSS_FACING.z * 4 };
     const start = exploreLayout(s.views, s.boss, s.world, talk);
     const { watch, report } = await play(s, start);
-    // 时长：入场约 6.4 秒 + 召唤约 5.5 秒（1 倍速，步骤 18 加入召唤）
+    // 时长：约 9.5 秒（1 倍速；步骤 18 验收修正后召唤与宝宝入场并行）
     const seconds = watch.frames / 60;
-    expect(seconds).toBeGreaterThan(10.5);
-    expect(seconds).toBeLessThan(13.5);
+    expect(seconds).toBeGreaterThan(8.5);
+    expect(seconds).toBeLessThan(10.5);
     // 落点误差为 0
     for (const id of ['A0', 'A1', 'A2', 'A3', 'A4']) expect(report.landing[id], id).toBe(0);
     for (const [id, f] of Object.entries(report.final)) {
@@ -185,7 +185,7 @@ describe('入场过场（真实模型）', () => {
     s.scheduler.setTimeScale(2);
     const start = exploreLayout(s.views, s.boss, s.world, EXPLORE_CONFIG.start);
     const { watch, report } = await play(s, start);
-    expect(watch.frames / 60).toBeLessThan(6.8);
+    expect(watch.frames / 60).toBeLessThan(5.3);
     for (const id of ['A0', 'A1', 'A2', 'A3', 'A4']) expect(report.landing[id], id).toBe(0);
     expect(watch.worstObstacle).toBeGreaterThanOrEqual(0);
     expectBattleReady(s);

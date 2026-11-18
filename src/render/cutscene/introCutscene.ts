@@ -7,7 +7,7 @@
 //      飞向战斗格子，空中翻滚或后仰，落地屈膝缓冲后起身、转向敌方；
 //   e. 宝宝从主人身后进场：狼跃入、骨龙飞入、幽灵飘入、魔偶重重落地，就位后转向敌方；
 //   f. 相机从对话视角平滑过渡到战斗视角；
-//   g. Boss 召唤 9 个小怪（步骤 18，summonCutscene.ts）：举臂、身前召唤法阵、光束射向各阵位，小怪按种类分批出场，最后一声短吼；
+//   g. Boss 召唤 9 个小怪（步骤 18，summonCutscene.ts）：与宝宝入场同时开始，Boss 短促举臂后回到待机，小怪按种类分批在各自阵位出场，最后一声短吼；
 //   h. （界面层）过场结束后开战，头顶条、顺序条、战斗界面淡入。
 //
 // 所有“等一会儿”和“在一段时间内变化”都走 Scheduler：倍速、跳过动画、暂停自动生效。
@@ -68,7 +68,7 @@ export interface IntroPlan {
   impactAt: number;
   /** 宝宝入场开始的时刻 */
   petsAt: number;
-  /** 召唤开始的时刻（宝宝全部就位、镜头已在战斗视角，步骤 18） */
+  /** 召唤开始的时刻（宝宝开始起跳时，与宝宝入场并行；步骤 18 验收修正） */
   summonAt: number;
   /** 全部就位的时刻 */
   endAt: number;
@@ -258,9 +258,9 @@ export class IntroCutscene {
       c.pets,
     );
     const petsEnd = pets.reduce((m, e) => Math.max(m, e.start + e.duration), 0) + c.pets.turn;
-    // 召唤：宝宝全部就位后开始（此时镜头早已到达战斗视角）
-    const summonAt = Math.max(petsAt + petsEnd, c.camera.at + c.camera.duration) + this.summonCfg.after;
-    return { reveal, flights, pets, impactAt, petsAt, summonAt, endAt: summonAt + this.summon.timeline().endAt };
+    // 召唤：宝宝开始起跳时同时开始，小怪出场与宝宝入场并行；两者都结束才算过场结束（之后界面淡入、开战）
+    const summonAt = petsAt + this.summonCfg.after;
+    return { reveal, flights, pets, impactAt, petsAt, summonAt, endAt: Math.max(petsAt + petsEnd, summonAt + this.summon.timeline().endAt) };
   }
 
   /**

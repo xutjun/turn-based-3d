@@ -25,13 +25,13 @@ import { SummonCutscene } from '../../render/cutscene/summonCutscene';
 import { SummonFx } from '../../render/cutscene/summonFx';
 import type { SummonStyle } from '../../data/cutsceneConfig';
 
-/** 召唤演示（步骤 18）：每种小怪单独播放出场动画，或播放完整召唤（Boss 施法 + 9 个小怪分批出场 + 短吼） */
+/** 召唤演示（步骤 18）：每种小怪单独播放出场动画，或播放完整召唤（Boss 举臂 + 9 个小怪分批出场 + 短吼） */
 const SUMMON_DEMOS: { id: SummonStyle | 'all'; label: string; note: string }[] = [
   { id: 'bones', label: '骷髅兵', note: '地面裂开，骨头飞起拼合（脊椎、肋骨、头骨、四肢），盔甲武器落下，眼火点亮，站起' },
   { id: 'soul', label: '堕落骑士', note: '地面升起黑烟，半透明的灵魂轮廓浮现，凝成实体，盔甲由暗到亮，眼光亮起' },
   { id: 'wisps', label: '亡灵法师', note: '绿色鬼火汇聚，灵魂显现后凝成实体，骨杖最后出现在手中' },
   { id: 'rise', label: '恶魔祭司', note: '脚下升起暗影法阵，身影从法阵中升起成形' },
-  { id: 'all', label: '完整召唤', note: 'Boss 举臂、身前召唤法阵、光束射向各阵位，9 个小怪分批出场，最后一声短吼' },
+  { id: 'all', label: '完整召唤', note: 'Boss 短促举臂召唤后回到待机，9 个小怪分批在各自阵位出场，最后一声短吼' },
 ];
 
 /** 一次演示的性能与一致性记录 */
@@ -303,7 +303,7 @@ export class SkillDemoApp {
   }
 
   /**
-   * 召唤演示（步骤 18）：战场复位后，把这一种小怪（或全部）藏起来再播放出场；“完整召唤”含 Boss 施法、光束和短吼。
+   * 召唤演示（步骤 18）：战场复位后，把这一种小怪（或全部）藏起来再播放出场；“完整召唤”含 Boss 举臂和短吼。
    * 结束后显示绘制调用峰值与残留检查。
    */
   async playSummon(kind: SummonStyle | 'all'): Promise<void> {

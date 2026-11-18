@@ -1,13 +1,12 @@
-// 召唤演出（步骤 18，SPEC §14.3，DESIGN §11.8）：入场过场的最后一段，宝宝就位、镜头到达战斗视角之后播放。
+// 召唤演出（步骤 18，SPEC §14.3，DESIGN §11.8）：入场过场的最后一段，宝宝开始起跳时同时开始、与宝宝入场并行。
 //
-//   a. Boss 高举双臂，身前出现暗红召唤法阵（暗色底 + 发光边 + 旋转符文，向上冒火星）；
-//   b. 法阵按批次分出光束射向各个小怪的阵位（顺序、间隔见 SUMMON_CONFIG.batches）；
-//   c. 光束到达的那一刻，该小怪在自己的战斗阵位上出场：
+//   a. Boss 一次短促的召唤动作（举臂约 1 秒），做完立即平滑回到待机，不等小怪出场完；
+//   b. 小怪按批次（顺序、间隔见 SUMMON_CONFIG.batches）直接在自己的战斗阵位上出场：
 //      骷髅兵——地面裂开，骨头从地里冒出、飞起拼合（脊椎骨盆、肋骨、头骨、双臂、双腿依次），盔甲和武器落到身上，眼火点亮，站直；
 //      堕落骑士——地面升起黑烟，半透明的灵魂轮廓浮现，逐渐凝成实体（盔甲由暗到亮），眼光亮起，一次光爆；
 //      亡灵法师——绿色鬼火从四周汇聚，灵魂显现、凝成实体，骨杖最后出现在手中；
 //      恶魔祭司——脚下升起暗影法阵，身影从法阵中升起成形，法阵收缩消失；
-//   d. 全部就位后 Boss 一声短吼。
+//   c. 全部就位后 Boss 一声短吼。
 //
 // 与入场过场相同的约定：所有等待和补间都走 Scheduler（倍速、跳过动画、暂停自动生效）；每条轨道只写自己负责的单位，
 // 跳过时以任何顺序完成都得到同一个结果；finish() 把所有改过的东西写回原值：骷髅的部件位置 / 显隐（BoneAssembly）、
@@ -47,8 +46,6 @@ export interface SummonEntry {
   batch: number;
   /** 阵位贴花 / 光束的编号 */
   slot: number;
-  /** 光束射出（没有施法段时为 null） */
-  beamAt: number | null;
   /** 开始出场 */
   startAt: number;
   /** 完整就位 */
@@ -57,7 +54,7 @@ export interface SummonEntry {
 
 export interface SummonTimeline {
   entries: SummonEntry[];
-  /** Boss 放下双臂的时刻（没有施法段时为 0） */
+  /** Boss 召唤动作做完、回到待机的时刻（没有施法段时为 0） */
   castEnd: number;
   /** 短吼开始（没有短吼时为 null） */
   roarAt: number | null;
@@ -68,7 +65,7 @@ export interface SummonTimeline {
 export interface SummonOptions {
   /** 只召唤这些单位（技能演示页逐种播放）；不填 = 全部 9 个小怪 */
   ids?: readonly UnitId[];
-  /** 是否有 Boss 施法（举臂、法阵、光束）；默认有 */
+  /** 是否有 Boss 的召唤动作（举臂）；默认有 */
   cast?: boolean;
   /** 是否在最后短吼；默认有 */
   roar?: boolean;
@@ -158,18 +155,16 @@ export class SummonCutscene {
     if (rest.length > 0) batches.push({ templates: rest, at: (batches.at(-1)?.at ?? 0) + 0.6, stagger: 0.1 });
     // 没有施法段时（演示页单独播放某一种），第一批从 0 开始
     const used = batches.filter((b) => wanted.some((v) => b.templates.includes(v.templateKey)));
-    const first = used[0]?.at ?? 0;
+    const first = cast ? 0 : (used[0]?.at ?? 0);
     used.forEach((b, bi) => {
       const units = wanted.filter((v) => b.templates.includes(v.templateKey));
       units.forEach((v, k) => {
         const style = this.styleOf(v);
-        const beamAt = cast ? c.beam.start + b.at + k * b.stagger : null;
-        const startAt = beamAt !== null ? beamAt + c.beam.travel : b.at - first + k * b.stagger;
-        entries.push({ id: v.id, style, batch: bi, slot: all.indexOf(v), beamAt, startAt, endAt: startAt + this.durationOf(style) });
+        const startAt = b.at - first + k * b.stagger;
+        entries.push({ id: v.id, style, batch: bi, slot: all.indexOf(v), startAt, endAt: startAt + this.durationOf(style) });
       });
     });
-    const lastBeam = entries.reduce((m, e) => Math.max(m, (e.beamAt ?? 0) + c.beam.travel + c.beam.linger), 0);
-    const castEnd = cast ? Math.max(c.cast.raise, lastBeam) + c.cast.hold + c.cast.lower : 0;
+    const castEnd = cast ? c.cast.raise + c.cast.hold + c.cast.lower : 0;
     const ready = entries.reduce((m, e) => Math.max(m, e.endAt), 0);
     const roarAt = roar ? ready + c.roar.after : null;
     const endAt = Math.max(castEnd, roarAt !== null ? roarAt + c.roar.duration : ready);
@@ -201,10 +196,7 @@ export class SummonCutscene {
     try {
       this.hide(tl.entries.map((e) => e.id));
       const tracks: Promise<void>[] = [];
-      if (opts.cast ?? true) {
-        tracks.push(this.cast(tl));
-        for (const e of tl.entries) if (e.beamAt !== null) tracks.push(s.wait(e.beamAt).then(() => this.beam(e)));
-      }
+      if (opts.cast ?? true) tracks.push(this.cast());
       for (const e of tl.entries) {
         tracks.push(
           s.wait(e.startAt).then(async () => {
@@ -232,86 +224,28 @@ export class SummonCutscene {
   }
 
   // ------------------------------------------------------------------
-  // a. Boss 施法与召唤法阵
+  // a. Boss 短促的召唤动作
   // ------------------------------------------------------------------
 
-  /** 召唤法阵的位置：Boss 身前 */
-  circleCenter(): { x: number; z: number } {
-    const boss = this.view(this.d.bossId);
-    return { x: boss.home.x + boss.facing.x * this.cfg.circle.ahead, z: boss.home.z + boss.facing.z * this.cfg.circle.ahead };
-  }
-
-  private async cast(tl: SummonTimeline): Promise<void> {
-    const s = this.d.scheduler;
-    const c = this.cfg;
+  /** 举臂 → 停一下 → 平滑放下回到待机（约 1 秒）；小怪的出场不等它 */
+  private async cast(): Promise<void> {
+    const c = this.cfg.cast;
     const boss = this.view(this.d.bossId);
     const P = SUMMON_POSES.cast;
-    const at = this.circleCenter();
-    const fx = this.d.summonFx;
     this.d.sound.play('cast', 1.2);
     this.d.rig.shake(0.08);
-    const holdUntil = tl.castEnd - c.cast.lower;
-    const fadeOutAt = holdUntil - c.cast.hold;
-    const total = tl.castEnd;
-    await s.tween(total, (t) => {
+    const total = c.raise + c.hold + c.lower;
+    await this.d.scheduler.tween(total, (t) => {
       const time = t * total;
-      const end = t >= 1;
-      // 举臂 → 保持 → 放下
-      const up = smooth(time / c.cast.raise);
-      const down = time < holdUntil ? 1 : 1 - smooth((time - holdUntil) / c.cast.lower);
-      writePose(boss, P, end ? 0 : up * down);
-      // 法阵：举臂的同时淡入，最后一道光束射出后淡出
-      const C = c.circle;
-      const fin = smooth((time - 0.1) / C.fadeIn);
-      const fout = time < fadeOutAt ? 1 : 1 - smooth((time - fadeOutAt) / C.fadeOut);
-      const k = end ? 0 : fin * fout;
-      const pulse = 1 + 0.06 * Math.sin(time * 9);
-      fx.setCircle(at.x, at.z, C.radius * (0.55 + 0.45 * EASE.outCubic(fin)) * pulse * (0.7 + 0.3 * fout), C.opacity * k, C.color, C.glow, time * C.spin);
-      // 法阵上冒起的火星
-      if (k > 0.2) {
-        const n = this.d.fx.emitCount(45 * k);
-        for (let i = 0; i < n; i++) {
-          const a = Math.random() * TAU;
-          const r = Math.sqrt(Math.random()) * C.radius * 0.9;
-          this.d.fx.particle(at.x + Math.cos(a) * r, 0.08, at.z + Math.sin(a) * r, 0, rnd(0.8, 2), 0, rnd(0.5, 0.9), rnd(0.06, 0.13), C.glow, 1.5, PARTICLE_CELL.ember, -0.5, 0.6, -0.4);
-        }
-      }
+      const up = smooth(time / c.raise);
+      const down = time < c.raise + c.hold ? 1 : 1 - smooth((time - c.raise - c.hold) / c.lower);
+      writePose(boss, P, t >= 1 ? 0 : up * down);
     });
     clearPose(boss, P);
-    fx.setCircle(0, 0, 0, 0, c.circle.color, c.circle.glow, 0);
-  }
-
-  /** 一道光束：从法阵中心射向这只小怪的阵位 */
-  private async beam(e: SummonEntry): Promise<void> {
-    const B = this.cfg.beam;
-    const from = this.circleCenter();
-    const to = this.view(e.id).home;
-    const total = B.travel + B.linger;
-    const reachAt = B.travel / total;
-    this.d.sound.play('bolt', 0.6);
-    const fx = this.d.summonFx;
-    await this.d.scheduler.tween(total, (t) => {
-      const end = t >= 1;
-      const reach = Math.min(1, t / reachAt);
-      const after = t <= reachAt ? 0 : (t - reachAt) / (1 - reachAt);
-      const fade = end ? 0 : 1 - after * after;
-      const flicker = 0.85 + 0.15 * Math.sin(t * 60);
-      fx.setBeam(e.slot, from.x, from.z, to.x, to.z, EASE.outCubic(reach), B.height, B.width * (1 - 0.5 * after), fade * flicker, B.color);
-      // 光束头部拖出的火星
-      if (reach < 1) {
-        const hx = from.x + (to.x - from.x) * EASE.outCubic(reach);
-        const hz = from.z + (to.z - from.z) * EASE.outCubic(reach);
-        const n = this.d.fx.emitCount(70);
-        for (let i = 0; i < n; i++) {
-          this.d.fx.particle(hx, B.height, hz, rnd(-0.5, 0.5), rnd(-0.2, 0.8), rnd(-0.5, 0.5), rnd(0.2, 0.4), rnd(0.07, 0.14), B.color, 1.6, PARTICLE_CELL.glow, 0, 1, -0.4);
-        }
-      }
-    });
-    fx.setBeam(e.slot, 0, 0, 0, 0, 0, 0, 0, 0, B.color);
   }
 
   // ------------------------------------------------------------------
-  // c. 各种小怪的出场
+  // b. 各种小怪的出场
   // ------------------------------------------------------------------
 
   private emerge(e: SummonEntry, shown: () => void): Promise<void> {
@@ -579,7 +513,7 @@ export class SummonCutscene {
   }
 
   // ------------------------------------------------------------------
-  // d. 短吼
+  // c. 短吼
   // ------------------------------------------------------------------
 
   private async roar(): Promise<void> {
