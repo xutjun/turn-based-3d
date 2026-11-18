@@ -102,7 +102,8 @@ export class IdleAnimator {
     };
     if (this.hasRig) {
       if (restFirst) for (const j of Object.values(this.joints)) j.joint.rotation.set(j.x, j.y, j.z);
-      // Boss 的双翼：缓缓开合
+      // Boss 的双翼：缓缓开合。Boss 的翼 wingL.y 为正 = 向背后收拢、为负 = 向两侧展开（步骤 16 实测；wingR 相反），
+      // 所以这里 o.wing 为正时是收拢（幅度很小，开合方向不影响观感，数值保持原样）
       set('wingL', 0, o.wing, o.wing * 0.4);
       set('wingR', 0, -o.wing, -o.wing * 0.4);
     } else {
@@ -112,6 +113,7 @@ export class IdleAnimator {
       set('jaw', o.jaw, 0, 0);
       set('tail', o.tailPitch, o.tailYaw, 0);
       set('torso', o.chestPitch, o.twist, 0);
+      // 骨龙的翼：wingL.y 为负 = 张开，所以 o.wing 为正时张开
       set('wingL', 0, -o.wing, o.wing * 0.5 + o.breath * 0.02);
       set('wingR', 0, o.wing, -o.wing * 0.5 - o.breath * 0.02);
       set('shoulderL', o.armL, 0, o.armL * 0.4);

@@ -63,7 +63,7 @@ export interface IdleOffsets {
   float: number; // 漂浮高度（米）
   tailYaw: number;
   tailPitch: number;
-  wing: number; // 翅膀开合（正 = 张开）
+  wing: number; // 翅膀开合：骨龙 正 = 张开；Boss 正 = 向背后收拢（步骤 16 实测，两者关节转向相反，见 IdleAnimator）
   jaw: number; // 张嘴
   claw: number; // 前爪 / 手指微动
   glow: number; // 发光倍率（1 = 基础强度）

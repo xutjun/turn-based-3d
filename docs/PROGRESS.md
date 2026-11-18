@@ -27,3 +27,4 @@
 - 测试 605 个全部通过（新增 `tests/explore/dialogue.test.ts` 16 项）；`scripts/dialogShots.cjs` 真实鼠标键盘走完全部分支无页面错误，截图 `docs/screenshots/step16-dialog-*.png`。
 - 偏差：对话中 Esc 按 DESIGN §11.1 处理为“再等等”而不是打开设置（设置用齿轮）；Boss 翼的展开方向与待机注释相反（只在说话动作里按实测方向写，待机不改）；预览页新增 `emote=` 参数。
 - 遗留：入场过场（步骤 17、18）；对话中的绘制调用未单独实测（不新增网格）。
+- 验收（2026-11-18）：通过。对话中 Esc = “再等等”、Boss 翼的说话动作按实测方向均已确认接受；按用户意见改正了待机动画里翅膀参数的注释（`idleMotion.ts`、`IdleAnimator.ts`：Boss 的翼 y 为正 = 收拢、骨龙为正 = 张开），动画数值不变。step-16-dialog 已合并到 main 并推送，tag v0.6-dialog 已推送。
