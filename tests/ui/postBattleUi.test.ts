@@ -7,9 +7,10 @@ import { Scheduler } from '../../src/render/director/Scheduler';
 import { SelectionRings } from '../../src/render/scene/selectionRings';
 import { battleUiResidue, clearBattleUi, clearBattleUiForOutro } from '../../src/ui/explore/exploreUi';
 import type { BattleSummary } from '../../src/ui/stats/BattleStats';
+import { postBattleOptions } from '../../src/ui/panels/ResultPanel';
 import { installFakeDom, type FakeElement } from './fakeDom';
 
-// 战后界面（步骤 19）：战斗结束弹出胜负提示和简单统计，点“继续”后清掉全部战斗界面（倍速 / 跳过按钮保留给战后过场），
+// 战后界面（步骤 19 / v0.6.1）：战斗结束弹出结算画面和简单统计，点按钮（重新开始 / 再来一次）后清掉全部战斗界面（倍速 / 跳过按钮保留给战后过场），
 // 过场播完进入探索时连按钮也隐藏。胜利、失败、中途放弃交替多轮后战斗界面层里没有任何可见元素。
 
 async function setup() {
@@ -68,33 +69,53 @@ async function setup() {
   return { hud, rings, log, result, ui, fight, summary, texts, uiRoot: uiRoot as unknown as FakeElement, scheduler, controlsShown, rematches: () => rematches, logLines: () => (uiRoot as unknown as FakeElement).all().filter((e) => e.className.includes('dk-log-line')).length };
 }
 
-describe('战后提示：胜负、简单统计、“继续”', () => {
-  it('简要模式只显示几项统计（回合数、我方总伤害、治疗量 …）和“继续”，不显示单位表格；按钮 / 回车调用“继续”', async () => {
+describe('结算画面：标题、简单统计、按钮', () => {
+  const buttons = (root: FakeElement) => root.all().filter((e) => e.tagName === 'button');
+
+  it('胜利：“恭喜你，击败了深渊魔将！”、统计、“重新开始”和禁用的“前往下一关”（悬停“敬请期待”，点击无效果）；回车 / 空格 = 重新开始', async () => {
     const s = await setup();
-    let continued = 0;
-    s.result.show(s.summary('ally'), { brief: true, action: { label: '继续', onClick: () => void (continued += 1) } });
+    const calls: string[] = [];
+    s.result.show(s.summary('ally'), postBattleOptions('ally', '深渊魔将', { restart: () => calls.push('restart'), retry: () => calls.push('retry') }));
     const t = s.texts(s.uiRoot);
-    expect(t).toContain('胜利');
-    expect(t).toContain('回合数');
-    expect(t).toContain('7');
-    expect(t).toContain('我方总伤害');
-    expect(t).toContain('12345');
-    expect(t).toContain('治疗量');
-    expect(t).toContain('2468');
-    expect(t).toContain('继续');
-    expect(t).not.toContain('再战一次');
+    expect(t).toContain('恭喜你，击败了深渊魔将！');
+    for (const want of ['回合数', '7', '我方总伤害', '12345', '治疗量', '2468']) expect(t).toContain(want);
+    expect(t).not.toContain('继续');
+    expect(t).not.toContain('胜利');
     expect(s.uiRoot.all().some((e) => e.tagName === 'table')).toBe(false);
-    const button = s.uiRoot.all().find((e) => e.tagName === 'button' && e.textContent === '继续')!;
-    button.onclick!();
-    expect(continued).toBe(1);
-    expect(s.result.activate()).toBe(true); // 回车 / 空格
-    expect(continued).toBe(2);
+    const [restart, next, ...rest] = buttons(s.uiRoot);
+    expect(rest).toEqual([]);
+    expect(restart!.textContent).toBe('重新开始');
+    expect(next!.textContent).toBe('前往下一关');
+    // 前往下一关：禁用（灰色、不可点击），悬停提示“敬请期待”，点击什么都不发生
+    expect(next!.title).toBe('敬请期待');
+    expect(next!.className).toContain('is-disabled');
+    expect(next!.attrs['aria-disabled']).toBe('true');
+    expect(next!.style['cursor']).toBe('not-allowed');
+    (next!.onclick as unknown as (e: { preventDefault(): void }) => void)({ preventDefault: () => undefined });
+    expect(calls).toEqual([]);
+    expect(s.result.visible).toBe(true);
+    // 重新开始：按钮、回车 / 空格都调用它
+    restart!.onclick!();
+    expect(calls).toEqual(['restart']);
+    expect(s.result.activate()).toBe(true);
+    expect(calls).toEqual(['restart', 'restart']);
     s.result.hide();
     expect(s.result.activate()).toBe(false);
-    expect(continued).toBe(2);
     expect(s.rematches()).toBe(0);
-    s.result.show(s.summary('enemy'), { brief: true, action: { label: '继续', onClick: () => undefined } });
-    expect(s.texts(s.uiRoot)).toContain('战败');
+  });
+
+  it('失败：“你被击败了”、统计、只有“再来一次”；回车 / 空格 = 再来一次', async () => {
+    const s = await setup();
+    const calls: string[] = [];
+    s.result.show(s.summary('enemy'), postBattleOptions('enemy', '深渊魔将', { restart: () => calls.push('restart'), retry: () => calls.push('retry') }));
+    const t = s.texts(s.uiRoot);
+    expect(t).toContain('你被击败了');
+    expect(t).toContain('我方总伤害');
+    expect(t).not.toContain('继续');
+    expect(buttons(s.uiRoot).map((b) => b.textContent)).toEqual(['再来一次']);
+    expect(s.result.activate()).toBe(true);
+    buttons(s.uiRoot)[0]!.onclick!();
+    expect(calls).toEqual(['retry', 'retry']);
   });
 
   it('自动战斗等页面的完整结算界面不变：单位表格和“再战一次”', async () => {
@@ -108,7 +129,7 @@ describe('战后提示：胜负、简单统计、“继续”', () => {
 });
 
 describe('战后回到探索：界面无残留', () => {
-  it('胜利、失败、中途放弃交替多轮：点“继续”后只剩倍速 / 跳过按钮，进入探索后战斗界面层为 0', async () => {
+  it('胜利、失败、中途放弃交替多轮：点结算按钮后只剩倍速 / 跳过按钮，进入探索后战斗界面层为 0', async () => {
     const s = await setup();
     const rounds = ['victory', 'defeat', 'abort', 'victory', 'abort', 'defeat'] as const;
     for (const [i, r] of rounds.entries()) {
@@ -116,7 +137,8 @@ describe('战后回到探索：界面无残留', () => {
       expect(battleUiResidue(s.ui), `第 ${i + 1} 轮战斗中`).toBeGreaterThan(20);
       expect(s.logLines()).toBe(2);
       if (r !== 'abort') {
-        s.result.show(s.summary(r === 'victory' ? 'ally' : 'enemy'), { brief: true, action: { label: '继续', onClick: () => clearBattleUiForOutro(s.ui) } });
+        const go = () => clearBattleUiForOutro(s.ui);
+        s.result.show(s.summary(r === 'victory' ? 'ally' : 'enemy'), postBattleOptions(r === 'victory' ? 'ally' : 'enemy', '深渊魔将', { restart: go, retry: go }));
         expect(s.result.visible).toBe(true);
         s.result.activate();
         // 战后过场中：头顶条、飘字、顺序条、光圈、日志、战后提示都没了，倍速 / 跳过按钮还在

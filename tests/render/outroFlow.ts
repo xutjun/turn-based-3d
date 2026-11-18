@@ -164,7 +164,7 @@ export function createFlow() {
           // 中途放弃（设置里“重新开始”）：停流程、让正在演的那段立即走完，然后拆场回到探索起点
           await until(drainMatch({ controller: { stop: () => undefined }, director }, scheduler));
           stage.reset();
-          explore.enter(true);
+          explore.enter();
           return null;
         }
         await idle();
@@ -177,14 +177,14 @@ export function createFlow() {
   /** 播战后过场，然后与页面相同地回到探索 */
   const playOutro = async (result: OutroResult): Promise<OutroReport> => {
     const report = await until(outro.play(result));
-    explore.resume(report.leader, result === 'defeat');
+    explore.resume(report.leader);
     return report;
   };
 
   /** 场上残留：探索布置之外显示的单位、特技层、倒地、离位、说话动作、副本材质、地面特效 */
   const residue = (): string[] => {
     const out: string[] = [];
-    const want = new Set([LEADER, ...(explore.bossPresent ? [boss.id] : [])]);
+    const want = new Set([LEADER, boss.id]);
     for (const v of views.values()) {
       if (v.model.visible !== want.has(v.id)) out.push(`${v.id} 显示=${v.model.visible}`);
       if (v.stuntActive) out.push(`${v.id} 特技层没清`);

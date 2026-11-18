@@ -31,10 +31,11 @@
 // - 进入标题 / 探索时清空全部战斗界面元素（ui/explore/exploreUi）；战斗中“重新开始”回到探索的起点。
 //
 // 步骤 19：
-// - 战斗结束（最后一击演完）弹出胜负提示和简单统计（回合数、我方总伤害、治疗量 …），点“继续”（或回车 / 空格）播放战后过场
-//   （render/cutscene/outroCutscene）：胜利 = 倒地的队员站起、宝宝跳回主人身后淡出、4 名队员化入暗影、相机回到探索视角，
-//   只留队长，Boss 不再出现，画面下方出现“再挑战一次”（Boss 在原位重新出现，仍要先对话）；
-//   失败 = 黑场中复位（队长到离 Boss 9 米的复位点，队员、宝宝隐藏，Boss 在原位），淡入后相机回到探索视角。
+// - 战斗结束（最后一击演完）弹出结算画面和简单统计（回合数、我方总伤害、治疗量 …），然后播放战后过场（render/cutscene/outroCutscene）：
+//   胜利“恭喜你，击败了深渊魔将！”：“重新开始”（回车 / 空格）= 倒地的队员站起、宝宝跳回主人身后淡出、4 名队员化入暗影，
+//   黑场中复位到探索出生点、Boss 在原位，淡入后相机回到探索视角；“前往下一关”禁用（敬请期待，预留）。
+//   失败“你被击败了”：“再来一次”（回车 / 空格）= 黑场中复位（队长到离 Boss 9 米的复位点，队员、宝宝隐藏，Boss 在原位），淡入后相机回到探索视角。
+//   两种情况都要重新对话才能开战。
 // - 战后提示和战后过场中可开设置（暂停）、切倍速、跳过动画；“重新开始”= 回到探索起点（Boss 复位），“退出游戏”= 回到标题。
 // - 每场战斗都是全新的状态：新引擎（第二场起种子顺延）、入场过场复位所有单位，进入探索时清空全部战斗界面元素。
 //
@@ -64,7 +65,7 @@ import type { ViewportLayout } from './layout/viewportMath';
 import { CommandPanel } from './panels/CommandPanel';
 import { drainMatch } from './matchLifecycle';
 import { LogPanel } from './panels/LogPanel';
-import { ResultPanel } from './panels/ResultPanel';
+import { postBattleOptions, ResultPanel } from './panels/ResultPanel';
 import { SettingsBar } from './panels/SettingsBar';
 import { PlayerBattleController } from './PlayerBattleController';
 import { createGearIcon } from './settings/gearIcon';
@@ -156,11 +157,10 @@ export interface AppDebug {
   introFrom(x: number, z: number): Promise<void>;
   /** 战斗界面层里还看得见的元素个数（探索、对话中必须为 0） */
   battleUi(): number;
-  /** 战后（步骤 19）：是否在播、上一次的记录、黑场、Boss 是否在场、“再挑战一次”是否显示、材质与特效残留 */
-  outro(): { active: boolean; report: OutroReport | null; fade: number; bossPresent: boolean; rechallenge: boolean; shaded: string[]; fx: number };
-  /** 代替点战后提示的“继续” / 点“再挑战一次” */
+  /** 战后（步骤 19）：是否在播、上一次的记录、黑场、材质与特效残留 */
+  outro(): { active: boolean; report: OutroReport | null; fade: number; shaded: string[]; fx: number };
+  /** 代替点结算画面的主按钮（胜利“重新开始”、失败“再来一次”） */
   outroContinue(): void;
-  rechallenge(): Promise<void>;
   /** 演出时间（暂停时不变） */
   clock(): number;
   /** 联系表：停掉自动渲染改为手动逐帧推进（manual），推进 seconds 秒（每帧 dt），取当前画面（PNG data URL） */
@@ -224,11 +224,10 @@ export class PlayerBattleApp {
   private readonly summonFx: SummonFx;
   private readonly intro: IntroCutscene;
   private introRun: Promise<unknown> | null = null;
-  /** 战后过场（步骤 19）、黑场、“再挑战一次”按钮 */
+  /** 战后过场（步骤 19）与黑场 */
   private readonly outro: OutroCutscene;
   private outroRun: Promise<unknown> | null = null;
   private readonly fadeVeil: HTMLDivElement;
-  private readonly rechallengeBtn: HTMLButtonElement;
   private readonly unsubscribeStore: () => void;
   private match: Match | null = null;
   private seed: number;
@@ -402,14 +401,6 @@ export class PlayerBattleApp {
         this.fadeVeil.style.display = a > 0.001 ? '' : 'none';
       },
     });
-    // 胜利后探索画面下方的“再挑战一次”（放在菜单层里：点它不会穿透成点地面）
-    this.rechallengeBtn = el('button', 'dk-btn dk-rechallenge', '再挑战一次');
-    this.rechallengeBtn.type = 'button';
-    this.rechallengeBtn.style.cssText =
-      'position:absolute;left:50%;bottom:64px;transform:translateX(-50%);padding:8px 28px;font-size:17px;letter-spacing:2px;display:none;';
-    this.rechallengeBtn.onclick = () => void this.rechallenge();
-    this.menuLayer.append(this.rechallengeBtn);
-    this.scene.onFrame(() => this.syncRechallenge());
 
     this.scene.onUpdate((dt) => {
       if (!this.dialogue) return;
@@ -655,10 +646,10 @@ export class PlayerBattleApp {
     }
   }
 
-  /** 回到探索的起点，Boss 在场（战斗中 / 战后“重新开始”） */
+  /** 回到探索的起点（战斗中 / 结算画面上从设置菜单“重新开始”） */
   private enterExploreAtStart(): void {
     this.screen = 'explore';
-    this.explore.enter(true);
+    this.explore.enter();
     clearBattleUi(this.battleUi);
     this.uiRoot.style.display = 'none';
     this.exploreHint.style.display = '';
@@ -706,17 +697,26 @@ export class PlayerBattleApp {
   // 战后（步骤 19）
   // ------------------------------------------------------------------
 
-  /** 一场战斗结束（最后一击演完）：显示胜负提示和简单统计，等玩家点“继续” */
+  /**
+   * 一场战斗结束（最后一击演完）：显示结算画面和简单统计，等玩家点按钮。
+   * 胜利：“重新开始”（回车 / 空格）+ 禁用的“前往下一关”（敬请期待，以后扩展关卡时接上）；失败：“再来一次”（回车 / 空格）。
+   */
   private onBattleEnd(match: Match, summary: BattleSummary): void {
     if (this.match !== match || this.screen !== 'battle') return;
     this.screen = 'result';
-    const result: OutroResult = summary.winner === 'ally' ? 'victory' : 'defeat';
-    this.result.show(summary, { brief: true, action: { label: '继续', onClick: () => void this.playOutro(result) } });
+    const boss = ENEMY_TEMPLATES.find((t) => t.id === this.explore.bossId)?.name ?? 'Boss';
+    this.result.show(
+      summary,
+      postBattleOptions(summary.winner, boss, {
+        restart: () => void this.playOutro('victory'),
+        retry: () => void this.playOutro('defeat'),
+      }),
+    );
   }
 
   /**
-   * 点“继续”：拆掉这一场的流程和输入（不复位舞台——倒地的人要从倒地姿态站起来），清掉头顶条、日志等战斗界面，
-   * 播放战后过场；播完回到探索（胜利：队长在原地、Boss 不在场；失败：队长在复位点、Boss 在原位）。
+   * 点结算画面的按钮：拆掉这一场的流程和输入（不复位舞台——倒地的人要从倒地姿态站起来），清掉头顶条、日志等战斗界面，
+   * 播放战后过场；播完回到探索（胜利：队长在出生点；失败：队长在复位点；Boss 都在原位），要重新对话才能开战。
    */
   private async playOutro(result: OutroResult): Promise<void> {
     if (this.busy || this.menu.isOpen || this.screen !== 'result' || this.outroRun) return;
@@ -738,7 +738,7 @@ export class PlayerBattleApp {
     if (this.screen !== 'outro') return; // 过场中途重新开始 / 退出：由那边接管
     const leader = report?.leader ?? this.outro.leaderPose(result);
     this.screen = 'explore';
-    this.explore.resume(leader, result === 'defeat');
+    this.explore.resume(leader);
     clearBattleUi(this.battleUi);
     this.exploreHint.style.display = '';
     this.gear.classList.remove('is-hidden');
@@ -758,22 +758,6 @@ export class PlayerBattleApp {
     } finally {
       s.setSkip(was);
     }
-  }
-
-  /** 胜利后点“再挑战一次”：Boss 在原位重新出现（不自动开打，仍要先对话） */
-  async rechallenge(): Promise<void> {
-    if (this.screen !== 'explore' || this.busy || this.menu.isOpen || this.explore.bossPresent || this.outro.bossReturning) return;
-    this.rechallengeBtn.style.display = 'none';
-    this.explore.beginBossReturn();
-    await this.outro.bossReturn();
-    this.explore.finishBossReturn();
-  }
-
-  /** “再挑战一次”只在探索中、Boss 不在场时显示 */
-  private syncRechallenge(): void {
-    const show = this.screen === 'explore' && !this.explore.bossPresent && !this.outro.bossReturning && !this.busy;
-    const want = show ? '' : 'none';
-    if (this.rechallengeBtn.style.display !== want) this.rechallengeBtn.style.display = want;
   }
 
   // ------------------------------------------------------------------
@@ -921,7 +905,7 @@ export class PlayerBattleApp {
       return;
     }
     if (this.screen === 'result' && (e.key === 'Enter' || e.key === ' ')) {
-      // 战后提示：回车 / 空格 = “继续”
+      // 结算画面：回车 / 空格 = 主按钮（胜利“重新开始”、失败“再来一次”；“前往下一关”没有快捷键）
       e.preventDefault();
       e.stopImmediatePropagation();
       if (!e.repeat) this.result.activate();
@@ -1138,13 +1122,10 @@ export class PlayerBattleApp {
         active: this.outro.active,
         report: this.outro.lastReport,
         fade: this.outro.fadeLevel,
-        bossPresent: this.explore.bossPresent,
-        rechallenge: this.rechallengeBtn.style.display !== 'none',
         shaded: [...this.outro.shadedUnits(), ...this.intro.shadedUnits()],
         fx: this.introFx.activeCount + this.summonFx.activeCount,
       }),
       outroContinue: () => void this.result.activate(),
-      rechallenge: () => this.rechallenge(),
       clock: () => this.scene.scheduler.time,
       manual: (on) => this.scene.setManual(on),
       step: (seconds, dt = 1 / 60) => {

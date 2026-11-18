@@ -15,6 +15,11 @@ export class FakeElement {
   clientWidth = 1280;
   clientHeight = 800;
   readonly style: Record<string, string> = {};
+  readonly attrs: Record<string, string> = {};
+  tabIndex = 0;
+  setAttribute(name: string, value: string): void {
+    this.attrs[name] = value;
+  }
   readonly classList = {
     add: (...c: string[]) => this.setClasses([...this.classes(), ...c]),
     remove: (...c: string[]) => this.setClasses(this.classes().filter((x) => !c.includes(x))),

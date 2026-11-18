@@ -1,16 +1,46 @@
 // 结算界面：胜负、回合数与统计，提供“再战一次”。
-// 步骤 19：从探索进入的战斗结束时改用“战后提示”（show 的 options.brief）：胜负、几项简单统计和“继续”按钮，
-// 点“继续”后由页面播放战后过场、回到探索。
+// 步骤 19：从探索进入的战斗结束时改用简要模式（show 的 options.brief）：自定义标题、几项简单统计和自定义按钮
+// （胜利：“重新开始” + 禁用的“前往下一关”；失败：“再来一次”），点按钮后由页面播放战后过场、回到探索。
 
 import type { BattleSummary } from '../stats/BattleStats';
 import { el } from '../theme';
 
+/** 结算画面上的一个按钮 */
+export interface ResultAction {
+  label: string;
+  /** 不传 = 禁用（灰色、不可点击，为以后的功能预留） */
+  onClick?: () => void;
+  /** 鼠标悬停提示 */
+  hint?: string;
+}
+
 /** 结算界面的显示方式 */
 export interface ResultOptions {
-  /** 简要模式（战后提示）：只显示几项统计，不显示每个单位的表格 */
+  /** 简要模式：只显示几项统计，不显示每个单位的表格 */
   brief?: boolean;
-  /** 按钮文字与点击（不传 = “再战一次”） */
-  action?: { label: string; onClick: () => void };
+  /** 标题（不传 = “胜利” / “战败”，下面再加一行说明） */
+  title?: string;
+  /** 按钮（不传 = 一个“再战一次”）。回车 / 空格 = 第一个可用的按钮 */
+  actions?: ResultAction[];
+}
+
+/**
+ * 从探索进入的战斗的结算画面（步骤 19 / v0.6.1）：
+ * 胜利 = “恭喜你，击败了{Boss}！” + “重新开始” + 禁用的“前往下一关”（敬请期待，以后扩展关卡时接上）；
+ * 失败 = “你被击败了” + “再来一次”。回车 / 空格对应第一个按钮。
+ */
+export function postBattleOptions(winner: 'ally' | 'enemy' | null, bossName: string, on: { restart: () => void; retry: () => void }): ResultOptions {
+  if (winner === 'ally') {
+    return {
+      brief: true,
+      title: `恭喜你，击败了${bossName}！`,
+      actions: [
+        { label: '重新开始', onClick: on.restart },
+        { label: '前往下一关', hint: '敬请期待' }, // 预留：以后有多个关卡时在这里接上
+      ],
+    };
+  }
+  return { brief: true, title: '你被击败了', actions: [{ label: '再来一次', onClick: on.retry }] };
 }
 
 export class ResultPanel {
@@ -72,19 +102,37 @@ export class ResultPanel {
     }
 
     const actions = el('div', 'dk-result-actions');
-    const action = options.action ?? { label: '再战一次', onClick: () => this.onRematch() };
-    const button = el('button', 'dk-btn', action.label);
-    button.type = 'button';
-    button.onclick = () => void this.activate();
-    actions.append(button);
+    const list: ResultAction[] = options.actions ?? [{ label: '再战一次', onClick: () => this.onRematch() }];
+    for (const a of list) {
+      const button = el('button', a.onClick ? 'dk-btn' : 'dk-btn is-disabled', a.label);
+      button.type = 'button';
+      if (a.hint) button.title = a.hint;
+      if (a.onClick) {
+        const fn = a.onClick;
+        button.onclick = () => {
+          if (this.veil) fn();
+        };
+      } else {
+        // 禁用：灰色、不可点击；不用 disabled 属性，否则浏览器不显示悬停提示
+        button.setAttribute('aria-disabled', 'true');
+        button.tabIndex = -1;
+        button.style.opacity = '0.45';
+        button.style.filter = 'grayscale(1)';
+        button.style.cursor = 'not-allowed';
+        button.onclick = (e) => e.preventDefault();
+      }
+      actions.append(button);
+    }
 
-    panel.append(el('div', 'dk-result-head', win ? '胜利' : '战败'), el('div', 'dk-result-sub', win ? '敌人已全部倒下' : '我方全员倒地'), facts);
+    if (options.title) panel.append(el('div', 'dk-result-head', options.title));
+    else panel.append(el('div', 'dk-result-head', win ? '胜利' : '战败'), el('div', 'dk-result-sub', win ? '敌人已全部倒下' : '我方全员倒地'));
+    panel.append(facts);
     if (!options.brief) panel.append(this.table(summary));
     panel.append(actions);
     veil.append(panel);
     this.root.append(veil);
     this.veil = veil;
-    this.actionFn = action.onClick;
+    this.actionFn = list.find((a) => a.onClick)?.onClick ?? null;
   }
 
   /** 每个我方单位的统计表 */
