@@ -14,8 +14,21 @@ export class FakeElement {
   offsetWidth = 40;
   clientWidth = 1280;
   clientHeight = 800;
-  readonly style: Record<string, string> = {};
+  readonly style: Record<string, string> = Object.defineProperty({} as Record<string, string>, 'setProperty', {
+    value(this: Record<string, string>, name: string, value: string) {
+      this[name] = value;
+    },
+  });
   readonly attrs: Record<string, string> = {};
+  readonly dataset: Record<string, string> = {};
+  value = '';
+  min = '';
+  max = '';
+  step = '';
+  disabled = false;
+  selected = false;
+  oninput: (() => void) | null = null;
+  onchange: (() => void) | null = null;
   tabIndex = 0;
   setAttribute(name: string, value: string): void {
     this.attrs[name] = value;

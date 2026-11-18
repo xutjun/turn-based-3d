@@ -221,11 +221,10 @@ export class PlayerBattleApp {
   private readonly result: ResultPanel;
   private readonly menu: SettingsMenu;
   private readonly title: TitleScreen;
-  /** 探索模式（步骤 14、15）：场景布置、方向键（调试）与鼠标输入、操作提示 */
+  /** 探索模式（步骤 14、15）：场景布置、方向键（调试）与鼠标输入 */
   private readonly explore: ExploreStage;
   private readonly exploreInput: ExploreInput;
   private readonly explorePointer: ExplorePointer;
-  private readonly exploreHint: HTMLDivElement;
   /** 与 Boss 的对话（步骤 16）：对话框与当前进度（没在对话为 null） */
   private readonly dialogBox: DialogBox;
   private dialogue: DialogueSession | null = null;
@@ -394,12 +393,7 @@ export class PlayerBattleApp {
       },
       onBossHover: (on) => this.explore.setBossHover(on),
     });
-    this.exploreHint = el('div', 'dk-explore-hint', '左键：移动　点击 Boss：对话　方向键 / WASD：移动（调试）　Esc：设置');
-    this.exploreHint.style.cssText =
-      'position:absolute;left:50%;bottom:22px;transform:translateX(-50%);padding:6px 16px;pointer-events:none;' +
-      'font-size:15px;letter-spacing:1px;color:rgba(222,206,170,0.82);background:rgba(10,8,8,0.55);' +
-      'border:1px solid rgba(150,120,70,0.35);border-radius:3px;white-space:nowrap;display:none;';
-    stageEl.insertBefore(this.exploreHint, this.menuLayer); // 在菜单层下面
+    // 探索操作提示（步骤 14~21）已删除：正常游玩时不显示操作提示，操作方式见设置菜单的“操作说明”（v0.7-hud3）
 
     // 对话（步骤 16）：到达交谈点后弹出；逐字显示用场景时间（设置菜单打开时暂停，台词也停住）
     this.dialogBox = new DialogBox({
@@ -511,7 +505,6 @@ export class PlayerBattleApp {
     this.panelPreview.dispose();
     this.dialogBox.dispose();
     this.explore.dispose();
-    this.exploreHint.remove();
     this.fadeVeil.remove();
     this.unsubscribeStore();
     this.endMatch();
@@ -575,7 +568,6 @@ export class PlayerBattleApp {
     clearBattleUi(this.battleUi); // 不留任何战斗界面元素（步骤 17 修正）
     this.title.show();
     // 右上角齿轮：探索、对话、标题界面中不显示（applyScreen，步骤 21）
-    this.exploreHint.style.display = 'none';
     this.uiRoot.style.display = 'none';
     this.hud.setControlsVisible(false);
   }
@@ -599,7 +591,6 @@ export class PlayerBattleApp {
     this.title.hide();
     this.uiRoot.style.display = 'none'; // 日志、宝宝指令、结算只在战斗中显示
     this.hud.setControlsVisible(false); // 倍速、跳过、顺序条只在战斗中显示
-    this.exploreHint.style.display = '';
     this.screen = 'explore';
     if (!this.explore.active) this.explore.enter();
     clearBattleUi(this.battleUi);
@@ -615,7 +606,6 @@ export class PlayerBattleApp {
     this.exploreInput.clear();
     this.explorePointer.clear();
     this.explore.leave();
-    this.exploreHint.style.display = 'none';
     this.uiRoot.style.display = '';
     this.hud.setControlsVisible(true);
     this.hud.setBattleOpacity(1);
@@ -636,7 +626,6 @@ export class PlayerBattleApp {
     this.title.hide();
     this.exploreInput.clear();
     this.explorePointer.clear();
-    this.exploreHint.style.display = 'none';
     this.uiRoot.style.display = 'none'; // 日志、宝宝指令在开战后淡入
     this.hud.setBattleOpacity(0); // 头顶条、顺序条先藏起来
     this.hud.setControlsVisible(true); // 倍速、跳过动画在过场中就能用
@@ -706,7 +695,6 @@ export class PlayerBattleApp {
       // 对话中“回到起点”：关掉对话框，回到探索再回到起点
       this.dismissDialog();
       this.screen = 'explore';
-      this.exploreHint.style.display = '';
     }
     if (this.screen === 'explore') {
       this.exploreInput.clear();
@@ -731,7 +719,6 @@ export class PlayerBattleApp {
     this.explore.enter();
     clearBattleUi(this.battleUi);
     this.uiRoot.style.display = 'none';
-    this.exploreHint.style.display = '';
   }
 
   /** 设置里“退出游戏”：结束当前战斗或探索，场上复位，回到标题界面 */
@@ -818,7 +805,6 @@ export class PlayerBattleApp {
     this.screen = 'explore';
     this.explore.resume(leader);
     clearBattleUi(this.battleUi);
-    this.exploreHint.style.display = '';
   }
 
   /** 立即走完正在播的战后过场（打开“跳过动画”直到它结束，再恢复原来的设置） */
@@ -853,7 +839,6 @@ export class PlayerBattleApp {
     this.screen = 'dialog';
     this.exploreInput.clear();
     this.explorePointer.clear();
-    this.exploreHint.style.display = 'none';
     this.dialogue = new DialogueSession(def, names, EXPLORE_CONFIG.dialog.typeSpeed);
     this.dialogBox.open(this.dialogue);
     this.applyEmote();
@@ -900,7 +885,6 @@ export class PlayerBattleApp {
       void this.startIntro();
       return;
     }
-    this.exploreHint.style.display = '';
   }
 
   /** 不经选项直接关掉对话（回到起点、退出游戏、自检直接开战）：等同“再等等”，但不改界面状态 */

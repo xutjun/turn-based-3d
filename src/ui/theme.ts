@@ -196,6 +196,17 @@ const CSS = `
 .dk-menu-actions { display:flex; gap:10px; margin-top:6px; }
 .dk-menu-actions .dk-btn { flex:1; padding:8px 0; font-size:15px; }
 .dk-menu-close { display:block; width:100%; margin-top:12px; padding:9px 0; font-size:17px; letter-spacing:6px; }
+/* 操作说明（v0.7-hud3）：与设置菜单同一个石质面板，居中，分“探索”“战斗”两栏 */
+.dk-menu-help { display:block; width:100%; padding:7px 0; font-size:15px; letter-spacing:4px; }
+.dk-help { width:880px; max-height:820px; overflow-y:auto; }
+.dk-help-cols { display:flex; gap:26px; }
+.dk-help-col { flex:1; min-width:0; }
+.dk-help-section { margin:2px 0 6px; padding-bottom:4px; text-align:center; font-size:17px; letter-spacing:8px; text-indent:8px; color:#ffe08a;
+  text-shadow:0 0 8px rgba(201,150,44,.6), 0 1px 2px #000; border-bottom:1px solid rgba(122,99,56,.6); }
+.dk-help-group { margin:10px 0 3px; font-size:13px; letter-spacing:3px; color:#9c8f6c; }
+.dk-help-line { display:flex; gap:10px; padding:3px 0; font-size:14px; line-height:1.4; border-bottom:1px solid rgba(74,61,36,.35); }
+.dk-help-keys { flex:none; width:150px; color:#e2cf98; }
+.dk-help-action { flex:1; color:#c9bb94; }
 .dk-confirm-veil { position:absolute; inset:0; pointer-events:auto; display:flex; align-items:center; justify-content:center;
   background:rgba(0,0,0,.55); z-index:2; animation:dk-fade .15s ease-out; }
 .dk-confirm { position:relative; width:380px; padding:18px 22px 16px; text-align:center; }

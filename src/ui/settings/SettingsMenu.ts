@@ -1,12 +1,14 @@
 // 设置菜单（步骤 12）：右上角齿轮按钮 / Esc 打开。
 // 设置项：分辨率、画质、主音量 / 音效 / 环境音、静音；战斗中另有“重新开始”“退出游戏”（都要二次确认）；
 // 探索模式中（步骤 14）“重新开始”改为“回到起点”。
+// “操作说明”（v0.7-hud3）：在菜单里换成一个说明面板，列出探索和战斗的全部操作（data/controls.ts）；关闭后回到设置菜单。标题界面也有。
 // 面板只负责显示和把操作写进 SettingsStore；真正生效（改渲染尺寸、改音量）由订阅 store 的页面完成。
 // 打开时通过 onOpenChange 通知页面暂停战斗；面板盖住整个游戏区域，点击不会穿透到战场。
 
 import type { SoundChannel } from '../../assets/audio/SoundEngine';
 import { RESOLUTION_IDS, resolutionLabel, type ResolutionId } from '../layout/viewportMath';
 import { el } from '../theme';
+import { CONTROL_HELP } from '../../data/controls';
 import type { GameSettings, SettingsStore } from './settingsStore';
 
 /** 菜单从哪里打开：战斗中有“重新开始”“退出游戏”，探索中有“回到起点”“退出游戏”，标题界面上都没有 */
@@ -38,6 +40,8 @@ export class SettingsMenu {
   private veil: HTMLDivElement | null = null;
   private confirmVeil: HTMLDivElement | null = null;
   private context: MenuContext = 'battle';
+  /** 正在看“操作说明”（关闭后回到设置菜单） */
+  private help = false;
   private readonly unsubscribe: () => void;
 
   constructor(private readonly deps: SettingsMenuDeps) {
@@ -55,6 +59,25 @@ export class SettingsMenu {
     return this.confirmVeil !== null;
   }
 
+  /** 是否正在看操作说明 */
+  get helpOpen(): boolean {
+    return this.help;
+  }
+
+  /** 打开操作说明（菜单打开时） */
+  openHelp(): void {
+    if (!this.veil) return;
+    this.help = true;
+    this.render();
+  }
+
+  /** 关闭操作说明，回到设置菜单 */
+  closeHelp(): void {
+    if (!this.help) return;
+    this.help = false;
+    this.render();
+  }
+
   dispose(): void {
     this.unsubscribe();
     this.close(false);
@@ -63,6 +86,7 @@ export class SettingsMenu {
   open(context: MenuContext): void {
     if (this.veil) return;
     this.context = context;
+    this.help = false;
     const veil = el('div', 'dk-menu-veil');
     // 点到面板外的暗处也算点在菜单上：不穿透到战场，也不关闭（避免误触）
     this.veil = veil;
@@ -75,6 +99,7 @@ export class SettingsMenu {
   close(notify = true): void {
     if (!this.veil) return;
     this.confirmVeil = null;
+    this.help = false;
     this.veil.remove();
     this.veil = null;
     if (notify) this.deps.onOpenChange(false);
@@ -86,12 +111,16 @@ export class SettingsMenu {
   }
 
   /**
-   * Esc：有确认框时取消确认框，否则关闭菜单。返回是否处理了这次按键（菜单没打开时不处理）。
+   * Esc：有确认框时取消确认框；在看操作说明时回到设置菜单；否则关闭菜单。返回是否处理了这次按键（菜单没打开时不处理）。
    */
   escape(): boolean {
     if (this.confirmVeil) {
       this.confirmVeil.remove();
       this.confirmVeil = null;
+      return true;
+    }
+    if (this.help) {
+      this.closeHelp();
       return true;
     }
     if (this.veil) {
@@ -108,6 +137,10 @@ export class SettingsMenu {
   private render(): void {
     const veil = this.veil;
     if (!veil) return;
+    if (this.help) {
+      veil.replaceChildren(this.helpPanel());
+      return;
+    }
     const s = this.deps.store.value;
     const panel = el('div', 'dk-panel dk-menu');
     panel.append(el('div', 'dk-title', '设置'));
@@ -117,6 +150,7 @@ export class SettingsMenu {
     for (const row of VOLUME_ROWS) panel.append(this.volumeRow(s, row));
     panel.append(this.muteRow(s));
     if (!this.deps.soundSupported) panel.append(el('div', 'dk-menu-note', '当前浏览器不支持合成音效'));
+    panel.append(el('div', 'dk-sep'), this.button('操作说明', 'dk-btn dk-menu-help', () => this.openHelp()));
 
     if (this.context !== 'title') {
       const explore = this.context === 'explore';
@@ -144,6 +178,31 @@ export class SettingsMenu {
     const confirm = this.confirmVeil;
     veil.replaceChildren(panel);
     if (confirm) veil.append(confirm);
+  }
+
+  /** 操作说明面板：分“探索”“战斗”两栏，每栏若干组“按键 — 作用” */
+  private helpPanel(): HTMLDivElement {
+    const panel = el('div', 'dk-panel dk-menu dk-help');
+    panel.append(el('div', 'dk-title', '操作说明'));
+    const cols = el('div', 'dk-help-cols');
+    for (const section of CONTROL_HELP) {
+      const col = el('div', 'dk-help-col');
+      col.append(el('div', 'dk-help-section', section.title));
+      for (const group of section.groups) {
+        if (group.name) col.append(el('div', 'dk-help-group', group.name));
+        for (const entry of group.entries) {
+          const line = el('div', 'dk-help-line');
+          line.append(el('span', 'dk-help-keys', entry.keys), el('span', 'dk-help-action', entry.action));
+          col.append(line);
+        }
+      }
+      cols.append(col);
+    }
+    panel.append(cols);
+    const back = this.button('返回', 'dk-btn dk-menu-close', () => this.closeHelp());
+    back.append(el('span', 'dk-key', 'Esc'));
+    panel.append(back);
+    return panel;
   }
 
   private row(label: string, ...body: HTMLElement[]): HTMLDivElement {
