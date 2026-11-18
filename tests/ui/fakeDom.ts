@@ -81,6 +81,7 @@ export function installFakeDom(): FakeElement {
     head,
     body,
     createElement: (tag: string) => new FakeElement(tag),
+    createTextNode: (text: string) => Object.assign(new FakeElement('#text'), { textContent: text }),
     getElementById: (id: string) => [...head.all(), ...body.all()].find((e) => e.id === id) ?? null,
   };
   g['addEventListener'] = () => undefined;

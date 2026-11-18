@@ -57,6 +57,13 @@ export class DialogBox {
   open(session: DialogueSession): void {
     this.session = session;
     this.shown = { line: -1, text: '', choices: false, more: false };
+    // 修正（步骤 17 验收）：缓存重置为“未显示选项 / 未显示继续提示”时，DOM 也要同步回这个状态。
+    // 以前只重置缓存：上一次对话结束时选项是显示着的，再次打开对话后 render() 认为“没变化”不去隐藏，
+    // 于是从第一句起两个选项就一直显示。
+    this.choicesEl.classList.add('is-hidden');
+    this.moreEl.classList.add('is-hidden');
+    this.box.style.cursor = '';
+    this.layer.style.cursor = '';
     this.layer.classList.remove('is-hidden');
     this.renderChoices(session);
     this.render();
