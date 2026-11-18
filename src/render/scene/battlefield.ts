@@ -1,5 +1,5 @@
 // 战场：暗色石板地面 + 周围的石柱、碎石、骨堆、火盆、旗帜。
-// 所有物件都通过资源注册表创建，位置集中写在本文件，方便调整布局。
+// 所有物件都通过资源注册表创建；位置在 data/battlefieldLayout.ts（步骤 15 抽出，探索模式的碰撞 / 寻路读同一份）。
 
 import { Group, Mesh, MeshStandardMaterial, PlaneGeometry, Vector2 } from 'three';
 import { createRng, randRange } from '../../core/rng';
@@ -13,6 +13,7 @@ import type {
 } from '../../assets/models/props';
 import { ASSET_KEYS } from '../../assets/registerDefaults';
 import { groundTextures } from '../../assets/textures/surfaces';
+import { BATTLEFIELD_LAYOUT, DRUM_RADIUS, PILLAR_RADIUS } from '../../data/battlefieldLayout';
 import { FORMATION } from '../../data/formation';
 import { BATTLEFIELD_CONFIG, LIGHT_CONFIG, RENDER_OPTIMIZE } from '../../data/renderConfig';
 import { mergeStaticMeshes } from '../../assets/optimize';
@@ -60,23 +61,11 @@ export function createBattlefield(registry: AssetRegistry): Group {
   };
 
   // --- 残破石柱：主要立在战场后方和两侧，不遮挡站位 ---
-  const pillars: { x: number; z: number; drums: number; broken: boolean; radius?: number }[] = [
-    { x: -14.5, z: -8.5, drums: 4, broken: true },
-    { x: -9.5, z: -13.8, drums: 5, broken: false },
-    { x: -3.2, z: -16.0, drums: 3, broken: true },
-    { x: 3.8, z: -14.2, drums: 5, broken: true },
-    { x: 10.8, z: -11.2, drums: 2, broken: true },
-    { x: 15.0, z: -5.8, drums: 4, broken: false },
-    { x: -17.0, z: -1.6, drums: 3, broken: true },
-    { x: 17.2, z: 1.8, drums: 2, broken: true },
-    { x: -13.4, z: 7.4, drums: 1, broken: true },
-    { x: -20.5, z: -11.0, drums: 6, broken: false, radius: 0.75 },
-    { x: 8.0, z: -19.5, drums: 6, broken: true, radius: 0.75 },
-  ];
+  const pillars = BATTLEFIELD_LAYOUT.pillars;
   pillars.forEach((p, i) => {
     const params: PillarParams = {
       drums: p.drums,
-      radius: p.radius ?? 0.58,
+      radius: p.radius ?? PILLAR_RADIUS,
       drumHeight: 1.15,
       broken: p.broken,
       seed: 100 + i,
@@ -85,18 +74,13 @@ export function createBattlefield(registry: AssetRegistry): Group {
   });
 
   // --- 倒地的断柱 ---
-  const drums = [
-    { x: -11.2, z: 2.6, rot: 0.7, len: 2.2 },
-    { x: 8.6, z: -10.4, rot: -0.4, len: 1.8 },
-    { x: -1.2, z: 13.2, rot: 1.9, len: 2.0 },
-    { x: -15.6, z: -5.0, rot: 2.4, len: 1.6 },
-  ];
+  const drums = BATTLEFIELD_LAYOUT.drums;
   drums.forEach((d, i) => {
-    place(registry.create(ASSET_KEYS.fallenDrum, { radius: 0.55, length: d.len, seed: 200 + i }), d.x, d.z, d.rot);
+    place(registry.create(ASSET_KEYS.fallenDrum, { radius: DRUM_RADIUS, length: d.len, seed: 200 + i }), d.x, d.z, d.rot);
   });
 
   // --- 火盆（自带闪烁的暖色点光源） ---
-  BATTLEFIELD_CONFIG.braziers.forEach((b, i) => {
+  BATTLEFIELD_LAYOUT.braziers.forEach((b, i) => {
     const c = LIGHT_CONFIG.brazier;
     const params: BrazierParams = {
       lightColor: c.color,
@@ -113,25 +97,14 @@ export function createBattlefield(registry: AssetRegistry): Group {
   });
 
   // --- 旗帜 ---
-  const banners = [
-    { x: -12.6, z: -11.8, rot: 0.75 },
-    { x: -5.6, z: -15.2, rot: 0.3 },
-    { x: 14.2, z: -1.6, rot: -0.9 },
-    { x: 13.6, z: 9.4, rot: -2.2 },
-  ];
+  const banners = BATTLEFIELD_LAYOUT.banners;
   banners.forEach((b, i) => {
     const params: BannerParams = { poleHeight: 5.2, clothWidth: 1.35, clothHeight: 2.9, seed: 400 + i };
     place(registry.create(ASSET_KEYS.banner, params), b.x, b.z, b.rot);
   });
 
   // --- 骨堆 ---
-  const bonePiles = [
-    { x: -9.6, z: 5.0 },
-    { x: 3.6, z: -10.2 },
-    { x: -3.4, z: 10.4 },
-    { x: 11.0, z: -4.2 },
-    { x: -13.0, z: -2.4 },
-  ];
+  const bonePiles = BATTLEFIELD_LAYOUT.bonePiles;
   bonePiles.forEach((b, i) => {
     const params: BonePileParams = { bones: 16, skulls: 3, radius: 1.1, seed: 500 + i };
     place(registry.create(ASSET_KEYS.bonePile, params), b.x, b.z, rng.next() * Math.PI);

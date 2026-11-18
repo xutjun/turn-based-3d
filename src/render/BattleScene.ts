@@ -1,7 +1,7 @@
 // 战斗场景：渲染器、场景、相机、渲染循环、窗口自适应，以及演出用的时间调度器和舞台。
 // 这里不包含战斗逻辑：逻辑事件由 director/BattleDirector 转成演出，界面在 ui/ 里。
 
-import { Color, FogExp2, PCFShadowMap, Scene, Vector3, WebGLRenderer, type DirectionalLight, type Object3D } from 'three';
+import { Color, FogExp2, PCFShadowMap, Plane, Raycaster, Scene, Vector2, Vector3, WebGLRenderer, type DirectionalLight, type Object3D } from 'three';
 import { collectTicks, type TickFn } from '../assets/AssetRegistry';
 import { SoundEngine, type SoundSettings } from '../assets/audio/SoundEngine';
 import { createEnvironmentMap } from '../assets/environment';
@@ -30,6 +30,8 @@ import { ATTACK_ANIM } from '../data/attackAnimConfig';
 import { BattleStage } from './units/BattleStage';
 
 const MAX_FRAME_DT = 0.1; // 切回标签页时限制单帧时间跨度
+/** 地面（y = 0，法线朝上） */
+const GROUND_PLANE = new Plane(new Vector3(0, 1, 0), 0);
 
 /** 场景的初始设置（画质、音量）：由界面层的 SettingsStore 读出（已含地址参数覆盖）后传入 */
 export interface SceneOptions {
@@ -381,6 +383,19 @@ export class BattleScene {
   onUpdate(fn: (dt: number) => void): void {
     this.updateListeners.push(fn);
   }
+
+  /**
+   * 容器内的像素坐标（排版坐标）→ 地面（y = 0）上的点（步骤 15：探索模式点击移动）；射线碰不到地面返回 null。
+   */
+  groundAt(x: number, y: number): { x: number; z: number } | null {
+    this.ndc.set((x / Math.max(1, this.width)) * 2 - 1, 1 - (y / Math.max(1, this.height)) * 2);
+    this.raycaster.setFromCamera(this.ndc, this.battleCamera.camera);
+    const hit = this.raycaster.ray.intersectPlane(GROUND_PLANE, this.projected);
+    return hit ? { x: hit.x, z: hit.z } : null;
+  }
+
+  private readonly raycaster = new Raycaster();
+  private readonly ndc = new Vector2();
 
   /** 世界坐标 → 容器内的像素坐标；visible 为 false 表示在镜头背后 */
   worldToScreen(world: Vector3): { x: number; y: number; visible: boolean } {

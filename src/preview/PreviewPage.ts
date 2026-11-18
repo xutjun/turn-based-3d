@@ -6,7 +6,8 @@
 //   model=资源键   glow=发光倍率   spin=0 关闭自动旋转   yaw=初始水平角（度）
 //   weapon=0 人物不持武器   element=fire|thunder|seal|heal 法杖元素   dist=相机距离
 //   silhouette=1 剪影测试（模型纯黑、背景浅灰）   idle=0 关闭待机动画（看静止站姿）
-//   walk=速度（米/秒）  步骤 14：会走路的人物沿地台上的圆圈行走（与探索模式同一套步态和腿部 IK）
+//   walk=速度（米/秒）  步骤 14：会走路的人物沿地台上的圆圈行走（与探索模式同一套步态和腿部 IK）；
+//                       步骤 15：速度高于 3.2 时是跑步步态（6.4 = 探索中的跑速），圆圈放大到 RUN_RADIUS
 
 import {
   Box3,
@@ -51,8 +52,9 @@ import { Scheduler } from '../render/director/Scheduler';
 import type { FxSystem } from '../render/fx/FxSystem';
 
 /** 行走演示可选的速度（米/秒），0 = 不走；最快一档就是探索模式的走速 */
-const WALK_SPEEDS = [0, 1.2, 2.2, 3.2];
+const WALK_SPEEDS = [0, 1.2, 2.2, 3.2, 4.5, 6.4];
 const WALK_RADIUS = 1.8; // 行走演示的圆圈半径（地台半径 3.2）
+const RUN_RADIUS = 3.0; // 跑步（速度 > 3.2）时圆圈放大，弯不那么急
 /** 行走演示不需要特效：尘土、拖尾都不画 */
 const NO_FX = { burst: () => Promise.resolve(), startTrail: () => ({ stop: () => undefined }) } as unknown as FxSystem;
 
@@ -290,7 +292,8 @@ export class PreviewPage {
     const was = this.walkSpeed;
     this.walkSpeed = speed;
     if (speed > 0) this.spin = false;
-    if (speed === 0 || was === 0) this.showModel(this.index);
+    // 走 ↔ 跑切换时圆圈半径变了：重新摆回起点，避免位置跳变被当成走了一大步
+    if (speed === 0 || was === 0 || speed > 3.2 !== was > 3.2) this.showModel(this.index);
     else this.renderPanel();
   }
 
@@ -306,7 +309,13 @@ export class PreviewPage {
   /** 圆圈上当前的位置和行进方向（逆时针看是顺时针走） */
   private walkPoint(): { x: number; z: number; yaw: number } {
     const a = this.walkAngle;
-    return { x: WALK_RADIUS * Math.sin(a), z: WALK_RADIUS * Math.cos(a), yaw: Math.atan2(Math.cos(a), -Math.sin(a)) };
+    const r = this.walkRadius;
+    return { x: r * Math.sin(a), z: r * Math.cos(a), yaw: Math.atan2(Math.cos(a), -Math.sin(a)) };
+  }
+
+  /** 行走演示的圆圈半径：跑步时更大 */
+  private get walkRadius(): number {
+    return this.walkSpeed > 3.2 ? RUN_RADIUS : WALK_RADIUS;
   }
 
   private setGlow(level: number): void {
@@ -394,7 +403,7 @@ export class PreviewPage {
 
     if (walksOfAsset(entry.key)) {
       // 行走演示：沿圆圈走，速度越快步幅越大、步频越高
-      this.panel.append(heading('行走（米/秒）'));
+      this.panel.append(heading('行走 / 跑步（米/秒）'));
       const walkRow = document.createElement('div');
       walkRow.style.cssText = 'display:flex;gap:4px;';
       for (const speed of WALK_SPEEDS) {
@@ -491,7 +500,7 @@ export class PreviewPage {
     if (this.walkView) {
       // 行走演示：沿圆圈前进，UnitView 按走过的距离迈步（它自带待机动画）
       this.walkScheduler.update(dt);
-      this.walkAngle += (this.walkSpeed * dt) / WALK_RADIUS;
+      this.walkAngle += (this.walkSpeed * dt) / this.walkRadius;
       const p = this.walkPoint();
       this.walkView.locomote(p.x, p.z, p.yaw);
       this.walkView.update(this.time, this.time);

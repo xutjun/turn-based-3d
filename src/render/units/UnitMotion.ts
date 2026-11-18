@@ -26,6 +26,7 @@ import {
   type MoveDef,
   type PoseKey,
 } from '../../data/attackAnimConfig';
+import { RUN_GAIT } from '../../data/exploreConfig';
 import { STAGING } from '../../data/presentationConfig';
 import { EASE, type Ease, type Scheduler } from '../director/Scheduler';
 import type { AttackStyle, GroundPoint, MoveOptions } from '../director/types';
@@ -468,9 +469,12 @@ export class UnitMotion {
    * @param dt 演出时间间隔（秒，已乘倍速）
    * @param ax 身体后方挂点的世界坐标（披风大致所在的位置）
    * @param enabled 关闭（低画质）或跳过动画时质点直接贴回挂点，没有任何残留的甩动
+   * @param fling 跑步程度 0~1（步骤 15）：偏移上限、飘动上限按 RUN_GAIT.capeOffset / capeFlutter 放大，披风被甩得更开
    */
-  updateSecondary(dt: number, ax: number, ay: number, az: number, enabled: boolean, active = this.busy): void {
+  updateSecondary(dt: number, ax: number, ay: number, az: number, enabled: boolean, active = this.busy, fling = 0): void {
     const c = SECONDARY_MOTION;
+    const maxOffset = c.maxOffset * (1 + RUN_GAIT.capeOffset * fling);
+    const flutterMax = c.flutterMax * (1 + RUN_GAIT.capeFlutter * fling);
     const s = this.spring;
     // 收尾（步骤 11b）：身体停下后，甩动在 settle 秒内平滑衰减到 0 并清空弹簧，
     // 保证每次演出结束时披风、尾巴精确回到基准姿态，不留余摆
@@ -510,9 +514,9 @@ export class UnitMotion {
     let oy = (s.qy - ay) * c.liftFactor;
     let oz = s.qz - az;
     const len = Math.hypot(ox, oy, oz);
-    if (len > c.maxOffset) {
+    if (len > maxOffset) {
       // 超出上限：把质点拉回到上限处，避免攒下很大的偏移之后猛地弹回
-      const k = c.maxOffset / len;
+      const k = maxOffset / len;
       ox *= k;
       oy *= k;
       oz *= k;
@@ -525,7 +529,7 @@ export class UnitMotion {
     this.push.y = oy * gain;
     this.push.z = oz * gain;
     const relSpeed = Math.hypot(s.vx, s.vy, s.vz);
-    this.flutter = gain * Math.min(c.flutterMax, c.flutterGain * (bodySpeed * 0.5 + relSpeed * 0.5));
+    this.flutter = gain * Math.min(flutterMax, c.flutterGain * (bodySpeed * 0.5 + relSpeed * 0.5));
   }
 
   /** 身体停下后已经过了多久（演出时间，秒）；次级运动的收尾用 */

@@ -71,14 +71,7 @@ export const BATTLEFIELD_CONFIG = {
   groundSize: 90, // 地面边长
   groundTextureRepeat: 5,
   seed: 20261113, // 场景物件散布的随机种子
-  // 火盆位置（地面坐标）
-  braziers: [
-    { x: -6.6, z: 6.4 },
-    { x: 6.4, z: -6.6 },
-    { x: -12.2, z: -5.2 },
-    { x: -1.5, z: -12.6 },
-    { x: 12.4, z: 3.4 },
-  ],
+  // 火盆、石柱等物件的位置在 data/battlefieldLayout.ts（步骤 15 抽出）
 };
 
 /** 占位体（没有登记正式模型的单位使用）的外观 */

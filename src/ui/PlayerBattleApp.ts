@@ -50,7 +50,11 @@ import { browserStorage, SettingsStore, type GameSettings } from './settings/set
 import { el, injectTheme } from './theme';
 import { TitleScreen } from './title/TitleScreen';
 import { ExploreInput } from './explore/ExploreInput';
+import { ExplorePointer } from './explore/ExplorePointer';
+import { screenBoxOf, type ScreenBox } from './input/picking';
 import { ExploreStage, type ExploreSnapshot } from '../render/explore/ExploreStage';
+import type { Obstacle } from '../explore/collision';
+import type { Bounds } from '../explore/walker';
 import { ALLY_TEMPLATES } from '../data/heroes';
 import { ENEMY_TEMPLATES } from '../data/enemies';
 import type { MenuContext } from './settings/SettingsMenu';
@@ -85,10 +89,16 @@ export interface AppDebug {
   exit(): Promise<void>;
   /** 自检：跳过探索直接开战（同地址参数 start=1） */
   battle(): Promise<void>;
-  /** 探索模式的状态：小队位置、朝向、速度、行走权重，显示的单位，相机注视点 */
+  /** 探索模式的状态：队长位置、朝向、速度、行走权重，终点与路径，显示的单位，Boss 悬停，相机注视点 */
   explore(): ExploreSnapshot;
-  /** 自检 / 联系表：代替方向键给出行走方向（地面向量，0 = 停下） */
+  /** 自检 / 联系表：代替方向键给出跑动方向（地面向量，0 = 停下） */
   exploreMove(x: number, z: number): void;
+  /** 自检：代替鼠标点地面（世界坐标）；返回实际要去的终点，没有可去的地方返回 null */
+  exploreClick(x: number, z: number): { x: number; z: number; exact: boolean } | null;
+  /** 自检：地面上某点在窗口里的坐标（已含黑边和缩放），用来模拟真实的鼠标点击 */
+  groundClient(x: number, z: number): { x: number; y: number };
+  /** 自检 / 路线图：探索的障碍物（碰撞用的圆和胶囊）、可走边界、单位碰撞半径 */
+  exploreWorld(): { obstacles: readonly Obstacle[]; bounds: Bounds; unitRadius: number };
   /** 演出时间（暂停时不变） */
   clock(): number;
   /** 某单位身体中部在窗口里的坐标（鼠标选目标自检用：已含黑边和缩放） */
@@ -134,9 +144,10 @@ export class PlayerBattleApp {
   private readonly result: ResultPanel;
   private readonly menu: SettingsMenu;
   private readonly title: TitleScreen;
-  /** 探索模式（步骤 14）：场景布置、方向键输入、操作提示 */
+  /** 探索模式（步骤 14、15）：场景布置、方向键（调试）与鼠标输入、操作提示 */
   private readonly explore: ExploreStage;
   private readonly exploreInput: ExploreInput;
+  private readonly explorePointer: ExplorePointer;
   private readonly exploreHint: HTMLDivElement;
   private readonly unsubscribeStore: () => void;
   private match: Match | null = null;
@@ -243,13 +254,23 @@ export class PlayerBattleApp {
     this.unsubscribeStore = this.store.onChange((value, key) => this.applySetting(value, key));
 
     // 探索模式：同一个场景、同一批单位，按模式切换布置；每帧在单位摆姿态之前推进移动
-    this.explore = new ExploreStage(stage, this.scene.battleCamera, [...ALLY_TEMPLATES, ...ENEMY_TEMPLATES]);
+    this.explore = new ExploreStage(stage, this.scene.battleCamera, [...ALLY_TEMPLATES, ...ENEMY_TEMPLATES], this.scene.scene);
     this.scene.onUpdate((dt) => this.explore.update(dt));
-    this.exploreInput = new ExploreInput(
-      (x, z) => this.explore.setInput(x, z),
-      () => this.explore.cycleControlled(),
-    );
-    this.exploreHint = el('div', 'dk-explore-hint', '方向键 / WASD：行走（调试）　Tab：切换人物　Esc：设置');
+    this.exploreInput = new ExploreInput((x, z) => this.explore.setInput(x, z));
+    // 鼠标：左键点地面跑过去，点到 Boss 按 Boss 脚下处理；悬停 Boss 高亮（步骤 15）
+    this.explorePointer = new ExplorePointer({
+      container: stageEl,
+      enabled: () => this.screen === 'explore' && !this.menu.isOpen && !this.busy,
+      groundAt: (x, y) => this.scene.groundAt(x, y),
+      bossBox: () => this.bossScreenBox(),
+      onGround: (x, z) => void this.explore.clickGround(x, z),
+      onBoss: () => {
+        const g = this.explore.bossGround;
+        this.explore.clickGround(g.x, g.z);
+      },
+      onBossHover: (on) => this.explore.setBossHover(on),
+    });
+    this.exploreHint = el('div', 'dk-explore-hint', '左键：移动　方向键 / WASD：移动（调试）　Esc：设置');
     this.exploreHint.style.cssText =
       'position:absolute;left:50%;bottom:22px;transform:translateX(-50%);padding:6px 16px;pointer-events:none;' +
       'font-size:15px;letter-spacing:1px;color:rgba(222,206,170,0.82);background:rgba(10,8,8,0.55);' +
@@ -273,6 +294,8 @@ export class PlayerBattleApp {
     removeEventListener('keydown', this.onKeyCapture, true);
     removeEventListener('keyup', this.onKeyUpCapture, true);
     removeEventListener('blur', this.onBlur);
+    this.explorePointer.dispose();
+    this.explore.dispose();
     this.exploreHint.remove();
     this.unsubscribeStore();
     this.endMatch();
@@ -288,14 +311,30 @@ export class PlayerBattleApp {
     this.viewport.dispose();
   }
 
+  /** 探索中 Boss 在屏幕上的可点范围（与战斗选目标同一套拾取，步骤 15） */
+  private bossScreenBox(): ScreenBox | null {
+    const id = this.explore.bossId;
+    const view = this.scene.stage.unit(id);
+    if (!view.model.visible) return null;
+    const home = view.home;
+    const foot = this.scene.worldToScreen(this.tmpFoot.set(home.x, 0, home.z));
+    if (!foot.visible) return null;
+    const head = this.scene.worldToScreen(view.headPosition(this.tmpHead));
+    return screenBoxOf(id, { x: foot.x, y: foot.y }, { x: head.x, y: head.y });
+  }
+
+  private readonly tmpFoot = new Vector3();
+  private readonly tmpHead = new Vector3();
+
   // ------------------------------------------------------------------
   // 界面切换
   // ------------------------------------------------------------------
 
-  /** 标题界面：背景是探索模式的初始布置（小队在出生点列队，Boss 待机），不能操作 */
+  /** 标题界面：背景是探索模式的初始布置（队长在出生点，Boss 待机），不能操作 */
   private showTitle(): void {
     this.screen = 'title';
     this.exploreInput.clear();
+    this.explorePointer.clear();
     this.explore.enter();
     this.title.show();
     this.gear.classList.add('is-hidden');
@@ -330,6 +369,7 @@ export class PlayerBattleApp {
     this.menu.close();
     this.title.hide();
     this.exploreInput.clear();
+    this.explorePointer.clear();
     this.explore.leave();
     this.exploreHint.style.display = 'none';
     this.gear.classList.remove('is-hidden');
@@ -343,6 +383,7 @@ export class PlayerBattleApp {
   async restart(): Promise<void> {
     if (this.screen === 'explore') {
       this.exploreInput.clear();
+      this.explorePointer.clear();
       this.explore.returnToStart();
       return;
     }
@@ -382,7 +423,10 @@ export class PlayerBattleApp {
 
   private onMenuOpenChange(open: boolean): void {
     // 战斗和探索中暂停；标题界面上打开设置时背景里的待机动画照常
-    if (open) this.exploreInput.clear();
+    if (open) {
+      this.exploreInput.clear();
+      this.explorePointer.clear();
+    }
     this.scene.setPaused(open && this.screen !== 'title');
   }
 
@@ -437,7 +481,7 @@ export class PlayerBattleApp {
       return;
     }
     if (this.screen === 'explore') {
-      // 探索模式：方向键 / WASD / Tab 交给探索输入；战斗快捷键（倍速、跳过）不生效，M 静音照常
+      // 探索模式：方向键 / WASD 交给探索输入（调试）；战斗快捷键（倍速、跳过）不生效，M 静音照常
       this.exploreInput.handle(e, true);
       if (e.key !== 'm' && e.key !== 'M') e.stopImmediatePropagation();
     }
@@ -582,6 +626,16 @@ export class PlayerBattleApp {
       battle: () => this.startBattle(),
       explore: () => this.explore.snapshot(),
       exploreMove: (x, z) => this.explore.setInput(x, z),
+      exploreClick: (x, z) => {
+        const r = this.explore.clickGround(x, z);
+        return r ? { x: r.goal.x, z: r.goal.z, exact: r.exact } : null;
+      },
+      exploreWorld: () => ({ obstacles: this.explore.world.obstacles, bounds: this.explore.world.bounds, unitRadius: this.explore.world.unitRadius }),
+      groundClient: (x, z) => {
+        const p = this.scene.worldToScreen(new Vector3(x, 0, z));
+        const l = this.viewport.layout;
+        return { x: l.left + p.x * l.scale, y: l.top + p.y * l.scale };
+      },
       exit: () => this.exitToTitle(),
       clock: () => this.scene.scheduler.time,
       unitClient: (id) => {

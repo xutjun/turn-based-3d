@@ -10,11 +10,17 @@
 //                     中间抬起 lift。
 // 身体下沉量 drop：保证每只着地的脚都够得着（髋到踝不超过腿长 × reach），由此自然产生每步一次的起伏。
 // 输出的是踝关节目标和身体、手臂的偏移量；关节转角由 legPose.ts 的 IK 在真实骨架尺寸上求出。
+//
+// 跑步（步骤 15，DESIGN §11.5）：同一套轨迹，参数按跑步权重 run（随速度 0 → 1）从走路过渡到跑步——
+//   支撑相比例降到 0.24（两脚之间有腾空）、摆动脚先向后上方收（脚跟上踢）再提膝前送、
+//   身体有显式的起伏曲线（支撑中段最低、腾空中段最高）、前倾更多、手臂屈肘大幅摆动。
+//   run = 0 时所有参数与走路完全相同（走路的代码路径不变）。
 
-import { WALK_GAIT } from '../../data/exploreConfig';
+import { RUN_GAIT, WALK_GAIT } from '../../data/exploreConfig';
 import { ankleHeight, restFoot, type FootTarget, type LegDims } from './legPose';
 
 export type WalkGaitConfig = typeof WALK_GAIT;
+export type RunGaitConfig = typeof RUN_GAIT;
 
 const TAU = Math.PI * 2;
 const clamp01 = (t: number): number => (t < 0 ? 0 : t > 1 ? 1 : t);
@@ -33,14 +39,43 @@ export interface GaitParams {
   cycle: number; // 一个周期走过的距离（米）
   duty: number; // 支撑相比例
   lift: number; // 摆动脚的最大离地高度
+  /** 跑步权重 0~1（0 = 走路） */
+  run: number;
+  /** 摆动脚最高点在摆动相里的位置（走路 0.5） */
+  peak: number;
+  /** 推离时脚跟抬起、落地时脚尖翘起（弧度） */
+  heelLift: number;
+  toeUp: number;
+  /** 脚的前后位置整体前移（米）：跑步前倾时着地范围以髋的投影为中心（由 WalkGait 按骨架尺寸填写） */
+  center: number;
+  /** 跑步摆动曲线两端“速度匹配”的衰减宽度（摆动相比例，见 footAt） */
+  snap: number;
 }
 
-export function gaitParams(speed: number, c: WalkGaitConfig = WALK_GAIT): GaitParams {
+/** 跑步权重：速度从 runFrom 到 runFull 平滑地由 0 升到 1 */
+export function runWeight(speed: number, rc: RunGaitConfig = RUN_GAIT): number {
+  return smooth((speed - rc.runFrom) / Math.max(1e-6, rc.runFull - rc.runFrom));
+}
+
+export function gaitParams(speed: number, c: WalkGaitConfig = WALK_GAIT, rc: RunGaitConfig = RUN_GAIT): GaitParams {
   const v = Math.max(0, speed);
   const cycle = Math.min(c.cycleMax, Math.max(c.cycleMin, c.cycleBase + c.cycleK * v));
   const [v0, v1] = c.dutySpeed;
   const duty = lerp(c.dutySlow, c.dutyFast, clamp01((v - v0) / Math.max(1e-6, v1 - v0)));
-  return { cycle, duty, lift: c.liftBase + c.liftK * v };
+  const lift = c.liftBase + c.liftK * v;
+  const r = runWeight(v, rc);
+  if (r <= 0) return { cycle, duty, lift, run: 0, peak: 0.5, heelLift: c.heelLift, toeUp: c.toeUp, center: 0, snap: rc.swingSnap };
+  return {
+    cycle: lerp(cycle, Math.max(rc.cycleMin, rc.cycleK * v), r),
+    duty: lerp(duty, rc.duty, r),
+    lift: lerp(lift, rc.lift, r),
+    run: r,
+    peak: lerp(0.5, rc.liftPeak, r),
+    heelLift: lerp(c.heelLift, rc.heelLift, r),
+    toeUp: lerp(c.toeUp, rc.toeUp, r),
+    center: 0,
+    snap: rc.swingSnap,
+  };
 }
 
 /** 一只脚此刻的状态 */
@@ -59,11 +94,12 @@ export interface FootState extends FootTarget {
 export function footAt(u: number, p: GaitParams, a0: number, c: WalkGaitConfig = WALK_GAIT): FootState {
   const { cycle: C, duty: b } = p;
   const half = (b * C) / 2;
+  const ctr = p.center;
   if (u < b) {
     // 支撑相：踝关节（或推离时的脚尖）相对身体匀速后退
-    const base = half - u * C;
-    const toe = c.toeUp * (1 - smooth(u / Math.max(1e-6, b * c.toeUpSpan)));
-    const heel = c.heelLift * smooth((u - b * (1 - c.heelLiftSpan)) / Math.max(1e-6, b * c.heelLiftSpan));
+    const base = half - u * C + ctr;
+    const toe = p.toeUp * (1 - smooth(u / Math.max(1e-6, b * c.toeUpSpan)));
+    const heel = p.heelLift * smooth((u - b * (1 - c.heelLiftSpan)) / Math.max(1e-6, b * c.heelLiftSpan));
     // 推离：绕脚尖转，脚尖不动，踝关节抬高、略微前移；落地：绕脚跟放平，踝关节略抬高
     const z = base + c.toeLength * (1 - Math.cos(heel));
     const y = a0 + c.toeLength * Math.sin(heel) + HEEL_LENGTH * Math.sin(toe);
@@ -71,18 +107,30 @@ export function footAt(u: number, p: GaitParams, a0: number, c: WalkGaitConfig =
   }
   // 摆动相：埃尔米特曲线，两端切线 = 支撑相里脚相对身体的速度（落地、离地瞬间相对地面静止）
   const s = (u - b) / Math.max(1e-6, 1 - b);
-  const heelEnd = c.heelLift;
-  const z0 = -half + c.toeLength * (1 - Math.cos(heelEnd));
-  const z1 = half;
+  const heelEnd = p.heelLift;
+  const z0 = -half + c.toeLength * (1 - Math.cos(heelEnd)) + ctr;
+  const z1 = half + ctr;
   const m = -(1 - b) * C; // dz/ds
   const s2 = s * s;
   const s3 = s2 * s;
-  const z = (2 * s3 - 3 * s2 + 1) * z0 + (s3 - 2 * s2 + s) * m + (-2 * s3 + 3 * s2) * z1 + (s3 - s2) * m;
+  let z = (2 * s3 - 3 * s2 + 1) * z0 + (s3 - 2 * s2 + s) * m + (-2 * s3 + 3 * s2) * z1 + (s3 - s2) * m;
+  if (p.run > 0) {
+    // 跑步：支撑相很短，同样的端点速度放进埃尔米特曲线会前后各过冲近 20 厘米（腿在落地前伸直踢出去）。
+    // 改为“平滑主曲线 + 两端快速衰减的速度匹配项”：离地、落地的瞬间脚相对地面仍然静止（不滑），
+    // 但只在两端很短的一段里继续后退 / 回扒，过冲只有 |m|·snap/e（约 7 厘米）
+    const tau = Math.max(1e-3, p.snap);
+    const e0 = s * Math.exp(-s / tau);
+    const e1 = (1 - s) * Math.exp(-(1 - s) / tau);
+    const zr = z0 + (z1 - z0) * smooth(s) + m * e0 - m * e1;
+    z = lerp(z, zr, p.run);
+  }
   const y0 = a0 + c.toeLength * Math.sin(heelEnd);
-  const y1 = a0 + HEEL_LENGTH * Math.sin(c.toeUp);
-  const y = lerp(y0, y1, smooth(s)) + p.lift * Math.sin(Math.PI * s);
+  const y1 = a0 + HEEL_LENGTH * Math.sin(p.toeUp);
+  // 抬脚的拱形：走路是对称的正弦拱（最高点在中间）；跑步的最高点提前（离地后先把脚跟往臀下收，再提膝前送）
+  const k = p.peak === 0.5 ? 1 : Math.log(0.5) / Math.log(Math.min(0.95, Math.max(0.05, p.peak)));
+  const y = lerp(y0, y1, smooth(s)) + p.lift * Math.sin(Math.PI * (k === 1 ? s : Math.pow(s, k)));
   // 脚掌：离地后先放平，落地前翘起脚尖
-  const pitch = s < 0.4 ? lerp(-heelEnd, 0, smooth(s / 0.4)) : lerp(0, c.toeUp, smooth((s - 0.6) / 0.4));
+  const pitch = s < 0.4 ? lerp(-heelEnd, 0, smooth(s / 0.4)) : lerp(0, p.toeUp, smooth((s - 0.6) / 0.4));
   return { x: 0, z, y, pitch, stance: false, contactZ: Number.NaN, contact: 'none' };
 }
 
@@ -166,8 +214,9 @@ export class WalkGait {
     readonly dims: LegDims,
     private readonly hands: WalkHands = { heldLeft: false, heldRight: false },
     private readonly c: WalkGaitConfig = WALK_GAIT,
+    private readonly rc: RunGaitConfig = RUN_GAIT,
   ) {
-    this.params = gaitParams(0, c);
+    this.params = gaitParams(0, c, rc);
     const rest = restFoot(dims);
     this.out = {
       left: { ...rest, stance: true, contactZ: 0, contact: 'ankle' },
@@ -193,6 +242,11 @@ export class WalkGait {
     return this.weight > 0;
   }
 
+  /** 跑步程度 0~1（已乘行走权重）：披风、袍摆甩动的放大用 */
+  get run(): number {
+    return this.params.run * this.weight;
+  }
+
   /**
    * 推进：distance = 这一帧身体在地面上移动的距离（模型坐标，米），dt = 这一帧的时长（秒）。
    * 相位按距离推进，所以支撑脚相对地面不动。
@@ -209,7 +263,7 @@ export class WalkGait {
     // 速度平滑一下（掉帧时不跳）；停下时步态参数保持最后的值（否则步幅突变，腿会跳一下）
     if (distance > 1e-7) {
       this.speed += (v - this.speed) * (1 - Math.exp(-20 * dt));
-      this.params = gaitParams(this.speed, c);
+      this.params = gaitParams(this.speed, c, this.rc);
       this.phase += distance / this.params.cycle;
       this.traveled += distance;
     }
@@ -226,7 +280,7 @@ export class WalkGait {
     this.weight = 0;
     this.speed = 0;
     this.traveled = 0;
-    this.params = gaitParams(0, this.c);
+    this.params = gaitParams(0, this.c, this.rc);
     this.sample();
   }
 
@@ -237,24 +291,37 @@ export class WalkGait {
     const o = this.out;
     const w = this.weight;
     const p = this.params;
+    const rc = this.rc;
+    const run = p.run;
     const a0 = ankleHeight(d);
     const uL = frac(this.phase);
     const uR = frac(this.phase + 0.5);
-    const fL = this.anchored(footAt(uL, p, a0, c), uL, this.feet.left);
-    const fR = this.anchored(footAt(uR, p, a0, c), uR, this.feet.right);
 
-    // 前倾：随速度加大（满权重的值；身体实际前倾再乘权重）
-    const run = Math.min(1, this.speed / 3.2);
-    const leanFull = c.lean * run;
+    // 前倾：随速度加大，跑起来更多（满权重的值；身体实际前倾再乘权重）
+    const leanFull = lerp(c.lean * Math.min(1, this.speed / 3.2), rc.lean, run);
     const hipZ = d.hipHeight * Math.sin(leanFull);
     const hipY = d.hipHeight * Math.cos(leanFull);
+    // 跑步：着地范围以髋的投影为中心（走路时为 0）
+    p.center = run * rc.center * hipZ;
+    const fL = this.anchored(footAt(uL, p, a0, c), uL, this.feet.left);
+    const fR = this.anchored(footAt(uR, p, a0, c), uR, this.feet.right);
     o.left = fL;
     o.right = fR;
 
     // 身体下沉：着地的脚必须够得着（髋到踝不超过腿长 × reach，膝盖始终微屈）；
     // 离地的脚权重连续变化，下沉量没有跳变
     const need = (f: FootTarget): number => Math.max(0, dropNeeded(d, f, hipZ, hipY, c.reach));
-    o.dropFull = Math.max(footWeight(uL, p.duty) * need(fL), footWeight(uR, p.duty) * need(fR));
+    let dropFull = Math.max(footWeight(uL, p.duty) * need(fL), footWeight(uR, p.duty) * need(fR));
+    if (run > 0) {
+      // 跑步的起伏：每次落地后的支撑中段压到最低（屈膝缓冲），两脚都离地的腾空中段最高
+      const v = frac(2 * this.phase);
+      const curve = rc.sink + rc.bob * Math.cos(TAU * (v - p.duty));
+      dropFull = Math.max(dropFull, run * curve);
+      // 腾空（两脚都离地）时身体再往上抛一点，比站立时还高：此时没有脚着地，抬高身体不会让哪只脚够不着地面
+      const air = (v - 2 * p.duty) / Math.max(1e-6, 1 - 2 * p.duty);
+      if (air > 0 && air < 1) dropFull -= run * rc.flightLift * Math.sin(Math.PI * air);
+    }
+    o.dropFull = dropFull;
     o.drop = o.dropFull * w;
     o.leanFull = leanFull;
 
@@ -263,22 +330,29 @@ export class WalkGait {
     const swing = (z: number): number => Math.asin(Math.max(-1, Math.min(1, (z * w) / legLen)));
     const aL = swing(fL.z);
     const aR = swing(fR.z);
-    const armL = this.hands.heldLeft ? c.heldArmScale : 1;
-    const armR = this.hands.heldRight ? c.heldArmScale : 1;
+    const held = lerp(c.heldArmScale, rc.heldArmScale, run);
+    const armL = this.hands.heldLeft ? held : 1;
+    const armR = this.hands.heldRight ? held : 1;
+    const armSwing = lerp(c.armSwing, rc.armSwing, run);
+    const elbowFollow = lerp(c.elbowFollow, rc.elbowFollow, run);
+    // 跑步：肘固定屈起（持武器的手屈得少，武器压低）
+    const bendL = rc.elbowBend * run * w * (this.hands.heldLeft ? rc.heldElbowScale : 1);
+    const bendR = rc.elbowBend * run * w * (this.hands.heldRight ? rc.heldElbowScale : 1);
     // 右脚在前（aR > 0）时左臂向前（肩转负角）
-    o.shoulderL = -c.armSwing * aR * armL;
-    o.shoulderR = -c.armSwing * aL * armR;
-    o.elbowL = -c.elbowFollow * Math.max(0, aR) * armL;
-    o.elbowR = -c.elbowFollow * Math.max(0, aL) * armR;
+    o.shoulderL = -armSwing * aR * armL;
+    o.shoulderR = -armSwing * aL * armR;
+    o.elbowL = -elbowFollow * Math.max(0, aR) * armL - bendL;
+    o.elbowR = -elbowFollow * Math.max(0, aL) * armR - bendR;
     // 腰：左脚在前时右肩向前（腰向左扭，spine.y 为正）
     const maxSwing = Math.max(0.2, Math.asin(Math.min(1, (p.duty * p.cycle) / 2 / legLen)));
-    o.twist = c.twist * Math.max(-1, Math.min(1, (aL - aR) / (2 * maxSwing)));
+    o.twist = lerp(c.twist, rc.twist, run) * Math.max(-1, Math.min(1, (aL - aR) / (2 * maxSwing)));
     // 重心：左脚支撑相的中点重心最靠左（+x），右脚的中点最靠右
     const side = Math.cos(TAU * (this.phase - p.duty / 2));
-    o.shift = c.shift * side * w;
-    o.roll = -c.roll * side * w;
+    const shift = lerp(c.shift, rc.shift, run);
+    o.shift = shift * side * w;
+    o.roll = -lerp(c.roll, rc.roll, run) * side * w;
     // 身体往左移了 shift，脚就相对身体往右放 shift：着地的脚在地面上不横向滑动（满权重的值）
-    fL.x = fR.x = -c.shift * side;
+    fL.x = fR.x = -shift * side;
     o.lean = leanFull * w;
     o.strideL = fL.z * w;
     o.strideR = fR.z * w;
@@ -292,7 +366,7 @@ export class WalkGait {
   private anchored(f: FootState, u: number, s: { anchor: number; stance: boolean; carry: number }): FootState {
     const p = this.params;
     if (f.stance) {
-      const analytic = (p.duty * p.cycle) / 2 - u * p.cycle; // 解析轨迹里这一刻的着地位置（踝的正下方）
+      const analytic = (p.duty * p.cycle) / 2 - u * p.cycle + p.center; // 解析轨迹里这一刻的着地位置（踝的正下方）
       if (!s.stance) s.anchor = this.traveled + analytic; // 刚落地：记下落地点
       s.stance = true;
       const delta = s.anchor - this.traveled - analytic;

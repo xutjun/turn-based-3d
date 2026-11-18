@@ -1,58 +1,74 @@
-// 探索模式的场景布置（步骤 14，DESIGN §11.2）：复用战场和同一批单位（BattleStage 的 UnitView），按模式切换。
-//   - 进入探索：只显示 5 名人物和 Boss（原战斗位置，待机），宝宝和其余 9 个敌人隐藏；人物在出生点列队；
-//   - 每帧：小队的移动（src/explore/squad.ts）写到 UnitView，单位按走过的距离迈步；相机平滑跟随；
+// 探索模式的场景布置（步骤 14、15，DESIGN §11.2）：复用战场和同一批单位（BattleStage 的 UnitView），按模式切换。
+//   - 进入探索：只显示队长（烬刃）和 Boss（原战斗位置，待机）；4 名队员、宝宝和其余 9 个敌人隐藏（步骤 15，§9.12 H1）；
+//   - 每帧：队长的移动（src/explore/agent.ts：寻路、跑步、碰撞）写到 UnitView，单位按跑过的距离迈步；相机平滑跟随；
+//   - 点击地面：寻路跑过去，地面显示点击标记；悬停 Boss：轮边光高亮；
 //   - 离开探索：所有单位回到战斗站位、全部显示，相机回到战斗的固定机位。
 // 战斗代码看到的永远是同一批 UnitView，探索不改战斗规则和演出。
 
+import type { Object3D } from 'three';
 import type { UnitId, UnitTemplate } from '../../core/types';
 import { EXPLORE_CONFIG } from '../../data/exploreConfig';
+import { LeaderAgent } from '../../explore/agent';
 import { CameraFollow } from '../../explore/cameraFollow';
-import { Squad } from '../../explore/squad';
+import { ExploreWorld } from '../../explore/exploreWorld';
+import type { PathResult, Pt } from '../../explore/pathfinder';
+import { yawOf } from '../../explore/walker';
 import type { BattleCamera } from '../camera/battleCamera';
 import type { BattleStage } from '../units/BattleStage';
+import { ClickMarker } from './ClickMarker';
 
 /** 调试：探索模式的状态（window.__app.explore()） */
 export interface ExploreSnapshot {
   active: boolean;
-  controlled: UnitId;
+  leader: UnitId;
   visible: UnitId[];
   units: Record<UnitId, { x: number; z: number; yaw: number; speed: number; walk: number }>;
+  /** 正在去的终点（没有为 null）与剩下的路点 */
+  destination: Pt | null;
+  path: Pt[];
+  /** 鼠标是否指着 Boss、Boss 的高亮程度 */
+  bossHover: boolean;
+  bossHighlight: number;
+  marker: boolean;
   camera: { x: number; z: number };
 }
 
 export class ExploreStage {
-  readonly squad: Squad;
+  readonly agent: LeaderAgent;
+  readonly world: ExploreWorld;
   readonly follow: CameraFollow;
   readonly bossId: UnitId;
-  private readonly heroIds: UnitId[];
+  readonly leaderId: UnitId;
+  readonly marker = new ClickMarker();
   private activeFlag = false;
+  private hoverBoss = false;
 
   constructor(
     private readonly stage: BattleStage,
     private readonly camera: BattleCamera,
     templates: readonly UnitTemplate[],
+    parent?: Object3D,
   ) {
     const boss = templates.find((t) => t.rank === 'boss');
     if (!boss) throw new Error('阵容里没有 Boss');
     this.bossId = boss.id;
-    this.heroIds = templates.filter((t) => t.side === 'ally' && t.kind === 'hero').map((t) => t.id);
-    this.squad = new Squad(stage.unit(boss.id).home);
-    for (const id of this.squad.ids) {
-      if (!this.heroIds.includes(id)) throw new Error(`探索配置里的 ${id} 不是友方人物`);
-    }
+    this.leaderId = EXPLORE_CONFIG.leaderId;
+    const leader = templates.find((t) => t.id === this.leaderId);
+    if (!leader || leader.side !== 'ally' || leader.kind !== 'hero') throw new Error(`探索配置里的队长 ${this.leaderId} 不是友方人物`);
+    this.world = new ExploreWorld(stage.unit(boss.id).home);
+    this.agent = new LeaderAgent(this.world);
     this.follow = new CameraFollow();
+    parent?.add(this.marker.group);
   }
 
   get active(): boolean {
     return this.activeFlag;
   }
 
-  /** 进入探索：所有单位先回到开场状态，再按探索布置显示、列队，相机对准队长 */
+  /** 进入探索：所有单位先回到开场状态，再按探索布置显示（只有队长和 Boss），相机对准队长 */
   enter(): void {
     this.stage.reset();
-    for (const [id, view] of this.stage.views) {
-      view.model.visible = this.heroIds.includes(id) || id === this.bossId;
-    }
+    for (const [id, view] of this.stage.views) view.model.visible = id === this.leaderId || id === this.bossId;
     this.activeFlag = true;
     this.returnToStart();
   }
@@ -60,45 +76,63 @@ export class ExploreStage {
   /** 离开探索：单位回到战斗站位、全部显示，相机回到战斗机位 */
   leave(): void {
     this.activeFlag = false;
-    this.squad.input.x = this.squad.input.z = 0;
+    this.agent.place(this.agent.x, this.agent.z, this.agent.yaw);
+    this.setBossHover(false);
+    this.marker.hide();
     this.stage.reset();
     this.camera.setFrame(null);
   }
 
-  /** 回到起点：小队在出生点重新列队，控制权回到队长，相机立即对准 */
+  /** 回到起点：队长站回出生点、面向 Boss，停下，相机立即对准 */
   returnToStart(): void {
-    this.squad.reset();
-    this.squad.controlled = EXPLORE_CONFIG.leaderId;
-    for (const [id, w] of this.squad.walkers) this.stage.unit(id).placeAt(w.x, w.z, w.yaw);
-    const c = this.focusWalker();
-    this.follow.snap(c.x, c.z);
+    const s = EXPLORE_CONFIG.start;
+    const boss = this.stage.unit(this.bossId).home;
+    const yaw = yawOf(boss.x - s.x, boss.z - s.z);
+    this.agent.place(s.x, s.z, yaw);
+    this.stage.unit(this.leaderId).placeAt(s.x, s.z, yaw);
+    this.marker.hide();
+    this.follow.snap(s.x, s.z);
     this.applyCamera();
   }
 
-  /** 方向键 / WASD 的输入（地面向量；0 = 不走） */
+  /**
+   * 点击地面（世界坐标）：队长寻路跑过去，终点（点到不可达处时是最近的可达点）显示点击标记。
+   * 返回寻路结果；没有可去的地方返回 null。
+   */
+  clickGround(x: number, z: number): PathResult | null {
+    if (!this.activeFlag) return null;
+    const r = this.agent.moveTo(x, z);
+    if (r) this.marker.show(r.goal.x, r.goal.z);
+    return r;
+  }
+
+  /** 方向键 / WASD（调试，地面向量；0 = 松开）：与点击移动同一速度、同一碰撞，按下时取消点击目标 */
   setInput(x: number, z: number): void {
-    this.squad.input.x = x;
-    this.squad.input.z = z;
+    this.agent.setManual(x, z);
+    if (x !== 0 || z !== 0) this.marker.hide();
   }
 
-  /** 调试：切换方向键控制的人物，相机跟过去 */
-  cycleControlled(): UnitId {
-    this.squad.input.x = this.squad.input.z = 0;
-    return this.squad.cycleControlled();
+  /** 鼠标是否指着 Boss（光标由界面层改，这里只管轮边光高亮） */
+  setBossHover(on: boolean): void {
+    this.hoverBoss = on;
+    this.stage.unit(this.bossId).setHighlight(on);
   }
 
-  /** 每帧（摆姿态之前）：推进移动，写到单位上，相机跟随 */
+  /** Boss 脚下的地面位置（点到 Boss 身上时按这里处理） */
+  get bossGround(): Pt {
+    const h = this.stage.unit(this.bossId).home;
+    return { x: h.x, z: h.z };
+  }
+
+  /** 每帧（摆姿态之前）：推进移动，写到队长身上，相机跟随，点击标记淡出 */
   update(dt: number): void {
     if (!this.activeFlag || dt <= 0) return;
-    this.squad.update(dt);
-    for (const [id, w] of this.squad.walkers) this.stage.unit(id).locomote(w.x, w.z, w.yaw);
-    const c = this.focusWalker();
-    this.follow.update(c.x, c.z, c.vx, c.vz, dt);
+    const a = this.agent;
+    a.update(dt);
+    this.stage.unit(this.leaderId).locomote(a.x, a.z, a.yaw);
+    this.follow.update(a.x, a.z, a.vx, a.vz, dt);
     this.applyCamera();
-  }
-
-  private focusWalker() {
-    return this.squad.walkers.get(this.squad.controlled) ?? this.squad.leader;
+    this.marker.update(dt);
   }
 
   private applyCamera(): void {
@@ -107,17 +141,23 @@ export class ExploreStage {
   }
 
   snapshot(): ExploreSnapshot {
-    const units: ExploreSnapshot['units'] = {};
-    for (const [id, w] of this.squad.walkers) {
-      const v = this.stage.unit(id);
-      units[id] = { x: w.x, z: w.z, yaw: w.yaw, speed: Math.hypot(w.vx, w.vz), walk: v.walkWeight };
-    }
+    const a = this.agent;
+    const v = this.stage.unit(this.leaderId);
     return {
       active: this.activeFlag,
-      controlled: this.squad.controlled,
-      visible: [...this.stage.views].filter(([, v]) => v.model.visible).map(([id]) => id),
-      units,
+      leader: this.leaderId,
+      visible: [...this.stage.views].filter(([, u]) => u.model.visible).map(([id]) => id),
+      units: { [this.leaderId]: { x: a.x, z: a.z, yaw: a.yaw, speed: a.actualSpeed, walk: v.walkWeight } },
+      destination: a.destination,
+      path: a.remainingPath,
+      bossHover: this.hoverBoss,
+      bossHighlight: this.stage.unit(this.bossId).highlight,
+      marker: this.marker.active,
       camera: { x: this.follow.x, z: this.follow.z },
     };
+  }
+
+  dispose(): void {
+    this.marker.dispose();
   }
 }

@@ -1,5 +1,6 @@
-// 探索模式的键盘输入（步骤 14，临时调试用，步骤 15 换成鼠标点击移动）：
-//   方向键 / WASD = 被控制的人物沿屏幕方向直线行走（可斜走）；Tab = 切换被控制的人物（调试，默认队长）。
+// 探索模式的键盘输入（步骤 14 起，调试用；正式操作是鼠标点击移动，见 ExplorePointer）：
+//   方向键 / WASD = 队长沿屏幕方向直线跑（可斜走），与点击移动同一速度、同一碰撞（步骤 15 起穿不过障碍物）。
+//   步骤 14 的 Tab 切换人物在步骤 15 删除（探索中只有队长）。
 // 相机方位角为 0（在 +z 一侧），所以屏幕“上” = 世界 −z，屏幕“右” = 世界 +x。
 
 const DIRS: Record<string, [number, number]> = {
@@ -16,19 +17,11 @@ const DIRS: Record<string, [number, number]> = {
 export class ExploreInput {
   private readonly held = new Set<string>();
 
-  constructor(
-    private readonly onDirection: (x: number, z: number) => void,
-    private readonly onCycle: () => void,
-  ) {}
+  constructor(private readonly onDirection: (x: number, z: number) => void) {}
 
   /** 处理一次按键（按下 / 松开）；返回这个键是不是探索模式的键（是则调用方不再往下传） */
   handle(e: KeyboardEvent, down: boolean): boolean {
     const key = e.key.toLowerCase();
-    if (key === 'tab') {
-      if (down && !e.repeat) this.onCycle();
-      e.preventDefault();
-      return true;
-    }
     if (!(key in DIRS)) return false;
     if (down) this.held.add(key);
     else this.held.delete(key);

@@ -17,7 +17,7 @@ import type { SoundName } from '../../data/audioConfig';
 import { animatedJointsOf, extraJointsOf } from './animatedJoints';
 import { forwardLeg, legAngles, restFoot, type FootTarget, type LegDims } from './legPose';
 import { WalkGait } from './walkGait';
-import { LEG_PLANT, WALK_GAIT } from '../../data/exploreConfig';
+import { EXPLORE_CONFIG, LEG_PLANT, WALK_GAIT } from '../../data/exploreConfig';
 import { ATTACK_ANIM, LEFT_GRIP, MOTION_OF_TEMPLATE, MOTION_PROFILES, MOUNTED_STAFF, SECONDARY_MOTION, moveOf, type MotionId } from '../../data/attackAnimConfig';
 import { solveArmIK } from './armIK';
 import { IdleAnimator, type LegReach } from './IdleAnimator';
@@ -34,6 +34,8 @@ import type { AnchorName, AttackStyle, GroundPoint, MoveOptions, Point3, StageUn
 
 const HP_ANCHOR = 'hpAnchor';
 const FLASH_COLOR = new Color(0xffffff);
+/** 悬停高亮的轮边光颜色（临时对象，每次按配置写入） */
+const HOVER_COLOR = new Color();
 
 /** 进攻动画的全局开关（低画质时关掉次级运动），所有单位共用 */
 export const ATTACK_RUNTIME = {
@@ -297,6 +299,62 @@ export class UnitView implements StageUnit {
   }
 
   // ------------------------------------------------------------------
+  // 悬停高亮（步骤 15）：探索中鼠标指着 Boss 时，轮边光换成暗金色并加强（等效于轮廓高亮，不新增网格）
+  // ------------------------------------------------------------------
+
+  /** 打开 / 关闭高亮（淡入淡出，时长见 EXPLORE_CONFIG.bossHover.fade） */
+  setHighlight(on: boolean): void {
+    this.highlightTarget = on ? 1 : 0;
+  }
+
+  /** 当前高亮程度 0~1（调试 / 测试） */
+  get highlight(): number {
+    return this.highlightLevel;
+  }
+
+  private highlightTarget = 0;
+  private highlightLevel = 0;
+  /** 身体材质的轮边光（不含武器：武器的发光边由发光控制器每帧写），首次高亮时收集并记下原值 */
+  private rimSlots: { u: { uRimColor: { value: Color }; uRimStrength: { value: number }; uRimPower: { value: number } }; color: Color; strength: number; power: number }[] | null = null;
+
+  private updateHighlight(dt: number): void {
+    if (this.highlightLevel === this.highlightTarget) return;
+    const c = EXPLORE_CONFIG.bossHover;
+    const step = dt > 0 ? dt / Math.max(1e-3, c.fade) : 1;
+    const d = this.highlightTarget - this.highlightLevel;
+    this.highlightLevel = Math.abs(d) <= step ? this.highlightTarget : this.highlightLevel + Math.sign(d) * step;
+    this.applyHighlight();
+  }
+
+  private applyHighlight(): void {
+    if (!this.rimSlots) {
+      if (this.highlightLevel === 0) return;
+      this.rimSlots = [];
+      const weapon = this.weapon;
+      const seen = new Set<object>();
+      this.model.traverse((o) => {
+        const mesh = o as Mesh;
+        if (!mesh.isMesh) return;
+        // 武器上的材质跳过
+        for (let p: Object3D | null = o; p; p = p.parent) if (p === weapon) return;
+        for (const m of Array.isArray(mesh.material) ? mesh.material : [mesh.material]) {
+          const u = (m as MeshStandardMaterial).userData?.['rimUniforms'];
+          if (!u || seen.has(u)) continue;
+          seen.add(u);
+          this.rimSlots!.push({ u, color: u.uRimColor.value.clone(), strength: u.uRimStrength.value, power: u.uRimPower.value });
+        }
+      });
+    }
+    const c = EXPLORE_CONFIG.bossHover;
+    const h = this.highlightLevel * this.highlightLevel * (3 - 2 * this.highlightLevel);
+    for (const s of this.rimSlots) {
+      s.u.uRimColor.value.copy(s.color).lerp(HOVER_COLOR.setHex(c.color), h);
+      s.u.uRimStrength.value = s.strength + (c.strength - s.strength) * h;
+      s.u.uRimPower.value = s.power + (c.power - s.power) * h;
+    }
+  }
+
+  // ------------------------------------------------------------------
   // StageUnit
   // ------------------------------------------------------------------
 
@@ -501,6 +559,8 @@ export class UnitView implements StageUnit {
     this.idleWeight = 1;
     this.pendingWalk = 0;
     this.legs?.walk.reset();
+    this.highlightTarget = this.highlightLevel = 0;
+    this.applyHighlight();
     this.restoreBase();
     this.idle.update(this.lastIdleTime, 1);
     this.idle.setSecondary(0, 0, 0, 0);
@@ -613,6 +673,7 @@ export class UnitView implements StageUnit {
   update(time: number, idleTime = time): void {
     const dt = Math.min(0.1, Math.max(0, idleTime - this.lastIdleTime));
     this.lastIdleTime = idleTime;
+    this.updateHighlight(dt);
     // 行走：这一帧走过的距离（换成模型坐标）推进步态相位
     if (this.legs) {
       if (dt > 0) {
@@ -663,6 +724,7 @@ export class UnitView implements StageUnit {
       m.position.z - Math.cos(yaw) * back,
       enabled,
       active,
+      walk?.run ?? 0, // 跑起来披风、袍摆甩得更开（步骤 15）
     );
     const push = this.act.push;
     this.idle.setSecondary(push.x, push.y, push.z, this.act.flutter);
