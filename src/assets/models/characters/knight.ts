@@ -8,6 +8,8 @@ import { ornamentStripTexture, tatterAlphaTexture } from '../../textures/sprites
 import { ALLY_RIM, finishCharacter, type CharacterBaseParams } from './common';
 import {
   ball,
+  chain,
+  gem,
   box,
   capeMesh,
   capeTrim,
@@ -157,6 +159,16 @@ export function buildKnight(params: Partial<KnightParams> = {}): Group {
   );
   crestStar.position.set(0, 0.13, 0.2);
   crestStar.rotation.x = -0.2;
+  // 项链“烬火链坠”（步骤 22，装备表 eq_A1_necklace）：从颈甲两侧绕过金徽垂下的短金链 + 烬火色坠石。
+  // 用已有的金饰和目光材质，并进胸部的合并网格（不新增材质种类）
+  chain(rig.chest, trim, [
+    [-0.085, 0.19, 0.15],
+    [-0.08, 0.1, 0.198],
+    [0, 0.05, 0.212],
+    [0.08, 0.1, 0.198],
+    [0.085, 0.19, 0.15],
+  ], 0.009);
+  gem(rig.chest, eye, 0.016, 0, 0.032, 0.214, 1.5);
   // 颈甲：两层叠片
   const gorget = lames(rig.chest, plate, { rTop: 0.1, rBottom: 0.15, length: 0.11, count: 2, lip: 0.012, segments: 16 });
   gorget.position.y = 0.3;

@@ -176,10 +176,10 @@ describe('面板开关与互斥', () => {
     expect(s.changes).toEqual(['character', null, 'inventory', null, 'pet', null, 'party', null, 'character', null]);
   });
 
-  it('道具、宝宝、队友本步是空面板，写“下一步实现”', async () => {
+  it('宝宝、队友还是空面板，写“下一步实现”（道具面板步骤 22 实现）', async () => {
     const s = await setup();
     s.hud.syncScreen('explore');
-    for (const id of ['inventory', 'pet', 'party'] as const) {
+    for (const id of ['pet', 'party'] as const) {
       s.hud.press(id);
       const texts = s.mounted()[0]!.all().map((e) => e.textContent);
       expect(texts).toContain('下一步实现');

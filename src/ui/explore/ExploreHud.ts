@@ -16,6 +16,7 @@ import { Tooltip } from '../widgets/Tooltip';
 import { hudIconSvg, type HudButtonId } from './hudIcons';
 import { PanelHost, PlaceholderPanel, type PanelId } from './PanelHost';
 import { CharacterPanel, type PreviewHost } from './panels/CharacterPanel';
+import { InventoryPanel } from './panels/InventoryPanel';
 
 /** 页面处在哪个界面（与 PlayerBattleApp 的 AppScreen 相同） */
 export type HudScreen = 'title' | 'explore' | 'dialog' | 'intro' | 'battle' | 'result' | 'outro';
@@ -79,6 +80,7 @@ export class ExploreHud {
   readonly tooltip: Tooltip;
   readonly panels: PanelHost;
   readonly character: CharacterPanel;
+  readonly inventory: InventoryPanel;
   private readonly bar: HTMLDivElement;
   private readonly buttons = new Map<HudButtonId, HTMLButtonElement>();
   private screen: HudScreen = 'title';
@@ -100,9 +102,10 @@ export class ExploreHud {
       deps.onPanelChange?.(open);
     });
     const close = (): void => void this.panels.close();
-    this.character = new CharacterPanel({ leader: () => deps.leader(), preview: deps.preview, onClose: close, now: deps.now });
+    this.character = new CharacterPanel({ leader: () => deps.leader(), preview: deps.preview, tooltip: this.tooltip, onClose: close, now: deps.now });
     this.panels.register(this.character);
-    this.panels.register(new PlaceholderPanel('inventory', '道具', close));
+    this.inventory = new InventoryPanel({ leader: () => deps.leader(), tooltip: this.tooltip, onClose: close });
+    this.panels.register(this.inventory);
     this.panels.register(new PlaceholderPanel('pet', '宝宝', close));
     this.panels.register(new PlaceholderPanel('party', '队友', close));
 

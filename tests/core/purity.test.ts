@@ -75,11 +75,11 @@ describe('逻辑层纯净性', () => {
     }
   });
 
-  it('data 只引用 core 和 data 内部的模块', () => {
+  it('data 只引用 core、data 内部的模块和 growth（步骤 22：人物属性 = 基础 + 装备，growth 本身是纯计算）', () => {
     for (const file of listTsFiles(DATA_DIR)) {
       const text = readFileSync(file, 'utf-8');
       for (const m of text.matchAll(/from\s+['"]([^'"]+)['"]/g)) {
-        expect(m[1], `${file} 引用了 ${m[1]}`).toMatch(/^(\.\/[\w-]+|\.\.\/core\/[\w-]+)$/);
+        expect(m[1], `${file} 引用了 ${m[1]}`).toMatch(/^(\.\/[\w-]+|\.\.\/core\/[\w-]+|\.\.\/growth\/[\w-]+)$/);
       }
     }
   });

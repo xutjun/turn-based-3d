@@ -2,13 +2,14 @@
 // 步骤 10 细化：棕皮甲（钉饰、缝线皮带）+ 墨绿斗篷 + 灰毛皮披肩 + 铁扣件；腰包、腿上的猎刀、
 // 翻边长靴、护膝、带钉护腕，箭袋上有皮带和金属箍。
 
-import { BoxGeometry, CylinderGeometry, type BufferGeometry, type Group } from 'three';
+import { BoxGeometry, ConeGeometry, CylinderGeometry, type BufferGeometry, type Group } from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { clothMaterial, furMaterial, glowMaterial, leatherMaterial, plateMaterial } from '../../materials';
 import { tatterAlphaTexture } from '../../textures/sprites';
 import { ALLY_RIM, finishCharacter, type CharacterBaseParams } from './common';
 import {
   ball,
+  chain,
   boot,
   box,
   capeMesh,
@@ -107,6 +108,18 @@ export function buildRanger(params: Partial<RangerParams> = {}): Group {
   // 皮甲：胸前的加厚皮片、缝线和钉饰，腹部两道束带
   const chestPad = ball(rig.chest, dark, 0.15, 0, 0.1, 0.03, [1.05, 0.8, 0.82]);
   chestPad.position.z = 0.035;
+  // 项链“狼牙挂坠”（步骤 22，装备表 eq_A0_necklace）：从毛领下垂到胸前的细皮绳 + 一颗弯狼牙（骨白色，用扣件的浅色金属）。
+  // 用已有材质，并进胸部的合并网格（不新增材质种类）
+  chain(rig.chest, dark, [
+    [-0.075, 0.17, 0.15],
+    [-0.035, 0.1, 0.168],
+    [0, 0.078, 0.172],
+    [0.035, 0.1, 0.168],
+    [0.075, 0.17, 0.15],
+  ], 0.007);
+  const fang = mesh(new ConeGeometry(0.011, 0.05, 6), metal, rig.chest);
+  fang.position.set(0.004, 0.05, 0.176);
+  fang.rotation.set(Math.PI + 0.15, 0, 0.18); // 尖朝下、略弯
   rivets(rig.chest, metal, [
     [-0.1, 0.17, 0.118],
     [0.1, 0.17, 0.118],

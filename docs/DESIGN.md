@@ -1146,6 +1146,16 @@ weight(T) = baseWeight × repeatDecay ^ n(T) × 加权(T)
 - **N9 Esc**：`resolveExploreEscape`：设置菜单打开 → 交给菜单；对话 → “再等等”；有面板 → 关面板；否则开设置。战斗中的 Esc 不变。
 - **N10 测试**：`tests/ui/exploreHud.test.ts`（显隐、多轮进出战斗、面板互斥、空面板、技能禁用与“敬请期待”、对话中只有设置、圆球、角色面板内容与预览开关、拖拽与惯性、Esc 优先级、点击 / 悬停不穿透）、`tests/ui/previewMath.test.ts`（矩形换算、惯性、等级经验）、`tests/render/panelPreview.test.ts`（真实模型：剪裁绘制、关闭后零调用、缓存复用、只显示当前模型、glowBoost 不影响战场、待机推进）；假 DOM 增加事件登记 / 触发与 `matches`。按要求未做截图和浏览器自检：预览的取景、灯光、窗口 mask 在真实浏览器里的效果未目测，绘制调用未实测。
 
+### 9.19 步骤 22（v0.7-equip）：装备系统、道具栏、属性计算
+- **P1 数据**：`data/equipment.ts`：`EQUIPMENT`（30 件，§12.2 的名称与数值，等级 10，品质全部为“套装”）、`HERO_BASE_STATS`、`HERO_LOADOUT`（每人穿自己那一套）、部位 / 属性 / 品质的显示名与颜色、图标规格（形状 + 主色 / 次色 / 发光色，取自各人物模型参数和 `weapons.ts` 的发光色）、`INVENTORY_GRID`（8 × 5）。
+- **P2 属性计算**：`growth/stats.ts` 的 `heroFinalStats(id) = 基础 + 装备合计`（另有 `equipmentBonus`、`statBreakdown`、`heroEquipment`）。`data/heroes.ts` 的人物模板直接用它，所以战斗引擎、自动战斗、平衡脚本和探索面板用的是同一个函数；`src/core` 未改。**偏差**：data 原规定只能引用 core 和 data，现放宽为也可引用 `src/growth`（growth 本身是纯计算，只引用 data 和 core 的类型，purity 测试同步）。
+- **P3 道具面板**：《暗黑破坏神》式人形布局（头盔上中、项链右上、武器左侧竖长框、铠甲居中、腰带在铠甲下、鞋子右下，背后一个淡淡的人形剪影），每个框显示装备图标、品质色边框与内发光；下方 8 × 5 背包空格子。装备框没有点击、按下、拖动的处理（`draggable=false`），空格子没有提示。
+- **P4 图标**：按 §12.5 程序化生成，但**改用 SVG**（原写 Canvas 2D 画到 dataURL）：19 种形状各有路径，主体上亮下暗的渐变 + `feTurbulence` 噪声做旧（只叠在主体上）+ 暗色描边，镶边用次色，刃口 / 宝石 / 符文用发光色加高斯模糊光晕；按装备 id 缓存字符串，渐变 / 滤镜 id 互不冲突。SVG 同样不使用外部素材，矢量清晰，且在测试环境里也能生成。
+- **P5 提示框**：`Tooltip` 支持排好版的内容元素（装备提示：品质色名称、套装与品质、“10 级 · 部位”、分隔线、各项加成按 SPEC §15.1 的属性顺序）；位置由 `placeTooltip` 计算：目标上方居中，上方放不下放到下方，左右上下都夹在画面内（不超出 16:10 区域）。
+- **P6 角色面板**：属性改读 `heroFinalStats`（数值与原来相同）；悬停某项显示“基础 x + 装备 y = 合计”。
+- **P7 项链挂饰**：只有烬刃、夜隼的模型上没有项链（雷咒、缚魂、守誓已有挂坠 / 念珠）：烬刃在胸甲前加一条绕过金徽的短金链 + 烬火色坠石（金饰、目光材质），夜隼在胸前加一条细皮绳 + 骨白狼牙（深色皮革、扣件金属）。都用已有材质、并进胸部合并网格。实测合并后可绘制网格：夜隼 63 → 64、烬刃 62 → 64（约 +3 次绘制调用；此前战斗峰值约 1342，仍远低于 1500）；未在浏览器里目测外观。
+- **P8 测试**：`tests/growth/equipment.test.ts`（每人基础 + 装备 = 步骤 19 的字面值、模板与引擎收到的数值不变、宝宝不变、装备表合法性：30 件、每人 6 部位齐全、等级 10、加成为正整数、速度只来自鞋子）、`tests/ui/inventory.test.ts`（装备框图标与品质边框、40 个空格子、装备提示内容、空格子无提示、不能点不能拖、换队长后显示新装备、角色面板的组成提示、提示框不超出画面、图标生成）。按要求未重跑胜率（数值相同由测试保证），未做截图和浏览器自检。
+
 ## 10. 里程碑（步骤 1~24）
 
 每步结束：跑通该步测试 → 汇报（已完成 / 未完成 / 与 SPEC 偏差）→ 等确认 → git commit。
@@ -1556,7 +1566,7 @@ src/assets/textures/equipIcons.ts   装备图标与按钮图标（§12.5）
 - **性能**：只在面板打开时绘制；无阴影、无后处理。单个人物模型合并后约 25~40 次绘制调用，队友面板 4 个模型 ≤ 约 160；探索本身约 200，合计远低于 1500。步骤 21、23 各实测一次（打开角色面板、队友面板时的绘制调用与帧耗时）并记入 §9。设置菜单打开（暂停）时面板已被关闭，不存在两者叠加。
 
 ### 12.5 装备图标与按钮图标的程序化生成
-- `equipIcons.ts`：每个图标在 64 × 64 的 Canvas 2D 上用 `Path2D` 画剪影，生成一次后缓存为 `dataURL`，界面用 `<img>` 显示（不进 WebGL、不增加绘制调用）。
+- `equipIcons.ts`：（步骤 22 实现时改为 SVG，§9.19 P4）每个图标按形状生成一段 SVG（原计划：64 × 64 的 Canvas 2D 用 `Path2D` 画剪影、缓存为 `dataURL`），按装备 id 缓存，不进 WebGL、不增加绘制调用。
 - `EquipIconSpec = { shape, primary, secondary, glow? }`：
   - `shape` 按部位与模型取：头盔 `helmBarrel / hoodPointed / hoodDeep / crownMask / hoodSoft`；武器 `blade / bow / staff / sword / spear`；铠甲 `plate / leather / robe`；腰带 `beltBuckle / beltSash`；鞋子 `bootPlate / bootLeather`；项链 `pendant / beads`。
   - 颜色取自各人物模型参数（`knight.ts` 等的 `clothColor`、`trim` 等）和 `weapons.ts` 的发光色，保证图标与身上的部位一致。

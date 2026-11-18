@@ -313,7 +313,7 @@ const CSS = `
 .dk-hud-btn.is-disabled { color:#5f594f; cursor:not-allowed; filter:grayscale(.9); }
 .dk-hud-btn.is-disabled:hover { color:#7a7264; box-shadow:0 0 0 1px #4a3a30, 0 0 0 3px #15120f; }
 /* 提示框 */
-.dk-tip { position:absolute; z-index:5; transform:translate(-50%, calc(-100% - 8px)); padding:4px 10px; white-space:nowrap;
+.dk-tip { position:absolute; z-index:5; padding:4px 10px; white-space:nowrap;
   pointer-events:none; font-size:13px; letter-spacing:1px; color:#eadcb4; background:rgba(14,12,10,.94);
   border:1px solid #0b0a09; box-shadow:0 0 0 1px #7a6338, 0 4px 10px rgba(0,0,0,.8); }
 /* 面板框架 */
@@ -357,6 +357,43 @@ const CSS = `
 .dk-exp-bar { position:relative; height:9px; margin:2px 0 4px; background:#0b0a0a; border:1px solid #4a3d24; box-shadow:inset 0 1px 2px #000; }
 .dk-exp-bar > i { position:absolute; left:0; top:0; bottom:0; background:linear-gradient(#e2c170, #8a6a2c); }
 .dk-char-stats .dk-char-row { border-bottom:1px solid rgba(74,61,36,.45); }
+.dk-char-row.is-stat { cursor:help; }
+.dk-char-row.is-stat:hover .dk-char-value { color:#ffe08a; }
+/* ---------- 道具面板（步骤 22）：人形装备框 + 8 × 5 背包 ---------- */
+.dk-panel-inventory { width:420px; }
+.dk-paperdoll { position:relative; width:300px; height:296px; margin:2px auto 0; }
+.dk-paperdoll-figure { position:absolute; left:50%; top:6px; width:150px; height:284px; transform:translateX(-50%); pointer-events:none; opacity:.14;
+  background:
+    radial-gradient(circle at 50% 30px, #c9a85a 0 22px, transparent 23px),
+    linear-gradient(#c9a85a, #c9a85a) 50% 58px / 92px 120px no-repeat,
+    linear-gradient(#c9a85a, #c9a85a) 32% 178px / 26px 104px no-repeat,
+    linear-gradient(#c9a85a, #c9a85a) 68% 178px / 26px 104px no-repeat; }
+.dk-equip-slot { position:absolute; box-sizing:border-box; display:flex; align-items:center; justify-content:center; cursor:default;
+  --q:#5a4a2c; background:radial-gradient(ellipse at 50% 40%, rgba(60,52,40,.55), rgba(8,7,6,.92));
+  border:1px solid #0b0a09; box-shadow:0 0 0 1px var(--q), 0 0 0 3px #15120f, inset 0 0 14px rgba(0,0,0,.95); -webkit-user-drag:none; }
+.dk-equip-slot.has-item { box-shadow:0 0 0 1px var(--q), 0 0 0 3px #15120f, 0 0 8px color-mix(in srgb, var(--q) 45%, transparent), inset 0 0 14px rgba(0,0,0,.9), inset 0 0 6px color-mix(in srgb, var(--q) 35%, transparent); }
+.dk-equip-slot:hover { background:radial-gradient(ellipse at 50% 40%, rgba(90,78,56,.6), rgba(10,9,8,.92)); }
+.dk-equip-slot-label { position:absolute; inset:0; display:flex; align-items:center; justify-content:center; font-size:12px; letter-spacing:2px; color:rgba(160,140,100,.35); pointer-events:none; }
+.dk-equip-slot.has-item .dk-equip-slot-label { display:none; }
+.dk-equip-icon { position:relative; display:block; width:100%; height:100%; padding:6px; box-sizing:border-box; pointer-events:none; }
+.dk-equip-icon svg { display:block; width:100%; height:100%; filter:drop-shadow(0 2px 2px rgba(0,0,0,.85)); }
+.dk-equip-slot.is-helmet { left:118px; top:0; width:64px; height:64px; }
+.dk-equip-slot.is-necklace { left:198px; top:16px; width:44px; height:44px; }
+.dk-equip-slot.is-weapon { left:30px; top:62px; width:72px; height:144px; }
+.dk-equip-slot.is-armor { left:114px; top:76px; width:72px; height:104px; }
+.dk-equip-slot.is-belt { left:110px; top:192px; width:80px; height:40px; }
+.dk-equip-slot.is-boots { left:198px; top:230px; width:64px; height:64px; }
+.dk-bag-title { margin:0 0 6px; font-size:13px; letter-spacing:4px; color:#9c8f6c; }
+.dk-bag { display:grid; grid-template-columns:repeat(8, 44px); grid-auto-rows:44px; gap:3px; justify-content:center; }
+.dk-bag-cell { box-sizing:border-box; background:linear-gradient(#141210, #0a0908); border:1px solid #0b0a09; box-shadow:0 0 0 1px #3a3020, inset 0 0 8px rgba(0,0,0,.9); }
+/* 装备提示框：暗黑风格，名称用品质色 */
+.dk-tip.is-rich { padding:8px 14px 10px; white-space:normal; min-width:170px; max-width:280px; text-align:center;
+  background:rgba(8,7,6,.96); box-shadow:0 0 0 1px #7a6338, 0 0 0 3px #15120f, 0 0 0 4px #43361f, 0 6px 14px rgba(0,0,0,.85); }
+.dk-equip-tip-name { font-size:17px; letter-spacing:2px; text-shadow:0 0 6px rgba(0,0,0,.9), 0 1px 1px #000; }
+.dk-equip-tip-set { margin-top:2px; font-size:12px; color:#8fd49c; letter-spacing:1px; }
+.dk-equip-tip-meta { margin-top:4px; font-size:13px; color:#c9bb94; }
+.dk-equip-tip-sep { height:1px; margin:7px 0 6px; background:linear-gradient(90deg, transparent, #7a6338 20%, #c9a85a 50%, #7a6338 80%, transparent); }
+.dk-equip-tip-bonus { font-size:14px; line-height:1.5; color:#8fa6ff; }
 `;
 
 /** 把主题样式注入页面（重复调用只注入一次） */

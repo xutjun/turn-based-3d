@@ -7,6 +7,7 @@
 
 import type { ClassId, Slot, Stats, UnitTemplate, WeaponId } from '../core/types';
 import { heroSkillIds } from './classes';
+import { heroFinalStats } from '../growth/stats';
 import { PET_ASSIGNMENT, PET_TYPES } from './pets';
 import { WEAPONS } from './weapons';
 
@@ -90,12 +91,14 @@ const s = (
 ): Stats => ({ maxHp, maxMp, physAtk, magAtk, defense, speed });
 
 export const HERO_TEMPLATES: UnitTemplate[] = [
-  //   id   名称    职业        武器      气血  魔法 物伤 法伤 防御 速度（列号见 ALLY_LINEUP）
-  hero('A0', '夜隼', 'physical', 'bow', s(950, 600, 195, 50, 45, 110)), // 自由职业：物理系弓手
-  hero('A1', '烬刃', 'physical', 'blade', s(1200, 600, 210, 50, 60, 90)),
-  hero('A2', '雷咒', 'magic', 'staff', s(850, 800, 50, 220, 35, 95)),
-  hero('A3', '缚魂', 'seal', 'sword', s(1000, 500, 145, 155, 50, 120)),
-  hero('A4', '守誓', 'heal', 'spear', s(1000, 800, 130, 180, 50, 85)),
+  // 步骤 22：人物的战斗属性 = 基础属性 + 装备加成（data/equipment.ts，growth/stats.ts 的 heroFinalStats），
+  // 结果与步骤 19 的数值逐项相等（右侧注释；tests/growth/equipment.test.ts 核对）。列号见 ALLY_LINEUP。
+  //   id   名称    职业        武器      最终属性            气血  魔法 物伤 法伤 防御 速度
+  hero('A0', '夜隼', 'physical', 'bow', heroFinalStats('A0')), //    950  600  195   50   45  110（自由职业：物理系弓手）
+  hero('A1', '烬刃', 'physical', 'blade', heroFinalStats('A1')), // 1200  600  210   50   60   90
+  hero('A2', '雷咒', 'magic', 'staff', heroFinalStats('A2')), //    850  800   50  220   35   95
+  hero('A3', '缚魂', 'seal', 'sword', heroFinalStats('A3')), //    1000  500  145  155   50  120
+  hero('A4', '守誓', 'heal', 'spear', heroFinalStats('A4')), //    1000  800  130  180   50   85
 ];
 
 export const PET_TEMPLATES: UnitTemplate[] = [
