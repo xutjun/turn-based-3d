@@ -123,7 +123,7 @@ export class SettingsMenu {
       const actions = el('div', 'dk-menu-actions');
       actions.append(
         this.button(explore ? '回到起点' : '重新开始', 'dk-btn is-danger', () =>
-          this.confirm(explore ? '确定让小队回到起点吗？' : '确定放弃当前战斗并重新开始吗？', () => {
+          this.confirm(explore ? '确定让小队回到起点吗？' : '确定放弃当前战斗、回到探索的起点吗？', () => {
             this.close();
             this.deps.onRestart();
           }),

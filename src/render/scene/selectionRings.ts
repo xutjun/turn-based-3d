@@ -64,6 +64,18 @@ export class SelectionRings {
     }
   }
 
+  /** 全部熄灭（离开战斗时） */
+  clear(): void {
+    this.set(new Map());
+  }
+
+  /** 正在显示的光圈数（残留检查） */
+  get visibleCount(): number {
+    let n = 0;
+    for (const ring of this.rings.values()) if (ring.mesh.visible) n += 1;
+    return n;
+  }
+
   /** 每帧调用：呼吸闪烁（time 为真实时间，不随战斗倍速变化） */
   update(time: number): void {
     const c = SELECTION_CONFIG;

@@ -239,6 +239,17 @@ export class BattleHud implements DirectorHud {
     for (const head of this.heads.values()) head.el.style.opacity = v;
   }
 
+  /**
+   * 战斗界面层里还看得见的元素个数（步骤 17：探索、对话中必须为 0）：
+   * 头顶条（含名字、封印图标）、飘字、出手顺序条（显示且有内容时）、横幅（不透明度 > 0 时）。
+   */
+  visibleBattleElements(): number {
+    let n = this.heads.size + this.floaters.length;
+    if (this.orderEl.style.display !== 'none' && this.orderEl.children.length > 0) n += 1;
+    if (this.bannerAge !== Infinity && this.bannerEl.style.opacity !== '0') n += 1;
+    return n;
+  }
+
   /** 当前的头顶条 / 顺序条不透明度（调试） */
   get battleOpacity(): number {
     return this.layerOpacity;
@@ -318,8 +329,16 @@ export class BattleHud implements DirectorHud {
     }
   }
 
-  /** 清空飘字、横幅、出手顺序条（再战一次时调用；头顶条由下一次 init() 重建） */
+  /**
+   * 清空飘字、横幅、出手顺序条和头顶条（再战一次、离开战斗时调用；下一场的头顶条由 init() 重建）。
+   * 步骤 17 修正：以前这里不删头顶条（留给下一次 init() 替换），但退出到标题 / 探索后不会再有 init()，
+   * 而 update() 每帧仍把旧头顶条投影到（已隐藏的）单位头顶——血条、名字、封印图标悬空飘在原位。
+   */
   reset(): void {
+    for (const head of this.heads.values()) head.el.remove();
+    this.heads.clear();
+    this.dead.clear();
+    this.names = new Map();
     for (const f of this.floaters) f.el.remove();
     this.floaters.length = 0;
     this.bannerAge = Infinity;

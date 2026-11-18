@@ -269,7 +269,15 @@ export class UnitView implements StageUnit {
     this.act = new UnitMotion(scheduler, this.home, this.baseYaw, this.motion, (f) => this.footfall(f));
     this.act.avoid = (from, to, samples) => {
       const others = this.obstacleSource();
-      return others.length > 0 ? pathDetour(from, to, others, this.radius * 0.8, samples) : null;
+      if (others.length === 0) return null;
+      const self = this.radius * 0.8;
+      if (this.kind === 'hero') {
+        // 人物在后排（步骤 17）：从前排两只宝宝之间穿过去——先只用侧偏（不从头顶跳过）；实在绕不开再按高度判断
+        const walls = others.map((o) => ({ ...o, height: Infinity }));
+        const side = pathDetour(from, to, walls, self, samples, undefined, undefined, 1);
+        if (side) return side;
+      }
+      return pathDetour(from, to, others, self, samples);
     };
     this.livePose = this.act.pose;
     this.weapon = getEquippedWeapon(model);

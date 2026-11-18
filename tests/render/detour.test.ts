@@ -11,8 +11,8 @@ import { BattleStage } from '../../src/render/units/BattleStage';
 import { detourBump, pathDetour } from '../../src/render/units/detour';
 import { ALL_TEMPLATES, installFakeCanvas } from './realStage';
 
-// 新阵型（步骤 17）：宝宝在主人身后一排。近战宝宝冲向敌人时不能从主人（和其他己方单位）身上穿过：
-// 跳得够高就从头顶越过，否则路线向一侧绕开。
+// 新阵型（步骤 17）：人物在后排、宝宝在主人正前方。人物近战冲锋时不能从前排宝宝身上穿过，
+// 而是从两只宝宝之间穿过去（地面上隔开，不算从头顶跳过）；宝宝在前排，冲锋路上没有己方单位。
 
 describe('冲锋绕开己方单位：纯计算', () => {
   const flat = Array.from({ length: 41 }, (_, i) => ({ s: i / 40, hop: 0 }));
@@ -73,8 +73,10 @@ describe('冲锋绕开己方单位：真实模型', () => {
       const hop = me.airHeight;
       for (const o of others) {
         // 身体模型与 detour.ts 相同：人物身高以下是身体（半径 radius），肩部以上只有头（0.4 倍）；冲锋者身体按 0.8 倍半径
-        if (hop >= o.bodyHeight) continue;
-        const r = hop >= o.bodyHeight * 0.78 ? o.radius * 0.4 : o.radius;
+        // 人物：必须在地面上绕开（从两只宝宝之间穿过），跳多高都不算
+        const hero = me.kind === 'hero';
+        if (!hero && hop >= o.bodyHeight) continue;
+        const r = !hero && hop >= o.bodyHeight * 0.78 ? o.radius * 0.4 : o.radius;
         worst = Math.min(worst, Math.hypot(g.x - o.home.x, g.z - o.home.z) - (r + me.radius * 0.8));
       }
       await new Promise((r) => setImmediate(r));
@@ -83,7 +85,7 @@ describe('冲锋绕开己方单位：真实模型', () => {
     return worst;
   }
 
-  it.each(['A5', 'A6', 'A9', 'A1', 'A3', 'A4'])('%s 冲向每一个敌人再跳回：不穿过任何己方单位', async (id) => {
+  it.each(['A1', 'A3', 'A4', 'A5', 'A6', 'A9'])('%s 冲向每一个敌人再跳回：不穿过任何己方单位', async (id) => {
     const s = stage();
     const me = s.stage.unit(id);
     const profile = MOTION_PROFILES[me.motion];

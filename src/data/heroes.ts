@@ -1,9 +1,9 @@
-// 友方阵容：5 个人物（前排）+ 5 个宝宝（后排，站在主人身后一排）。对应 DESIGN.md §8.3、§11.7。
+// 友方阵容：5 个人物（后排）+ 5 个宝宝（前排，站在主人正前方一排）。对应 DESIGN.md §8.3、§11.7。
 // 数值用 npm run balance 核对。人物的技能取职业技能库（classes.ts）；
 // 宝宝只分物理型 / 法术型，职业、主动技能、被动技能由类型决定（pets.ts）。
 //
-// 步骤 17（v0.6 新阵型，SPEC §4）：人物站前排，骑士烬刃站正中，其余 4 人分在两侧；
-// 前排从左到右的顺序写在 ALLY_LINEUP 里，人物和宝宝的列号都由它推出（宝宝与主人同列、在后排）。
+// 步骤 17（v0.6 新阵型，SPEC §4）：人物站后排，骑士烬刃站正中，其余 4 人分在两侧；宝宝站在主人正前方（前排，离敌方更近）。
+// 从左到右的顺序写在 ALLY_LINEUP 里，人物和宝宝的列号都由它推出（宝宝与主人同列）。
 
 import type { ClassId, Slot, Stats, UnitTemplate, WeaponId } from '../core/types';
 import { heroSkillIds } from './classes';
@@ -13,17 +13,17 @@ import { WEAPONS } from './weapons';
 type Col = Slot['col'];
 
 /**
- * 友方前排从左（col 0）到右（col 4）的人物顺序（步骤 17 新阵型，DESIGN §11.7）：
- * 夜隼、雷咒、烬刃（骑士，正中）、缚魂、守誓。宝宝站在主人身后一排的同一列。
+ * 友方从左（col 0）到右（col 4）的人物顺序（步骤 17 新阵型，DESIGN §11.7）：
+ * 夜隼、雷咒、烬刃（骑士，正中）、缚魂、守誓。人物在后排，宝宝站在主人正前方（前排）的同一列。
  * 改这里即可换站位，战斗规则不变（只影响下指令顺序，DESIGN §9.10 F2）。
  */
 export const ALLY_LINEUP: readonly string[] = ['A0', 'A2', 'A1', 'A3', 'A4'];
-/** 人物站的排（0 = 前排，靠近敌方） */
-export const HERO_ROW: Slot['row'] = 0;
-/** 宝宝站的排（1 = 后排，主人身后） */
-export const PET_ROW: Slot['row'] = 1;
+/** 人物站的排（1 = 后排） */
+export const HERO_ROW: Slot['row'] = 1;
+/** 宝宝站的排（0 = 前排，主人正前方、离敌方更近） */
+export const PET_ROW: Slot['row'] = 0;
 
-/** 人物在前排的列号（由 ALLY_LINEUP 决定） */
+/** 人物的列号（由 ALLY_LINEUP 决定） */
 function lineupCol(heroId: string): Col {
   const col = ALLY_LINEUP.indexOf(heroId);
   if (col < 0) throw new Error(`人物 ${heroId} 不在 ALLY_LINEUP 里`);
@@ -49,7 +49,7 @@ function hero(id: string, name: string, classId: ClassId, weaponId: WeaponId, st
   };
 }
 
-/** 宝宝：没有武器，出手方式和普攻直接写在模板里；站在主人身后一排的同一列 */
+/** 宝宝：没有武器，出手方式和普攻直接写在模板里；站在主人正前方一排的同一列 */
 function pet(
   id: string,
   templateId: string,

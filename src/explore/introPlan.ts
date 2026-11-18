@@ -7,10 +7,10 @@
 //   - 震飞：每人一条抛物线，从当前位置飞到自己的战斗格子（落点 = 格子，误差为 0）。冲击波到达时离地。
 //     地面投影是直线加一段侧偏（sin 形），高度是抛物线。直线被石柱、火盆、Boss 挡住时先试侧偏、再加高，
 //     直到全程不穿过任何障碍物；同时检查与已规划的人在同一时刻的空中间距。
-//   - 宝宝入场：从主人身后斜着进来，落到后排格子。
+//   - 宝宝入场：从主人身后起跳，越过主人头顶落到主人正前方的前排格子；魔偶跳得低，从主人身侧绕过去。
 
 import { INTRO_CONFIG, type IntroConfig, type PetEntryStyle, type TumbleStyle } from '../data/cutsceneConfig';
-import { ROW_DIRECTION, facingOf } from '../data/formation';
+import { facingOf } from '../data/formation';
 import type { UnitId } from '../core/types';
 import { clearance, inBounds, obstacleDistance, type Obstacle } from './collision';
 import type { NavWorld } from './exploreWorld';
@@ -307,36 +307,117 @@ export interface PetEntry {
   /** 开始时刻（相对宝宝入场这一段的开始） */
   start: number;
   duration: number;
+  /** 最高点高度 */
+  apex: number;
+  /** 地面投影的侧偏（米，行进方向左侧为正）与峰值位置：魔偶从主人身侧绕过 */
+  bend: number;
+  bendAt: number;
+  /** 骨龙：从这个进度开始降落（之前保持在高处） */
+  descendAt: number;
+}
+
+/** 主人（或其他挡路的单位）：位置、身体半径、身高 */
+export interface Blocker extends Ground {
+  radius: number;
+  height: number;
+}
+
+const smooth01 = (t: number): number => {
+  const k = Math.max(0, Math.min(1, t));
+  return k * k * (3 - 2 * k);
+};
+
+/** 侧偏鼓包（与 render/units/detour.ts 相同）：0 和 1 处为 0，at 处为 1 */
+function bump(s: number, at: number): number {
+  const a = Math.max(0.05, Math.min(0.95, at));
+  return s <= a ? smooth01(s / a) : 1 - smooth01((s - a) / (1 - a));
+}
+
+/** 宝宝入场进度 t（0~1）时的位置与离地高度；两端精确等于起点、终点（落地 y = 0） */
+export function petEntryAt(e: PetEntry, t: number): { x: number; y: number; z: number } {
+  if (t >= 1) return { x: e.to.x, y: 0, z: e.to.z };
+  const k = Math.max(0, t);
+  const dx = e.to.x - e.from.x;
+  const dz = e.to.z - e.from.z;
+  const len = Math.hypot(dx, dz) || 1;
+  const side = e.bend * bump(k, e.bendAt);
+  let y: number;
+  switch (e.style) {
+    case 'fly': // 从高处飞来，越过主人之后才降落
+      y = e.apex * (1 - smooth01((k - e.descendAt) / (1 - e.descendAt)));
+      break;
+    case 'float': // 从地面飘起、越过主人、飘落
+      y = e.apex * Math.sin(Math.PI * k);
+      break;
+    default: // 跃起 / 低跳：抛物线
+      y = e.apex * 4 * k * (1 - k);
+  }
+  return { x: e.from.x + dx * k - (dz / len) * side, y, z: e.from.z + dz * k + (dx / len) * side };
+}
+
+/** 一段入场路线离挡路者的最小余量（米，负数 = 穿模）：地面投影离得够远，或身体最低点高过他的头顶 */
+export function petEntryMargin(e: PetEntry, blockers: readonly Blocker[], bodyRadius = INTRO_CONFIG.pets.bodyRadius, samples = 80): number {
+  let worst = Infinity;
+  for (let i = 1; i < samples; i++) {
+    const p = petEntryAt(e, i / samples);
+    for (const b of blockers) {
+      const ground = Math.hypot(p.x - b.x, p.z - b.z) - (b.radius + bodyRadius);
+      const over = p.y - b.height;
+      worst = Math.min(worst, Math.max(ground, over));
+    }
+  }
+  return worst;
 }
 
 /**
- * 宝宝从主人身后（离格子 behind 米、沿排方向往外侧偏 aside 米）进来，落到后排格子；
- * 左半边（列号小）的从左侧进、右半边的从右侧进。按列号依次出发。
- * 起点和路线离障碍物太近时把侧偏减小（直至 0）。
+ * 宝宝从主人身后起跳、落到主人正前方的前排格子，按列号依次出发。
+ * 越过主人头顶的（狼、骨龙、幽灵）：最高点按主人身高自动加高，经过主人上方时身体最低点高出 overClear；
+ * 魔偶跳得低：路线向一侧弯，从主人身侧绕过（与冲锋绕行同一套“侧偏鼓包”）。
+ * @param pets 每只宝宝的格子与主人（位置、半径、身高）
+ * @param others 其他挡路的单位（主人两侧的人物、已经就位的宝宝）
  */
 export function planPetEntries(
-  pets: readonly { id: UnitId; templateId: string; col: number; slot: Ground }[],
-  obstacles: readonly Obstacle[],
+  pets: readonly { id: UnitId; templateId: string; col: number; slot: Ground; owner: Blocker }[],
+  others: readonly Blocker[] = [],
   cfg: IntroConfig['pets'] = INTRO_CONFIG.pets,
 ): PetEntry[] {
   const f = facingOf('ally');
   const sorted = [...pets].sort((a, b) => a.col - b.col);
   return sorted.map((p, i) => {
     const style = cfg.styles[p.templateId] ?? 'leap';
-    const outward = p.col < 2 ? -1 : 1;
-    const behind = style === 'slam' ? 1.2 : cfg.behind;
-    let from: Ground = { x: p.slot.x, z: p.slot.z };
-    for (let aside = cfg.aside; aside >= -1e-9; aside -= 0.35) {
-      from = {
-        x: p.slot.x - f.x * behind + ROW_DIRECTION.x * aside * outward,
-        z: p.slot.z - f.z * behind + ROW_DIRECTION.z * aside * outward,
-      };
-      // 起点和中点离障碍物表面至少 0.8 米
-      const mid = { x: (from.x + p.slot.x) / 2, z: (from.z + p.slot.z) / 2 };
-      if (clearance(obstacles, from.x, from.z) >= 0.8 && clearance(obstacles, mid.x, mid.z) >= 0.8) break;
+    const c = cfg[style];
+    const o = p.owner;
+    // 起跳点：主人身后（沿友方朝向的反方向）
+    const from = { x: o.x - f.x * c.behind, z: o.z - f.z * c.behind };
+    const total = Math.hypot(p.slot.x - from.x, p.slot.z - from.z);
+    const tc = Math.max(0.1, Math.min(0.9, c.behind / Math.max(0.1, total))); // 经过主人的进度
+    const need = o.height + cfg.overClear;
+    const e: PetEntry = { id: p.id, style, from, to: { x: p.slot.x, z: p.slot.z }, start: i * cfg.stagger, duration: c.duration, apex: c.apex, bend: 0, bendAt: 0.5, descendAt: 0 };
+    // 挡路的：主人（越顶时要高出 overClear）+ 其他单位（不含自己的格子）
+    const others2 = others.filter((b) => Math.hypot(b.x - p.slot.x, b.z - p.slot.z) > 0.1 && Math.hypot(b.x - o.x, b.z - o.z) > 0.1);
+    const blockers = [o, ...others2];
+    const overBlockers = [{ ...o, height: need }, ...others2];
+    if (style !== 'slam') {
+      // 越顶：最高点从配置值起逐步加高，直到全程（含进入、离开主人上方的那一段）都不碰人
+      if (style === 'fly') e.descendAt = Math.min(0.85, tc + 0.2);
+      while (petEntryMargin(e, overBlockers, cfg.bodyRadius) < 0.02 && e.apex < 6) e.apex += 0.1;
+    } else {
+      // 魔偶：从主人身侧绕过——侧偏从小到大试，峰值在主人那里，两侧都试
+      let found = false;
+      for (let mag = 0.3; mag <= 2.4 + 1e-9 && !found; mag += 0.1) {
+        for (const sign of [1, -1]) {
+          const trial = { ...e, bend: sign * mag, bendAt: tc };
+          if (petEntryMargin(trial, blockers, cfg.bodyRadius) >= 0.05) {
+            Object.assign(e, trial);
+            found = true;
+            break;
+          }
+        }
+      }
+      // 实在绕不开就跳过去
+      if (!found) while (petEntryMargin(e, overBlockers, cfg.bodyRadius) < 0.02 && e.apex < 6) e.apex += 0.1;
     }
-    const duration = cfg[style].duration;
-    return { id: p.id, style, from, to: { x: p.slot.x, z: p.slot.z }, start: i * cfg.stagger, duration };
+    return e;
   });
 }
 

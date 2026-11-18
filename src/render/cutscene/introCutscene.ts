@@ -23,6 +23,7 @@ import type { NavWorld } from '../../explore/exploreWorld';
 import {
   flightAt,
   planFlights,
+  petEntryAt,
   planPetEntries,
   revealSpots,
   type FlightPlan,
@@ -219,9 +220,15 @@ export class IntroCutscene {
     const settle = c.flight.crouchDown + c.flight.crouchUp;
     const landedAt = flights.reduce((m, f) => Math.max(m, impactAt + f.launch + f.duration + settle), 0);
     const petsAt = landedAt + c.pets.after;
+    // 宝宝的主人 = 同一列的人物（人物在后排、宝宝在他正前方）
+    const blocker = (v: UnitView) => ({ x: v.home.x, z: v.home.z, radius: v.radius, height: v.bodyHeight });
+    const heroes = this.heroes;
     const pets = planPetEntries(
-      this.pets.map((v) => ({ id: v.id, templateId: v.templateKey, col: this.colOf(v), slot: { x: v.home.x, z: v.home.z } })),
-      this.d.world.obstacles,
+      this.pets.map((v) => {
+        const owner = heroes.reduce((a, b) => (Math.abs(this.colOf(b) - this.colOf(v)) < Math.abs(this.colOf(a) - this.colOf(v)) ? b : a));
+        return { id: v.id, templateId: v.templateKey, col: this.colOf(v), slot: { x: v.home.x, z: v.home.z }, owner: blocker(owner) };
+      }),
+      [...heroes, ...this.pets].map(blocker),
       c.pets,
     );
     const petsEnd = pets.reduce((m, e) => Math.max(m, e.start + e.duration), 0) + c.pets.turn;
@@ -299,23 +306,32 @@ export class IntroCutscene {
     // 左右两片暗影池：两侧站位的中点
     const sides = this.sidesOf(plan.reveal, leader);
     this.d.sound.play('shadow');
+    // 符文缓慢旋转（按过场开始后的演出时间）
+    const t0 = s.time;
+    const spin = (): number => (s.time - t0) * r.runeSpin;
     const spread = s.tween(r.spread, (t) => {
       const k = EASE.outCubic(t);
-      fx.setPool(0, leader.x, leader.z, r.poolRadius * (0.5 + 0.3 * k), r.poolOpacity * Math.min(1, t * 3), r.tint);
+      fx.setPool(0, leader.x, leader.z, r.poolRadius * (0.5 + 0.3 * k), r.poolOpacity * Math.min(1, t * 3), r.tint, r.rimGlow, spin());
       sides.forEach((p, i) => {
-        fx.setPool(i + 1, leader.x + (p.x - leader.x) * k, leader.z + (p.z - leader.z) * k, r.poolRadius * (0.4 + 0.6 * k) * p.scale, r.poolOpacity * k, r.tint);
+        fx.setPool(i + 1, leader.x + (p.x - leader.x) * k, leader.z + (p.z - leader.z) * k, r.poolRadius * (0.4 + 0.6 * k) * p.scale, r.poolOpacity * k, r.tint, r.rimGlow, -spin());
       });
+    });
+    // 队员升起期间暗影池保持、符文继续转
+    const hold = s.tween(r.start + plan.reveal.length * r.stagger + r.rise, (t) => {
+      if (t >= 1 || s.time - t0 < r.spread) return;
+      fx.setPool(0, leader.x, leader.z, r.poolRadius * 0.8, r.poolOpacity, r.tint, r.rimGlow, spin());
+      sides.forEach((p, i) => fx.setPool(i + 1, p.x, p.z, r.poolRadius * p.scale, r.poolOpacity, r.tint, r.rimGlow, -spin()));
     });
     // 按站位从内到外、左右交替依次升起
     const rises = plan.reveal.map((spot, i) =>
       s.wait(r.start + i * r.stagger).then(() => this.riseFromShadow(this.view(spot.id), spot)),
     );
-    await Promise.all([spread, ...rises]);
+    await Promise.all([spread, hold, ...rises]);
     // 暗影池收缩消失
     await s.tween(r.poolFade, (t) => {
       const k = 1 - EASE.in(t);
-      fx.setPool(0, leader.x, leader.z, r.poolRadius * 0.8 * k, r.poolOpacity * k, r.tint);
-      sides.forEach((p, i) => fx.setPool(i + 1, p.x, p.z, r.poolRadius * p.scale * (0.6 + 0.4 * k), r.poolOpacity * k, r.tint));
+      fx.setPool(0, leader.x, leader.z, r.poolRadius * 0.8 * k, r.poolOpacity * k, r.tint, r.rimGlow, spin());
+      sides.forEach((p, i) => fx.setPool(i + 1, p.x, p.z, r.poolRadius * p.scale * (0.6 + 0.4 * k), r.poolOpacity * k, r.tint, r.rimGlow, -spin()));
     });
     fx.setPool(0, 0, 0, 0, 0, r.tint);
     fx.setPool(1, 0, 0, 0, 0, r.tint);
@@ -401,7 +417,19 @@ export class IntroCutscene {
     const boss = this.view(this.d.bossId);
     const P = INTRO_POSES;
     this.d.sound.play('roar', 1.3);
-    let nextShake = 0;
+    this.d.rig.shake(c.shakeFirst);
+    let nextShake = c.shakeEvery;
+    // 两道向外扩散的暗红气浪
+    const home = boss.home;
+    const W = c.wave;
+    const waves = [0, 1].map((i) =>
+      s.wait(0.08 + i * W.every).then(() =>
+        s.tween(W.duration, (t) => {
+          const k = EASE.outCubic(t);
+          this.d.introFx.setRoar(i, home.x, W.height, home.z, (0.8 + W.radius * k) / 0.88, t >= 1 ? 0 : W.opacity * (1 - t) * (1 - t * 0.4), W.color);
+        }),
+      ),
+    );
     await s.tween(c.duration, (t) => {
       const time = t * c.duration;
       const rise = Math.min(1, time / c.rise);
@@ -415,7 +443,9 @@ export class IntroCutscene {
         nextShake = time + c.shakeEvery;
       }
     });
+    // 姿态播完立即清掉自己的通道（气浪还在扩散；之后的跺地会写同名通道，不能被这里晚清掉）
     for (const k of [...Object.keys(P.roar), ...Object.keys(P.roarShiver.pose)]) delete boss.stunt.pose[k];
+    await Promise.all(waves);
   }
 
   // ------------------------------------------------------------------
@@ -543,80 +573,55 @@ export class IntroCutscene {
     const v = this.view(e.id);
     const P = INTRO_POSES;
     const travelYaw = yawOf(e.to.x - e.from.x, e.to.z - e.from.z);
-    const ground = (t: number): Ground => ({ x: e.from.x + (e.to.x - e.from.x) * t, z: e.from.z + (e.to.z - e.from.z) * t });
     v.model.visible = true;
-    v.placeAt(e.from.x, e.from.z, travelYaw);
-    let heavy = false;
-    switch (e.style) {
-      case 'leap': {
-        const L = c.leap;
-        await s.tween(L.duration, (t) => {
-          const p = ground(t);
-          v.placeAt(p.x, p.z, travelYaw);
-          v.stunt.y = t >= 1 ? 0 : L.apex * 4 * t * (1 - t);
-          v.stunt.pitch = t >= 1 ? 0 : -0.45 * Math.cos(Math.PI * t);
-          writePose(v, P.wolfLeap, t >= 1 ? 0 : Math.sin(Math.PI * t));
-        });
-        for (const k of Object.keys(P.wolfLeap)) delete v.stunt.pose[k];
-        break;
-      }
-      case 'fly': {
-        const F = c.fly;
-        await s.tween(F.duration, (t) => {
-          const k = EASE.outCubic(t);
-          const p = ground(k);
-          v.placeAt(p.x, p.z, travelYaw);
-          v.stunt.y = t >= 1 ? 0 : F.height * (1 - smooth(t));
-          v.stunt.pitch = t >= 1 ? 0 : 0.25 * Math.sin(Math.PI * t);
+    const start = petEntryAt(e, 0);
+    v.placeAt(start.x, start.z, travelYaw);
+    v.stunt.y = start.y;
+    const shade = e.style === 'float' ? this.shade(v) : null;
+    const F = c.fly;
+    // 位置和高度按规划好的路线（越过主人头顶 / 从主人身侧绕过），各自再加一点姿态
+    await s.tween(e.duration, (t) => {
+      const p = petEntryAt(e, t);
+      const end = t >= 1;
+      switch (e.style) {
+        case 'leap':
+          v.stunt.pitch = end ? 0 : -0.45 * Math.cos(Math.PI * t);
+          writePose(v, P.wolfLeap, end ? 0 : Math.sin(Math.PI * t));
+          break;
+        case 'fly': {
+          v.stunt.pitch = end ? 0 : 0.25 * Math.sin(Math.PI * t);
           // 扇翅：骨龙的翼 wingL.y 为负 = 张开（右翼相反）
-          const flap = t >= 1 ? 0 : F.flapAmp * (0.6 + 0.4 * Math.sin(TAU * F.flap * t * F.duration)) * (1 - t * 0.6);
+          const flap = end ? 0 : F.flapAmp * (0.6 + 0.4 * Math.sin(TAU * F.flap * t * F.duration)) * (1 - t * 0.6);
           v.stunt.pose['wingL.y'] = -flap;
           v.stunt.pose['wingR.y'] = flap;
           v.stunt.pose['wingL.z'] = flap * 0.5;
           v.stunt.pose['wingR.z'] = -flap * 0.5;
-        });
-        for (const k of ['wingL.y', 'wingR.y', 'wingL.z', 'wingR.z']) delete v.stunt.pose[k];
-        break;
+          break;
+        }
+        case 'float':
+          v.stunt.roll = end ? 0 : 0.2 * Math.sin(Math.PI * t * 2) * (1 - t);
+          shade!.set(Math.min(1, t * 1.25), IntroCutscene.GHOST_LOOK);
+          break;
+        case 'slam':
+          writePose(v, P.golemFall, end ? 0 : Math.sin(Math.PI * t));
+          break;
       }
-      case 'float': {
-        const F = c.float;
-        const shade = this.shade(v);
-        await s.tween(F.duration, (t) => {
-          const k = smooth(t);
-          const p = ground(k);
-          const sway = F.sway * Math.sin(Math.PI * t * 2) * (1 - t);
-          v.placeAt(p.x - Math.cos(travelYaw) * sway, p.z + Math.sin(travelYaw) * sway, travelYaw);
-          v.stunt.y = t >= 1 ? 0 : F.height * (1 - k);
-          v.stunt.roll = t >= 1 ? 0 : 0.2 * Math.sin(Math.PI * t * 2) * (1 - t);
-          shade.set(Math.min(1, t * 1.25), IntroCutscene.GHOST_LOOK);
-        });
-        shade.restore();
-        break;
-      }
-      case 'slam': {
-        const F = c.slam;
-        heavy = true;
-        await s.tween(F.duration, (t) => {
-          const k = EASE.inCubic(t);
-          const p = ground(smooth(t));
-          v.placeAt(p.x, p.z, travelYaw);
-          v.stunt.y = t >= 1 ? 0 : F.height * (1 - k);
-          writePose(v, P.golemFall, t >= 1 ? 0 : 1 - k * 0.6);
-        });
-        for (const k of Object.keys(P.golemFall)) delete v.stunt.pose[k];
-        this.d.rig.shake(F.shake);
-        this.d.sound.play('quake', 0.7);
-        void this.d.fx.burst('shockwave', { x: e.to.x, y: 0.05, z: e.to.z }, 0xb08a5a, 0.6, 1.4);
-        // 落地砸扁再弹回
-        await s.tween(0.3, (t) => {
-          v.stunt.pose['root.squash'] = t >= 1 ? 0 : F.squash * (1 - t) * (1 - t);
-        });
-        delete v.stunt.pose['root.squash'];
-        break;
-      }
-    }
+      v.placeAt(p.x, p.z, travelYaw);
+      v.stunt.y = end ? 0 : p.y;
+    });
+    shade?.restore();
+    for (const k of [...Object.keys(P.wolfLeap), ...Object.keys(P.golemFall), 'wingL.y', 'wingR.y', 'wingL.z', 'wingR.z']) delete v.stunt.pose[k];
+    const heavy = e.style === 'slam';
+    if (heavy) {
+      // 魔偶重重落地：震屏、冲击环，身体砸扁再弹回
+      this.d.rig.shake(c.slam.shake);
+      this.d.sound.play('quake', 0.7);
+      void this.d.fx.burst('shockwave', { x: e.to.x, y: 0.05, z: e.to.z }, 0xb08a5a, 0.6, 1.4);
+      await s.tween(0.3, (t) => {
+        v.stunt.pose['root.squash'] = t >= 1 ? 0 : c.slam.squash * (1 - t) * (1 - t);
+      });
+    } else this.d.sound.play('fall', 0.5);
     v.clearStunt();
-    if (!heavy) this.d.sound.play('fall', 0.5);
     void this.d.fx.burst('dust', { x: e.to.x, y: 0.05, z: e.to.z }, STAGING_DUST, 0.5, heavy ? c.landDust * 2.2 : c.landDust);
     // 就位后转向敌方
     const baseYaw = yawOf(v.facing.x, v.facing.z);

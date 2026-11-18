@@ -27,7 +27,8 @@
 // - “我准备好了”之后播放入场过场（render/cutscene/introCutscene）：队员从队长的影子里显形 → Boss 怒吼、跺地 →
 //   我方 5 人被震飞、落到战斗格子 → 宝宝跳入 → 相机过渡到战斗视角；过场结束才建引擎、开第 1 回合，头顶条、顺序条、界面淡入。
 //   过场中可开设置（暂停）、切倍速、跳过动画；设置里“重新开始”= 跳过过场直接开战，“退出游戏”= 立即走完过场后回到标题。
-// - 新阵型：人物在前排（骑士烬刃居中），宝宝在主人身后一排（data/heroes.ts 的 ALLY_LINEUP）。
+// - 新阵型：人物在后排（骑士烬刃居中），宝宝在主人正前方一排（data/heroes.ts 的 ALLY_LINEUP）。
+// - 进入标题 / 探索时清空全部战斗界面元素（ui/explore/exploreUi）；战斗中“重新开始”回到探索的起点。
 //
 // 地址参数：
 //   seed=数字   随机种子（相同种子、相同指令战斗过程完全相同）；不填则用当前时间
@@ -79,6 +80,7 @@ import { DialogBox } from './dialog/DialogBox';
 import { IntroCutscene, type IntroPlan, type IntroReport } from '../render/cutscene/introCutscene';
 import { IntroFx } from '../render/cutscene/introFx';
 import { INTRO_CONFIG } from '../data/cutsceneConfig';
+import { battleUiResidue, clearBattleUi, type BattleUiParts } from './explore/exploreUi';
 
 /** 页面处在哪个界面 */
 export type AppScreen = 'title' | 'explore' | 'dialog' | 'intro' | 'battle';
@@ -141,6 +143,8 @@ export interface AppDebug {
   intro(): { active: boolean; plan: IntroPlan | null; report: IntroReport | null; shaded: string[]; fx: number; hudOpacity: number };
   /** 验收：把队长放到 (x, z)、面向 Boss，直接开始入场过场（代替“我准备好了”）；返回过场结束的 Promise */
   introFrom(x: number, z: number): Promise<void>;
+  /** 战斗界面层里还看得见的元素个数（探索、对话中必须为 0） */
+  battleUi(): number;
   /** 演出时间（暂停时不变） */
   clock(): number;
   /** 联系表：停掉自动渲染改为手动逐帧推进（manual），推进 seconds 秒（每帧 dt），取当前画面（PNG data URL） */
@@ -424,6 +428,11 @@ export class PlayerBattleApp {
   // 界面切换
   // ------------------------------------------------------------------
 
+  /** 战斗界面的各部分（进入探索 / 标题时一起清空） */
+  private get battleUi(): BattleUiParts {
+    return { hud: this.hud, rings: this.scene.rings, log: this.log, result: this.result };
+  }
+
   /** 标题界面：背景是探索模式的初始布置（队长在出生点，Boss 待机），不能操作 */
   private showTitle(): void {
     this.dismissDialog();
@@ -431,6 +440,7 @@ export class PlayerBattleApp {
     this.exploreInput.clear();
     this.explorePointer.clear();
     this.explore.enter();
+    clearBattleUi(this.battleUi); // 不留任何战斗界面元素（步骤 17 修正）
     this.title.show();
     this.gear.classList.add('is-hidden');
     this.exploreHint.style.display = 'none';
@@ -459,6 +469,7 @@ export class PlayerBattleApp {
     this.exploreHint.style.display = '';
     this.screen = 'explore';
     if (!this.explore.active) this.explore.enter();
+    clearBattleUi(this.battleUi);
   }
 
   /** 跳过标题和探索，直接开战（地址参数 start=1、自检用；正式流程在步骤 16、17 由对话和入场过场进入） */
@@ -537,7 +548,7 @@ export class PlayerBattleApp {
     }
   }
 
-  /** 设置里“重新开始”：战斗中放弃当前战斗、状态完全重置后重开一局（同“再战一次”）；探索中回到起点 */
+  /** 设置里“重新开始”：战斗中放弃当前战斗、回到探索的起点；过场中跳过过场直接开战；探索中回到起点 */
   async restart(): Promise<void> {
     if (this.screen === 'intro') {
       // 过场中“重新开始”：过场立即走完，直接开战
@@ -556,8 +567,20 @@ export class PlayerBattleApp {
       this.explore.returnToStart();
       return;
     }
-    if (this.screen !== 'battle') return;
-    await this.rematch();
+    if (this.screen !== 'battle' || this.busy) return;
+    // 战斗中“重新开始”：放弃当前战斗，回到探索的起点（步骤 17）
+    this.busy = true;
+    try {
+      await this.teardown();
+      this.screen = 'explore';
+      this.explore.enter();
+      clearBattleUi(this.battleUi);
+      this.uiRoot.style.display = 'none';
+      this.exploreHint.style.display = '';
+      this.gear.classList.remove('is-hidden');
+    } finally {
+      this.busy = false;
+    }
   }
 
   /** 设置里“退出游戏”：结束当前战斗或探索，场上复位，回到标题界面 */
@@ -941,6 +964,7 @@ export class PlayerBattleApp {
         this.explore.placeLeader(x, z);
         await this.startIntro();
       },
+      battleUi: () => battleUiResidue(this.battleUi),
       clock: () => this.scene.scheduler.time,
       manual: (on) => this.scene.setManual(on),
       step: (seconds, dt = 1 / 60) => {

@@ -34,6 +34,8 @@ export const INTRO_CONFIG = {
     poolOpacity: 0.85,
     tint: 0x2a1240, // 幽影的颜色（暗紫黑）
     glow: 0x6a2fb0, // 幽影的自发光（暗紫），凝成实体时转为原值
+    rimGlow: 0x8a3ce0, // 暗影池的发光边与符文（暗紫，叠加发光）
+    runeSpin: 0.9, // 符文旋转速度（弧度/秒）
     glowStrength: 0.9,
     smoke: 0x3a2850, // 凝成实体时脚下的暗色烟尘
   },
@@ -45,9 +47,12 @@ export const INTRO_CONFIG = {
   roar: {
     at: 1.1,
     duration: 0.9,
-    rise: 0.25, // 姿态淡入
-    shake: 0.07, // 轻微震屏（米）
-    shakeEvery: 0.12, // 咆哮期间持续轻震
+    rise: 0.2, // 姿态淡入
+    shake: 0.22, // 咆哮期间的震屏（米）：起声那一下最重，之后持续
+    shakeFirst: 0.32,
+    shakeEvery: 0.1,
+    /** 向外扩散的暗红气浪：两道，间隔 every 秒，每道 duration 秒扩到 radius 米，离地 height 米 */
+    wave: { color: 0xa01c12, radius: 9, duration: 0.75, every: 0.3, height: 0.6, opacity: 0.9 },
   },
   /** c. Boss 跺地：抬右腿 → 重踏；冲击波环扩散、地面裂纹发光、尘土碎石飞溅、大幅震屏 */
   stomp: {
@@ -95,17 +100,23 @@ export const INTRO_CONFIG = {
     /** 起身后转向敌方（弧度/秒的平滑转身） */
     turn: 0.4,
   },
-  /** e. 宝宝入场：全员落地后开始，从主人身后跳入阵型 */
+  /**
+   * e. 宝宝入场：全员落地后开始。宝宝从主人身后起跳，越过主人头顶落到主人正前方的前排格子
+   * （狼跃过、骨龙飞越、幽灵飘过）；魔偶跳得低，从主人身侧绕到前方（侧偏用 render/units/detour.ts 的同一套计算）。
+   */
   pets: {
     after: 0.2, // 最后一人落地后多久开始
     stagger: 0.12, // 每只之间的间隔
-    behind: 4, // 从主人身后多远出现
-    aside: 1.4, // 斜着进来（沿排方向偏开），就位后要转身
     styles: { pet_wolf_grey: 'leap', pet_wolf_red: 'leap', pet_bone_dragon: 'fly', pet_ghost: 'float', pet_golem: 'slam' } as Record<string, PetEntryStyle>,
-    leap: { duration: 0.7, apex: 1.4 },
-    fly: { duration: 1.0, height: 3.2, flap: 7, flapAmp: 0.55 },
-    float: { duration: 1.1, height: 0.9, sway: 0.25 },
-    slam: { duration: 0.75, height: 5.5, squash: 0.35, shake: 0.35 },
+    /** 越过主人头顶时，身体最低点比主人头顶至少高出这么多（米） */
+    overClear: 0.35,
+    /** 宝宝身体半径（判断是否碰到主人用） */
+    bodyRadius: 0.4,
+    /** behind = 起跳点在主人身后多远；apex = 最高点（越顶时按主人身高自动加高） */
+    leap: { duration: 0.8, behind: 1.8, apex: 2.6 },
+    fly: { duration: 1.1, behind: 3.0, apex: 3.4, flap: 7, flapAmp: 0.55 },
+    float: { duration: 1.2, behind: 2.0, apex: 2.7, sway: 0.25 },
+    slam: { duration: 0.8, behind: 1.6, apex: 0.9, squash: 0.35, shake: 0.35 },
     turn: 0.35,
     landDust: 1,
   },
@@ -127,22 +138,23 @@ export type IntroConfig = typeof INTRO_CONFIG;
 export const INTRO_POSES = {
   /** Boss 怒吼：后仰、仰头、双翼向两侧张开并上扬、双臂张开（Boss 的翼 y 为负 = 展开，见 dialogues.ts） */
   roar: {
-    'head.x': -0.75,
-    'chest.x': -0.3,
-    'spine.x': -0.2,
-    'wingL.y': -0.8,
-    'wingR.y': 0.8,
-    'wingL.z': 0.4,
-    'wingR.z': -0.4,
-    'shoulderL.z': 0.55,
-    'shoulderR.z': -0.5,
-    'shoulderL.x': -0.35,
-    'shoulderR.x': -0.3,
-    'elbowL.x': -0.5,
-    'elbowR.x': -0.4,
+    'root.pitch': -0.18, // 整个身体向后仰
+    'head.x': -1.05, // 仰天
+    'chest.x': -0.5,
+    'spine.x': -0.38,
+    'wingL.y': -1.25, // 双翼完全展开并上扬
+    'wingR.y': 1.25,
+    'wingL.z': 0.65,
+    'wingR.z': -0.65,
+    'shoulderL.z': 0.95, // 双臂向两侧大张
+    'shoulderR.z': -0.9,
+    'shoulderL.x': -0.6,
+    'shoulderR.x': -0.55,
+    'elbowL.x': -0.7,
+    'elbowR.x': -0.6,
   } as Record<string, number>,
   /** 怒吼时头和胸口的颤动（× sin(2π·hz·t)） */
-  roarShiver: { pose: { 'head.y': 0.05, 'chest.x': 0.03, 'head.x': 0.04 } as Record<string, number>, hz: 9 },
+  roarShiver: { pose: { 'head.y': 0.07, 'chest.x': 0.05, 'head.x': 0.06, 'wingL.z': 0.06, 'wingR.z': -0.06 } as Record<string, number>, hz: 9 },
   /** Boss 抬右腿（髋为负 = 大腿前抬，膝为正 = 屈膝），身体略后靠、双臂张开保持平衡 */
   stompLift: {
     'hipR.x': -1.15,

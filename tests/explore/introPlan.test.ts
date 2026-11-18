@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { INTRO_CONFIG } from '../../src/data/cutsceneConfig';
 import { EXPLORE_CONFIG } from '../../src/data/exploreConfig';
-import { ALLY_TEMPLATES, ALLY_LINEUP } from '../../src/data/heroes';
+import { ALLY_TEMPLATES } from '../../src/data/heroes';
 import { ENEMY_TEMPLATES } from '../../src/data/enemies';
 import { facingOf, ROW_DIRECTION, slotPosition } from '../../src/data/formation';
 import { clearance, type Obstacle } from '../../src/explore/collision';
@@ -12,6 +12,8 @@ import {
   flightSeparation,
   nearestStandable,
   planFlights,
+  petEntryAt,
+  petEntryMargin,
   planPetEntries,
   requiredSeparation,
   revealSpots,
@@ -180,34 +182,62 @@ describe('入场过场走位：震飞路线', () => {
   });
 });
 
-describe('入场过场走位：宝宝入场', () => {
+describe('入场过场走位：宝宝入场（从主人身后越过主人落到前排）', () => {
+  const HERO_H = 2.0;
+  const blocker = (t: (typeof ALLY_TEMPLATES)[number]) => ({ ...slotPosition('ally', t.slot), radius: t.kind === 'hero' ? 0.45 : 0.5, height: t.kind === 'hero' ? HERO_H : 1.0 });
+  const ownerOf = (pet: (typeof PETS)[number]) => HEROES.find((h) => h.id === pet.ownerId)!;
   const entries = planPetEntries(
-    PETS.map((t) => ({ id: t.id, templateId: t.templateId, col: t.slot.col, slot: slotPosition('ally', t.slot) })),
-    world.obstacles,
+    PETS.map((t) => ({ id: t.id, templateId: t.templateId, col: t.slot.col, slot: slotPosition('ally', t.slot), owner: blocker(ownerOf(t)) })),
+    ALLY_TEMPLATES.map(blocker),
   );
 
-  it('每只宝宝落到自己的后排格子，按列号依次出发，入场方式按种类', () => {
+  it('每只宝宝落到主人正前方的前排格子，按列号依次出发，入场方式按种类', () => {
     expect(entries).toHaveLength(5);
     for (const e of entries) {
       const t = PETS.find((p) => p.id === e.id)!;
-      const slot = slotPosition('ally', t.slot);
-      expect(e.to).toEqual(slot);
-      expect(t.slot.row).toBe(1);
+      expect(t.slot.row).toBe(0);
+      expect(ownerOf(t).slot).toEqual({ row: 1, col: t.slot.col });
+      const end = petEntryAt(e, 1);
+      expect(end).toEqual({ x: slotPosition('ally', t.slot).x, y: 0, z: slotPosition('ally', t.slot).z });
     }
     const style = Object.fromEntries(entries.map((e) => [PETS.find((p) => p.id === e.id)!.templateId, e.style]));
     expect(style).toEqual({ pet_wolf_grey: 'leap', pet_wolf_red: 'leap', pet_bone_dragon: 'fly', pet_ghost: 'float', pet_golem: 'slam' });
     const starts = [...entries].sort((a, b) => a.start - b.start).map((e) => PETS.find((p) => p.id === e.id)!.slot.col);
     expect(starts).toEqual([0, 1, 2, 3, 4]);
-    expect(ALLY_LINEUP).toHaveLength(5);
   });
 
-  it('从主人身后进来（离敌方更远的一侧），起点离障碍物有余量', () => {
+  it('从主人身后起跳（离敌方更远的一侧）', () => {
     const f = facingOf('ally');
     for (const e of entries) {
-      // 起点在格子“身后”（沿友方朝向的反方向）
-      const back = -((e.from.x - e.to.x) * f.x + (e.from.z - e.to.z) * f.z);
+      const owner = blocker(ownerOf(PETS.find((p) => p.id === e.id)!));
+      const back = -((e.from.x - owner.x) * f.x + (e.from.z - owner.z) * f.z);
       expect(back, e.id).toBeGreaterThan(1);
-      expect(clearance(world.obstacles, e.from.x, e.from.z), e.id).toBeGreaterThanOrEqual(0.8);
+    }
+  });
+
+  it('全程不穿过主人和其他单位：狼、骨龙、幽灵从主人头顶越过；魔偶跳得低，从主人身侧绕过', () => {
+    for (const e of entries) {
+      const pet = PETS.find((p) => p.id === e.id)!;
+      const owner = blocker(ownerOf(pet));
+      const others = ALLY_TEMPLATES.filter((t) => t.id !== pet.id).map(blocker);
+      expect(petEntryMargin(e, others), e.id).toBeGreaterThanOrEqual(0);
+      // 经过主人上方 / 身旁的那一刻
+      let closest = Infinity;
+      let yThere = 0;
+      for (let i = 1; i < 100; i++) {
+        const q = petEntryAt(e, i / 100);
+        const d = Math.hypot(q.x - owner.x, q.z - owner.z);
+        if (d < closest) {
+          closest = d;
+          yThere = q.y;
+        }
+      }
+      if (e.style === 'slam') {
+        expect(e.apex, e.id).toBeLessThan(HERO_H); // 不越顶
+        expect(closest, e.id).toBeGreaterThan(owner.radius + INTRO_CONFIG.pets.bodyRadius); // 从身侧绕过
+      } else {
+        expect(yThere, e.id).toBeGreaterThanOrEqual(HERO_H + INTRO_CONFIG.pets.overClear - 0.05); // 从头顶越过
+      }
     }
   });
 });
